@@ -194,3 +194,309 @@ impl MediaDraft {
         })
     }
 }
+
+//
+// ─── UNIT TESTS ──────────────────────────────────────────
+//
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── MediaUri Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_media_uri_from_file_valid() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        assert!(matches!(uri, MediaUri::FilePath(_)));
+        assert_eq!(
+            uri.as_path().unwrap().to_str().unwrap(),
+            "/path/to/image.png"
+        );
+    }
+
+    #[test]
+    fn test_media_uri_from_file_empty_path() {
+        let result = MediaUri::from_file("");
+        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+    }
+
+    #[test]
+    fn test_media_uri_from_url_valid() {
+        let uri = MediaUri::from_url("https://example.com/image.jpg").unwrap();
+        assert!(matches!(uri, MediaUri::Url(_)));
+        assert_eq!(
+            uri.as_url().unwrap().as_str(),
+            "https://example.com/image.jpg"
+        );
+    }
+
+    #[test]
+    fn test_media_uri_from_url_empty_string() {
+        let result = MediaUri::from_url("");
+        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+    }
+
+    #[test]
+    fn test_media_uri_from_url_whitespace_only() {
+        let result = MediaUri::from_url("   ");
+        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+    }
+
+    #[test]
+    fn test_media_uri_from_url_invalid_url() {
+        let result = MediaUri::from_url("not a valid url");
+        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+    }
+
+    #[test]
+    fn test_media_uri_as_path_returns_none_for_url() {
+        let uri = MediaUri::from_url("https://example.com/image.jpg").unwrap();
+        assert!(uri.as_path().is_none());
+    }
+
+    #[test]
+    fn test_media_uri_as_url_returns_none_for_filepath() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        assert!(uri.as_url().is_none());
+    }
+
+    #[test]
+    fn test_media_uri_validate_non_empty_filepath_success() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        assert!(uri.validate_non_empty().is_ok());
+    }
+
+    #[test]
+    fn test_media_uri_validate_non_empty_url_success() {
+        let uri = MediaUri::from_url("https://example.com/image.jpg").unwrap();
+        assert!(uri.validate_non_empty().is_ok());
+    }
+
+    // ─── MediaHash Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_media_hash_new() {
+        let hash = MediaHash::new("abc123");
+        assert_eq!(hash.as_str(), "abc123");
+    }
+
+    #[test]
+    fn test_media_hash_clone() {
+        let hash1 = MediaHash::new("abc123");
+        let hash2 = hash1.clone();
+        assert_eq!(hash1, hash2);
+    }
+
+    // ─── ImageMeta Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_image_meta_new_valid() {
+        let meta = ImageMeta::new(1920, 1080).unwrap();
+        assert_eq!(meta.width, 1920);
+        assert_eq!(meta.height, 1080);
+    }
+
+    #[test]
+    fn test_image_meta_zero_width() {
+        let result = ImageMeta::new(0, 1080);
+        assert_eq!(result, Err(MediaValidationError::InvalidImageDimensions));
+    }
+
+    #[test]
+    fn test_image_meta_zero_height() {
+        let result = ImageMeta::new(1920, 0);
+        assert_eq!(result, Err(MediaValidationError::InvalidImageDimensions));
+    }
+
+    #[test]
+    fn test_image_meta_both_zero() {
+        let result = ImageMeta::new(0, 0);
+        assert_eq!(result, Err(MediaValidationError::InvalidImageDimensions));
+    }
+
+    // ─── MediaAltText Tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_media_alt_text_new_valid() {
+        let alt = MediaAltText::new("A beautiful sunset").unwrap();
+        assert_eq!(alt.as_str(), "A beautiful sunset");
+    }
+
+    #[test]
+    fn test_media_alt_text_empty_string() {
+        let result = MediaAltText::new("");
+        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+    }
+
+    #[test]
+    fn test_media_alt_text_whitespace_only() {
+        let result = MediaAltText::new("   ");
+        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+    }
+
+    #[test]
+    fn test_media_alt_text_with_leading_trailing_whitespace() {
+        let alt = MediaAltText::new("  text with spaces  ").unwrap();
+        assert_eq!(alt.as_str(), "  text with spaces  ");
+    }
+
+    // ─── MediaDraft Tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_media_draft_new_image() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        let alt = MediaAltText::new("Test image").ok();
+        let draft = MediaDraft::new_image(uri.clone(), alt.clone());
+
+        assert!(matches!(draft.kind, MediaKind::Image));
+        assert_eq!(draft.uri, uri);
+        assert_eq!(draft.alt_text, alt);
+    }
+
+    #[test]
+    fn test_media_draft_validate_success() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        let alt = MediaAltText::new("Test image").ok();
+        let draft = MediaDraft::new_image(uri, alt);
+
+        let now = Utc::now();
+        let meta = ImageMeta::new(1920, 1080).unwrap();
+        let checksum = Some(MediaHash::new("abc123"));
+
+        let result = draft.validate(now, meta.clone(), checksum.clone());
+        assert!(result.is_ok());
+
+        let media_item = result.unwrap();
+        assert!(matches!(media_item.kind, MediaKind::Image));
+        assert_eq!(media_item.meta, meta);
+        assert_eq!(media_item.checksum, checksum);
+        assert_eq!(media_item.created_at, now);
+    }
+
+    #[test]
+    fn test_media_draft_validate_invalid_dimensions() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        let draft = MediaDraft::new_image(uri, None);
+
+        let now = Utc::now();
+        let meta = ImageMeta {
+            width: 0,
+            height: 1080,
+        };
+
+        let result = draft.validate(now, meta, None);
+        assert_eq!(result, Err(MediaValidationError::InvalidImageDimensions));
+    }
+
+    #[test]
+    fn test_media_draft_validate_no_checksum() {
+        let uri = MediaUri::from_url("https://example.com/image.jpg").unwrap();
+        let draft = MediaDraft::new_image(uri, None);
+
+        let now = Utc::now();
+        let meta = ImageMeta::new(800, 600).unwrap();
+
+        let result = draft.validate(now, meta, None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().checksum.is_none());
+    }
+
+    // ─── MediaItem Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_media_item_with_id() {
+        let uri = MediaUri::from_file("/path/to/image.png").unwrap();
+        let draft = MediaDraft::new_image(uri, None);
+
+        let now = Utc::now();
+        let meta = ImageMeta::new(1920, 1080).unwrap();
+
+        let media_item = draft.validate(now, meta, None).unwrap();
+        assert_eq!(media_item.id, MediaId(0));
+
+        let updated = media_item.with_id(MediaId(42));
+        assert_eq!(updated.id, MediaId(42));
+    }
+
+    #[test]
+    fn test_media_item_complete_workflow() {
+        // Create URI
+        let uri = MediaUri::from_url("https://example.com/photo.jpg").unwrap();
+
+        // Create alt text
+        let alt = MediaAltText::new("A scenic photo").unwrap();
+
+        // Create draft
+        let draft = MediaDraft::new_image(uri.clone(), Some(alt.clone()));
+
+        // Validate and create media item
+        let now = Utc::now();
+        let meta = ImageMeta::new(4096, 2160).unwrap();
+        let checksum = MediaHash::new("sha256:abcdef");
+
+        let media_item = draft
+            .validate(now, meta.clone(), Some(checksum.clone()))
+            .unwrap()
+            .with_id(MediaId(100));
+
+        // Verify all fields
+        assert_eq!(media_item.id, MediaId(100));
+        assert!(matches!(media_item.kind, MediaKind::Image));
+        assert_eq!(media_item.uri, uri);
+        assert_eq!(media_item.created_at, now);
+        assert_eq!(media_item.checksum, Some(checksum));
+        assert_eq!(media_item.meta, meta);
+        assert_eq!(media_item.alt_text, Some(alt));
+    }
+
+    // ─── Edge Cases and Integration Tests ──────────────────────────────
+
+    #[test]
+    fn test_media_uri_with_special_characters() {
+        let uri = MediaUri::from_file("/path/with spaces/and-special_chars.png").unwrap();
+        assert!(uri.as_path().is_some());
+    }
+
+    #[test]
+    fn test_media_uri_url_with_query_params() {
+        let uri =
+            MediaUri::from_url("https://example.com/image.jpg?size=large&format=png").unwrap();
+        assert!(uri.as_url().unwrap().as_str().contains("size=large"));
+    }
+
+    #[test]
+    fn test_image_meta_very_large_dimensions() {
+        let meta = ImageMeta::new(u32::MAX, u32::MAX).unwrap();
+        assert_eq!(meta.width, u32::MAX);
+        assert_eq!(meta.height, u32::MAX);
+    }
+
+    #[test]
+    fn test_media_hash_empty_string() {
+        let hash = MediaHash::new("");
+        assert_eq!(hash.as_str(), "");
+    }
+
+    #[test]
+    fn test_media_alt_text_unicode() {
+        let alt = MediaAltText::new("图片描述 🌅 ñoño").unwrap();
+        assert_eq!(alt.as_str(), "图片描述 🌅 ñoño");
+    }
+
+    #[test]
+    fn test_media_draft_with_url_and_alt() {
+        let uri = MediaUri::from_url("https://cdn.example.com/images/photo123.webp").unwrap();
+        let alt = MediaAltText::new("Product showcase photo").unwrap();
+        let draft = MediaDraft::new_image(uri.clone(), Some(alt.clone()));
+
+        let now = Utc::now();
+        let meta = ImageMeta::new(2048, 1536).unwrap();
+
+        let media_item = draft.validate(now, meta, None).unwrap();
+
+        assert_eq!(media_item.uri, uri);
+        assert_eq!(media_item.alt_text, Some(alt));
+        assert!(media_item.checksum.is_none());
+    }
+}
