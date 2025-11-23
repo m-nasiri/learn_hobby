@@ -10,5 +10,6 @@ pub use content::{
 };
 pub use ids::{CardId, DeckId, MediaId};
 
-pub use card::Card;
-pub use deck::Deck;
+pub use card::{Card, CardError};
+pub use deck::{Deck, DeckError, DeckSettings};
+pub use review::{ReviewError, ReviewGrade, ReviewLog, ReviewOutcome};
