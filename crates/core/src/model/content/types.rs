@@ -14,10 +14,14 @@ pub struct ContentDraft {
     pub media: Option<MediaDraft>,
 }
 
+/// Validated content with text and optional media reference.
+///
+/// Content is guaranteed to have non-empty text and valid media references.
+/// Use `ContentDraft` to build and validate new content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Content {
-    pub text: String,
-    pub media: Option<MediaId>,
+    text: String,
+    media: Option<MediaId>,
 }
 
 //
@@ -62,6 +66,13 @@ impl ContentDraft {
         }
     }
 
+    /// Validates the content draft and creates a Content entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContentValidationError::EmptyText` if the text is empty or whitespace-only.
+    /// Returns `ContentValidationError::MissingImageMeta` if media is present but meta is None.
+    /// Returns `ContentValidationError::Media` if media validation fails.
     pub fn validate(
         self,
         now: DateTime<Utc>,
@@ -77,7 +88,7 @@ impl ContentDraft {
             Some(draft) => {
                 let meta = meta.ok_or(ContentValidationError::MissingImageMeta)?;
                 let item = draft.validate(now, meta, checksum)?;
-                Some(item.id)
+                Some(item.id())
             }
         };
 
@@ -93,14 +104,17 @@ impl ContentDraft {
 //
 
 impl Content {
+    #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    #[must_use]
     pub fn media_id(&self) -> Option<MediaId> {
         self.media
     }
 
+    #[must_use]
     pub fn has_media(&self) -> bool {
         self.media.is_some()
     }
@@ -147,6 +161,6 @@ mod tests {
 
         assert_eq!(c.text(), "hello");
         assert!(c.has_media());
-        assert_eq!(c.media_id(), Some(MediaId(0)));
+        assert_eq!(c.media_id(), Some(MediaId::new(0)));
     }
 }

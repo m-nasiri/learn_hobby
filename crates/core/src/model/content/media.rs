@@ -8,6 +8,7 @@ use url::Url;
 // ─── ERRORS (domain validation) ────────────────────────────────────────────────
 //
 
+/// Errors that can occur during media validation.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum MediaValidationError {
     #[error("Media URI cannot be empty.")]
@@ -15,6 +16,9 @@ pub enum MediaValidationError {
 
     #[error("Image dimensions cannot be zero.")]
     InvalidImageDimensions,
+
+    #[error("Alt text cannot be empty.")]
+    EmptyAltText,
 }
 
 //
@@ -33,6 +37,11 @@ pub enum MediaUri {
 }
 
 impl MediaUri {
+    /// Creates a `MediaUri` from a file path.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MediaValidationError::EmptyMediaUri` if the path is empty.
     pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, MediaValidationError> {
         let p = path.into();
         if p.as_os_str().is_empty() {
@@ -41,6 +50,11 @@ impl MediaUri {
         Ok(MediaUri::FilePath(p))
     }
 
+    /// Creates a `MediaUri` from a URL string.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MediaValidationError::EmptyMediaUri` if the URL is empty or invalid.
     pub fn from_url(url: impl AsRef<str>) -> Result<Self, MediaValidationError> {
         let s = url.as_ref().trim();
         if s.is_empty() {
@@ -69,17 +83,19 @@ impl MediaUri {
         }
     }
 
+    #[must_use]
     pub fn as_path(&self) -> Option<&Path> {
         match self {
             MediaUri::FilePath(p) => Some(p.as_path()),
-            _ => None,
+            MediaUri::Url(_) => None,
         }
     }
 
+    #[must_use]
     pub fn as_url(&self) -> Option<&Url> {
         match self {
             MediaUri::Url(u) => Some(u),
-            _ => None,
+            MediaUri::FilePath(_) => None,
         }
     }
 }
@@ -92,6 +108,7 @@ impl MediaHash {
         Self(raw.into())
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -104,6 +121,11 @@ pub struct ImageMeta {
 }
 
 impl ImageMeta {
+    /// Creates new image metadata with dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MediaValidationError::InvalidImageDimensions` if width or height is zero.
     pub fn new(width: u32, height: u32) -> Result<Self, MediaValidationError> {
         if width == 0 || height == 0 {
             return Err(MediaValidationError::InvalidImageDimensions);
@@ -116,14 +138,20 @@ impl ImageMeta {
 pub struct MediaAltText(String);
 
 impl MediaAltText {
+    /// Creates new alt text for media.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MediaValidationError::EmptyAltText` if the text is empty or whitespace-only.
     pub fn new(raw: impl Into<String>) -> Result<Self, MediaValidationError> {
         let s = raw.into();
         if s.trim().is_empty() {
-            return Err(MediaValidationError::EmptyMediaUri);
+            return Err(MediaValidationError::EmptyAltText);
         }
         Ok(Self(s))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -133,21 +161,67 @@ impl MediaAltText {
 // ─── VALIDATED DOMAIN ENTITY ───────────────────────────────────────────────────
 //
 
+/// A validated media item with metadata.
+///
+/// `MediaItem` is created via `MediaDraft::validate()` and guarantees:
+/// - Valid URI (non-empty file path or URL)
+/// - Valid image dimensions (width and height > 0)
+/// - Assigned ID (initially 0, updated via `with_id()`)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaItem {
-    pub id: MediaId,
-    pub kind: MediaKind,
-    pub uri: MediaUri,
-    pub created_at: DateTime<Utc>,
-    pub checksum: Option<MediaHash>,
-    pub meta: ImageMeta,
-    pub alt_text: Option<MediaAltText>,
+    id: MediaId,
+    kind: MediaKind,
+    uri: MediaUri,
+    created_at: DateTime<Utc>,
+    checksum: Option<MediaHash>,
+    meta: ImageMeta,
+    alt_text: Option<MediaAltText>,
 }
 
 impl MediaItem {
+    /// Updates the `MediaItem` with a database-assigned ID.
+    ///
+    /// This consumes self and returns a new `MediaItem` with the updated ID.
+    #[must_use]
     pub fn with_id(mut self, id: MediaId) -> Self {
         self.id = id;
         self
+    }
+
+    // Accessors
+    #[must_use]
+    pub fn id(&self) -> MediaId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> &MediaKind {
+        &self.kind
+    }
+
+    #[must_use]
+    pub fn uri(&self) -> &MediaUri {
+        &self.uri
+    }
+
+    #[must_use]
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+
+    #[must_use]
+    pub fn checksum(&self) -> Option<&MediaHash> {
+        self.checksum.as_ref()
+    }
+
+    #[must_use]
+    pub fn meta(&self) -> &ImageMeta {
+        &self.meta
+    }
+
+    #[must_use]
+    pub fn alt_text(&self) -> Option<&MediaAltText> {
+        self.alt_text.as_ref()
     }
 }
 
@@ -163,6 +237,7 @@ pub struct MediaDraft {
 }
 
 impl MediaDraft {
+    #[must_use]
     pub fn new_image(uri: MediaUri, alt_text: Option<MediaAltText>) -> Self {
         Self {
             kind: MediaKind::Image,
@@ -171,6 +246,12 @@ impl MediaDraft {
         }
     }
 
+    /// Validates the media draft and creates a `MediaItem`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MediaValidationError::EmptyMediaUri` if the URI is empty.
+    /// Returns `MediaValidationError::InvalidImageDimensions` if width or height is zero.
     pub fn validate(
         self,
         now: DateTime<Utc>,
@@ -184,7 +265,7 @@ impl MediaDraft {
         }
 
         Ok(MediaItem {
-            id: MediaId(0),
+            id: MediaId::new(0),
             kind: self.kind,
             uri: self.uri,
             created_at: now,
@@ -326,13 +407,13 @@ mod tests {
     #[test]
     fn test_media_alt_text_empty_string() {
         let result = MediaAltText::new("");
-        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+        assert_eq!(result, Err(MediaValidationError::EmptyAltText));
     }
 
     #[test]
     fn test_media_alt_text_whitespace_only() {
         let result = MediaAltText::new("   ");
-        assert_eq!(result, Err(MediaValidationError::EmptyMediaUri));
+        assert_eq!(result, Err(MediaValidationError::EmptyAltText));
     }
 
     #[test]
@@ -368,10 +449,10 @@ mod tests {
         assert!(result.is_ok());
 
         let media_item = result.unwrap();
-        assert!(matches!(media_item.kind, MediaKind::Image));
-        assert_eq!(media_item.meta, meta);
-        assert_eq!(media_item.checksum, checksum);
-        assert_eq!(media_item.created_at, now);
+        assert!(matches!(media_item.kind(), &MediaKind::Image));
+        assert_eq!(media_item.meta(), &meta);
+        assert_eq!(media_item.checksum(), checksum.as_ref());
+        assert_eq!(media_item.created_at(), now);
     }
 
     #[test]
@@ -413,10 +494,10 @@ mod tests {
         let meta = ImageMeta::new(1920, 1080).unwrap();
 
         let media_item = draft.validate(now, meta, None).unwrap();
-        assert_eq!(media_item.id, MediaId(0));
+        assert_eq!(media_item.id(), MediaId::new(0));
 
-        let updated = media_item.with_id(MediaId(42));
-        assert_eq!(updated.id, MediaId(42));
+        let updated = media_item.with_id(MediaId::new(42));
+        assert_eq!(updated.id(), MediaId::new(42));
     }
 
     #[test]
@@ -438,16 +519,16 @@ mod tests {
         let media_item = draft
             .validate(now, meta.clone(), Some(checksum.clone()))
             .unwrap()
-            .with_id(MediaId(100));
+            .with_id(MediaId::new(100));
 
         // Verify all fields
-        assert_eq!(media_item.id, MediaId(100));
-        assert!(matches!(media_item.kind, MediaKind::Image));
-        assert_eq!(media_item.uri, uri);
-        assert_eq!(media_item.created_at, now);
-        assert_eq!(media_item.checksum, Some(checksum));
-        assert_eq!(media_item.meta, meta);
-        assert_eq!(media_item.alt_text, Some(alt));
+        assert_eq!(media_item.id(), MediaId::new(100));
+        assert!(matches!(media_item.kind(), &MediaKind::Image));
+        assert_eq!(media_item.uri(), &uri);
+        assert_eq!(media_item.created_at(), now);
+        assert_eq!(media_item.checksum(), Some(&checksum));
+        assert_eq!(media_item.meta(), &meta);
+        assert_eq!(media_item.alt_text(), Some(&alt));
     }
 
     // ─── Edge Cases and Integration Tests ──────────────────────────────
@@ -495,8 +576,8 @@ mod tests {
 
         let media_item = draft.validate(now, meta, None).unwrap();
 
-        assert_eq!(media_item.uri, uri);
-        assert_eq!(media_item.alt_text, Some(alt));
-        assert!(media_item.checksum.is_none());
+        assert_eq!(media_item.uri(), &uri);
+        assert_eq!(media_item.alt_text(), Some(&alt));
+        assert!(media_item.checksum().is_none());
     }
 }

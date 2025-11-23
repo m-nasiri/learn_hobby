@@ -26,14 +26,24 @@ pub enum DeckError {
 // ─── SETTINGS ──────────────────────────────────────────────────────────────────
 //
 
+/// Configuration settings for a deck.
+///
+/// Controls daily limits and session sizes for spaced repetition learning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeckSettings {
-    pub new_cards_per_day: u32,
-    pub review_limit_per_day: u32,
-    pub micro_session_size: u32,
+    new_cards_per_day: u32,
+    review_limit_per_day: u32,
+    micro_session_size: u32,
 }
 
 impl DeckSettings {
+    /// Creates ADHD-friendly default settings.
+    ///
+    /// Returns settings optimized for users with ADHD:
+    /// - 5 new cards per day (manageable goal)
+    /// - 30 reviews per day limit (prevents overwhelm)
+    /// - 5 cards per micro-session (quick wins)
+    #[must_use]
     pub fn default_for_adhd() -> Self {
         Self {
             new_cards_per_day: 5,
@@ -42,6 +52,11 @@ impl DeckSettings {
         }
     }
 
+    /// Creates custom deck settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if any parameter is zero.
     pub fn new(
         new_cards_per_day: u32,
         review_limit_per_day: u32,
@@ -63,22 +78,46 @@ impl DeckSettings {
             micro_session_size,
         })
     }
+
+    // Accessors
+    #[must_use]
+    pub fn new_cards_per_day(&self) -> u32 {
+        self.new_cards_per_day
+    }
+
+    #[must_use]
+    pub fn review_limit_per_day(&self) -> u32 {
+        self.review_limit_per_day
+    }
+
+    #[must_use]
+    pub fn micro_session_size(&self) -> u32 {
+        self.micro_session_size
+    }
 }
 
 //
 // ─── DECK ──────────────────────────────────────────────────────────────────────
 //
 
+/// A collection of flashcards with associated settings.
+///
+/// Decks organize cards by topic and control learning parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deck {
-    pub id: DeckId,
-    pub name: String,
-    pub description: Option<String>,
-    pub settings: DeckSettings,
-    pub created_at: DateTime<Utc>,
+    id: DeckId,
+    name: String,
+    description: Option<String>,
+    settings: DeckSettings,
+    created_at: DateTime<Utc>,
 }
 
 impl Deck {
+    /// Creates a new Deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeckError::EmptyName` if name is empty or whitespace-only.
     pub fn new(
         id: DeckId,
         name: impl Into<String>,
@@ -103,6 +142,32 @@ impl Deck {
             created_at,
         })
     }
+
+    // Accessors
+    #[must_use]
+    pub fn id(&self) -> DeckId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    #[must_use]
+    pub fn settings(&self) -> &DeckSettings {
+        &self.settings
+    }
+
+    #[must_use]
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
 }
 
 //
@@ -117,7 +182,7 @@ mod tests {
     #[test]
     fn deck_new_rejects_empty_name() {
         let settings = DeckSettings::default_for_adhd();
-        let err = Deck::new(DeckId(1), "   ", None, settings, Utc::now()).unwrap_err();
+        let err = Deck::new(DeckId::new(1), "   ", None, settings, Utc::now()).unwrap_err();
         assert_eq!(err, DeckError::EmptyName);
     }
 
@@ -128,10 +193,18 @@ mod tests {
     }
 
     #[test]
+    fn settings_default_for_adhd() {
+        let settings = DeckSettings::default_for_adhd();
+        assert_eq!(settings.new_cards_per_day(), 5);
+        assert_eq!(settings.review_limit_per_day(), 30);
+        assert_eq!(settings.micro_session_size(), 5);
+    }
+
+    #[test]
     fn deck_new_happy_path() {
         let settings = DeckSettings::default_for_adhd();
         let deck = Deck::new(
-            DeckId(10),
+            DeckId::new(10),
             "German B1",
             Some("verbs + phrases".into()),
             settings,
@@ -139,8 +212,40 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(deck.id, DeckId(10));
-        assert_eq!(deck.name, "German B1");
-        assert_eq!(deck.settings.micro_session_size, 5);
+        assert_eq!(deck.id(), DeckId::new(10));
+        assert_eq!(deck.name(), "German B1");
+        assert_eq!(deck.description(), Some("verbs + phrases"));
+        assert_eq!(deck.settings().micro_session_size(), 5);
+    }
+
+    #[test]
+    fn deck_trims_name_and_description() {
+        let settings = DeckSettings::default_for_adhd();
+        let deck = Deck::new(
+            DeckId::new(1),
+            "  Spanish  ",
+            Some("  grammar  ".into()),
+            settings,
+            Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(deck.name(), "Spanish");
+        assert_eq!(deck.description(), Some("grammar"));
+    }
+
+    #[test]
+    fn deck_filters_empty_description() {
+        let settings = DeckSettings::default_for_adhd();
+        let deck = Deck::new(
+            DeckId::new(1),
+            "French",
+            Some("   ".into()),
+            settings,
+            Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(deck.description(), None);
     }
 }

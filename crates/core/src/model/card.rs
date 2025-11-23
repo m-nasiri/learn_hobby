@@ -23,16 +23,35 @@ pub enum CardError {
 // ─── CARD ──────────────────────────────────────────────────────────────────────
 //
 
+/// A flashcard with a prompt (question) and answer.
+///
+/// Cards are validated at construction to ensure both prompt and answer contain non-empty text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
-    pub id: CardId,
-    pub deck_id: DeckId,
-    pub prompt: Content,
-    pub answer: Content,
-    pub created_at: DateTime<Utc>,
+    id: CardId,
+    deck_id: DeckId,
+    prompt: Content,
+    answer: Content,
+    created_at: DateTime<Utc>,
 }
 
 impl Card {
+    /// Creates a new Card.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier for this card
+    /// * `deck_id` - ID of the deck this card belongs to
+    /// * `prompt` - The question/prompt content (must have non-empty text)
+    /// * `answer` - The answer content (must have non-empty text)
+    /// * `created_at` - Timestamp when the card was created
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardError::InvalidPrompt` if prompt text is empty.
+    /// Returns `CardError::InvalidAnswer` if answer text is empty.
+    ///
+    /// Note: Content is already validated, so this performs additional domain-level validation.
     pub fn new(
         id: CardId,
         deck_id: DeckId,
@@ -56,6 +75,32 @@ impl Card {
             created_at,
         })
     }
+
+    // Accessors
+    #[must_use]
+    pub fn id(&self) -> CardId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn deck_id(&self) -> DeckId {
+        self.deck_id
+    }
+
+    #[must_use]
+    pub fn prompt(&self) -> &Content {
+        &self.prompt
+    }
+
+    #[must_use]
+    pub fn answer(&self) -> &Content {
+        &self.answer
+    }
+
+    #[must_use]
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
 }
 
 //
@@ -65,57 +110,56 @@ impl Card {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::content::Content;
+    use crate::model::content::ContentDraft;
 
     #[test]
-    fn empty_prompt_fails() {
-        let prompt = Content {
-            text: "".into(),
-            media: None,
-        };
+    fn valid_card_creation() {
+        let prompt = ContentDraft::text_only("What is 2+2?")
+            .validate(Utc::now(), None, None)
+            .unwrap();
 
-        let answer = Content {
-            text: "ok".into(),
-            media: None,
-        };
+        let answer = ContentDraft::text_only("4")
+            .validate(Utc::now(), None, None)
+            .unwrap();
 
-        let err = Card::new(CardId(1), DeckId(1), prompt, answer, chrono::Utc::now()).unwrap_err();
+        let card = Card::new(CardId::new(10), DeckId::new(5), prompt, answer, Utc::now()).unwrap();
 
-        matches!(err, CardError::InvalidPrompt(_));
+        assert_eq!(card.id(), CardId::new(10));
+        assert_eq!(card.deck_id(), DeckId::new(5));
+        assert_eq!(card.prompt().text(), "What is 2+2?");
+        assert_eq!(card.answer().text(), "4");
     }
 
     #[test]
-    fn empty_answer_fails() {
-        let prompt = Content {
-            text: "hello".into(),
-            media: None,
-        };
+    fn card_with_media() {
+        use crate::model::content::{ImageMeta, MediaDraft, MediaUri};
 
-        let answer = Content {
-            text: "".into(),
-            media: None,
-        };
+        let media_uri = MediaUri::from_url("https://example.com/diagram.png").unwrap();
+        let media_draft = MediaDraft::new_image(media_uri, None);
+        let now = Utc::now();
+        let meta = ImageMeta::new(800, 600).unwrap();
 
-        let err = Card::new(CardId(1), DeckId(1), prompt, answer, chrono::Utc::now()).unwrap_err();
+        let prompt = ContentDraft::with_media("Explain this diagram", media_draft)
+            .validate(now, Some(meta), None)
+            .unwrap();
 
-        matches!(err, CardError::InvalidAnswer(_));
+        let answer = ContentDraft::text_only("This shows the water cycle")
+            .validate(now, None, None)
+            .unwrap();
+
+        let card = Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now).unwrap();
+
+        assert!(card.prompt().has_media());
+        assert!(!card.answer().has_media());
     }
 
     #[test]
-    fn valid_card_passes() {
-        let prompt = Content {
-            text: "hello".into(),
-            media: None,
-        };
+    fn content_draft_rejects_empty_text() {
+        // This test verifies ContentDraft validation prevents empty content
+        let result = ContentDraft::text_only("").validate(Utc::now(), None, None);
+        assert!(result.is_err());
 
-        let answer = Content {
-            text: "world".into(),
-            media: None,
-        };
-
-        let card = Card::new(CardId(10), DeckId(5), prompt, answer, chrono::Utc::now()).unwrap();
-
-        assert_eq!(card.id, CardId(10));
-        assert_eq!(card.deck_id, DeckId(5));
+        let result = ContentDraft::text_only("   ").validate(Utc::now(), None, None);
+        assert!(result.is_err());
     }
 }
