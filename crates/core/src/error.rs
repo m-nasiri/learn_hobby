@@ -1,16 +1,17 @@
 use thiserror::Error;
 
-use crate::model::content::MediaValidationError;
-use crate::model::content::TextError;
+use crate::model::ContentValidationError;
+use crate::model::MediaValidationError;
+use crate::model::TextError;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
     MediaValidation(#[from] MediaValidationError),
+
     #[error(transparent)]
     TextValidation(#[from] TextError),
-    // #[error(transparent)]
-    // Storage(#[from] StorageError),
-    // later:
-    // Scheduler(#[from] SchedulerError),
+
+    #[error(transparent)]
+    ContentValidation(#[from] ContentValidationError),
 }
