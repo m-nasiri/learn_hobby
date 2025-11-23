@@ -2,68 +2,26 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::model::{
-    content::{Content, ContentDraft, ContentValidationError, ImageMeta, MediaHash},
+    content::{Content, ContentValidationError},
     ids::{CardId, DeckId},
 };
 
 //
-// ─── CARD TYPES ────────────────────────────────────────────────────────────────
+// ─── ERRORS ────────────────────────────────────────────────────────────────────
 //
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CardDraft {
-    pub deck_id: DeckId,
-    pub prompt: ContentDraft,
-    pub answer: ContentDraft,
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum CardError {
+    #[error("invalid prompt content: {0}")]
+    InvalidPrompt(#[source] ContentValidationError),
+
+    #[error("invalid answer content: {0}")]
+    InvalidAnswer(#[source] ContentValidationError),
 }
 
-impl CardDraft {
-    pub fn validate(
-        self,
-        now: DateTime<Utc>,
-        prompt_meta: Option<ImageMeta>,
-        answer_meta: Option<ImageMeta>,
-        prompt_checksum: Option<MediaHash>,
-        answer_checksum: Option<MediaHash>,
-    ) -> Result<ValidatedCard, CardValidationError> {
-        let prompt = self
-            .prompt
-            .validate(now, prompt_meta, prompt_checksum)
-            .map_err(CardValidationError::Prompt)?;
-
-        let answer = self
-            .answer
-            .validate(now, answer_meta, answer_checksum)
-            .map_err(CardValidationError::Answer)?;
-
-        Ok(ValidatedCard {
-            deck_id: self.deck_id,
-            prompt,
-            answer,
-            created_at: now,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidatedCard {
-    pub deck_id: DeckId,
-    pub prompt: Content,
-    pub answer: Content,
-    pub created_at: DateTime<Utc>,
-}
-
-impl ValidatedCard {
-    pub fn assign_id(self, id: CardId) -> Card {
-        Card {
-            id,
-            deck_id: self.deck_id,
-            prompt: self.prompt,
-            answer: self.answer,
-            created_at: self.created_at,
-        }
-    }
-}
+//
+// ─── CARD ──────────────────────────────────────────────────────────────────────
+//
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
@@ -74,17 +32,30 @@ pub struct Card {
     pub created_at: DateTime<Utc>,
 }
 
-//
-// ─── CARD VALIDATION ERRORS ────────────────────────────────────────────────────
-//
+impl Card {
+    pub fn new(
+        id: CardId,
+        deck_id: DeckId,
+        prompt: Content,
+        answer: Content,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, CardError> {
+        if prompt.text().trim().is_empty() {
+            return Err(CardError::InvalidPrompt(ContentValidationError::EmptyText));
+        }
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum CardValidationError {
-    #[error("invalid prompt content: {0}")]
-    Prompt(#[source] ContentValidationError),
+        if answer.text().trim().is_empty() {
+            return Err(CardError::InvalidAnswer(ContentValidationError::EmptyText));
+        }
 
-    #[error("invalid answer content: {0}")]
-    Answer(#[source] ContentValidationError),
+        Ok(Self {
+            id,
+            deck_id,
+            prompt,
+            answer,
+            created_at,
+        })
+    }
 }
 
 //
@@ -94,75 +65,57 @@ pub enum CardValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::content::{MediaDraft, MediaUri};
-    use chrono::Utc;
+    use crate::model::content::Content;
 
     #[test]
-    fn card_fails_if_prompt_text_empty() {
-        let draft = CardDraft {
-            deck_id: DeckId(1),
-            prompt: ContentDraft::text_only("   "),
-            answer: ContentDraft::text_only("ok"),
+    fn empty_prompt_fails() {
+        let prompt = Content {
+            text: "".into(),
+            media: None,
         };
 
-        let err = draft
-            .validate(Utc::now(), None, None, None, None)
-            .unwrap_err();
+        let answer = Content {
+            text: "ok".into(),
+            media: None,
+        };
 
-        assert!(matches!(err, CardValidationError::Prompt(_)));
+        let err = Card::new(CardId(1), DeckId(1), prompt, answer, chrono::Utc::now()).unwrap_err();
+
+        matches!(err, CardError::InvalidPrompt(_));
     }
 
     #[test]
-    fn card_fails_if_answer_text_empty() {
-        let draft = CardDraft {
-            deck_id: DeckId(1),
-            prompt: ContentDraft::text_only("ok"),
-            answer: ContentDraft::text_only(" "),
+    fn empty_answer_fails() {
+        let prompt = Content {
+            text: "hello".into(),
+            media: None,
         };
 
-        let err = draft
-            .validate(Utc::now(), None, None, None, None)
-            .unwrap_err();
+        let answer = Content {
+            text: "".into(),
+            media: None,
+        };
 
-        assert!(matches!(err, CardValidationError::Answer(_)));
+        let err = Card::new(CardId(1), DeckId(1), prompt, answer, chrono::Utc::now()).unwrap_err();
+
+        matches!(err, CardError::InvalidAnswer(_));
     }
 
     #[test]
-    fn card_prompt_media_requires_meta() {
-        let md = MediaDraft::new_image(MediaUri::from_file("img.png").unwrap(), None);
-
-        let draft = CardDraft {
-            deck_id: DeckId(1),
-            prompt: ContentDraft::with_media("hello", md),
-            answer: ContentDraft::text_only("ok"),
+    fn valid_card_passes() {
+        let prompt = Content {
+            text: "hello".into(),
+            media: None,
         };
 
-        let err = draft
-            .validate(Utc::now(), None, None, None, None)
-            .unwrap_err();
-
-        assert!(matches!(err, CardValidationError::Prompt(_)));
-    }
-
-    #[test]
-    fn valid_card_validates_and_assigns_id() {
-        let md = MediaDraft::new_image(MediaUri::from_file("img.png").unwrap(), None);
-
-        let draft = CardDraft {
-            deck_id: DeckId(1),
-            prompt: ContentDraft::with_media("hello", md),
-            answer: ContentDraft::text_only("ok"),
+        let answer = Content {
+            text: "world".into(),
+            media: None,
         };
 
-        let meta = ImageMeta::new(120, 80).unwrap();
-        let validated = draft
-            .validate(Utc::now(), Some(meta), None, None, None)
-            .unwrap();
+        let card = Card::new(CardId(10), DeckId(5), prompt, answer, chrono::Utc::now()).unwrap();
 
-        let card = validated.assign_id(CardId(42));
-        assert_eq!(card.id, CardId(42));
-        assert_eq!(card.deck_id, DeckId(1));
-        assert_eq!(card.prompt.text(), "hello");
-        assert_eq!(card.answer.text(), "ok");
+        assert_eq!(card.id, CardId(10));
+        assert_eq!(card.deck_id, DeckId(5));
     }
 }

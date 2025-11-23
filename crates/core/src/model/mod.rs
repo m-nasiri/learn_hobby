@@ -10,4 +10,5 @@ pub use content::{
 };
 pub use ids::{CardId, DeckId, MediaId};
 
-pub use card::{Card, CardDraft, ValidatedCard};
+pub use card::Card;
+pub use deck::Deck;
