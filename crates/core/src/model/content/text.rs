@@ -16,7 +16,7 @@ pub enum TextError {
 /// # Type Safety
 ///
 /// ```
-/// use core::model::content::text::{FrontText, BackText};
+/// use learn_core::model::content::text::{FrontText, BackText};
 ///
 /// let front = FrontText::parse("Question").unwrap();
 /// let back = BackText::parse("Answer").unwrap();
@@ -51,7 +51,7 @@ impl<T> Text<T> {
     /// # Examples
     ///
     /// ```
-    /// use core::model::content::text::FrontText;
+    /// use learn_core::model::content::text::FrontText;
     ///
     /// let text = FrontText::parse("Hello, world!").unwrap();
     /// assert_eq!(text.as_str(), "Hello, world!");
