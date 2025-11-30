@@ -8,6 +8,7 @@ use crate::model::ReviewError;
 use crate::model::TextError;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error(transparent)]
     MediaValidation(#[from] MediaValidationError),

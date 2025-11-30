@@ -9,6 +9,7 @@ use crate::model::{CardId, ReviewGrade, ReviewLog, ReviewOutcome};
 //
 
 #[derive(Debug, Error, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SchedulerError {
     #[error("FSRS scheduling failed: {0}")]
     FsrsError(String),
@@ -85,8 +86,8 @@ impl MemoryState {
 /// ```
 /// # use learn_core::scheduler::Scheduler;
 /// # use learn_core::model::{CardId, ReviewGrade};
-/// let scheduler = Scheduler::new();
-/// let now = chrono::Utc::now();
+/// let scheduler = Scheduler::new()?;
+/// let now = learn_core::time::fixed_now();
 /// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
 ///
 /// // Select outcome based on user's rating
@@ -135,14 +136,18 @@ impl ScheduledStates {
 /// ```
 /// # use learn_core::scheduler::Scheduler;
 /// # use learn_core::model::{CardId, ReviewGrade};
-/// let scheduler = Scheduler::new();
-/// let now = chrono::Utc::now();
+/// let scheduler = Scheduler::new()?;
+/// let now = learn_core::time::fixed_now();
 /// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
 /// let outcome = states.select(ReviewGrade::Good);
 ///
 /// println!("Next review in {} days", outcome.scheduled_days);
 /// # Ok::<(), learn_core::scheduler::SchedulerError>(())
 /// ```
+///
+/// # Errors
+///
+/// Returns `SchedulerError::FsrsError` if the underlying FSRS engine fails to initialize.
 pub struct Scheduler {
     fsrs: fsrs::FSRS,
     optimal_retention: f32,
@@ -158,9 +163,12 @@ pub struct AppliedReview {
 
 impl Scheduler {
     /// Create scheduler with default parameters and 0.9 retention.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::with_retention(0.9)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SchedulerError::FsrsError` if the underlying FSRS engine fails to initialize.
+    pub fn new() -> Result<Self, SchedulerError> {
+        Self::try_with_retention(0.9)
     }
 
     /// Create scheduler with custom desired retention without panicking.
@@ -187,13 +195,12 @@ impl Scheduler {
 
     /// Create scheduler with custom desired retention.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if FSRS initialization fails (should not happen with default parameters).
-    #[must_use]
-    pub fn with_retention(optimal_retention: f32) -> Self {
+    /// Returns `SchedulerError::InvalidRetention` if `optimal_retention` is not in `(0, 1]`,
+    /// or `SchedulerError::FsrsError` if the underlying FSRS engine fails to initialize.
+    pub fn with_retention(optimal_retention: f32) -> Result<Self, SchedulerError> {
         Self::try_with_retention(optimal_retention)
-            .expect("FSRS initialization with default parameters should not fail")
     }
 
     /// Schedule a brand-new card (no previous state).
@@ -210,8 +217,8 @@ impl Scheduler {
     /// ```
     /// # use learn_core::scheduler::Scheduler;
     /// # use learn_core::model::{CardId, ReviewGrade};
-    /// let scheduler = Scheduler::new();
-    /// let now = chrono::Utc::now();
+    /// let scheduler = Scheduler::new()?;
+    /// let now = learn_core::time::fixed_now();
     /// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
     /// let outcome = states.select(ReviewGrade::Good);
     /// # Ok::<(), learn_core::scheduler::SchedulerError>(())
@@ -255,10 +262,10 @@ impl Scheduler {
     /// ```
     /// # use learn_core::scheduler::{Scheduler, MemoryState};
     /// # use learn_core::model::{CardId, ReviewGrade};
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::new()?;
     ///
     /// // First review
-    /// let now = chrono::Utc::now();
+    /// let now = learn_core::time::fixed_now();
     /// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
     /// let outcome = states.select(ReviewGrade::Good);
     ///
@@ -375,12 +382,6 @@ impl Scheduler {
     }
 }
 
-impl Default for Scheduler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 //
 // ─── TESTS ─────────────────────────────────────────────────────────────────────
 //
@@ -388,10 +389,11 @@ impl Default for Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::fixed_now;
 
     #[test]
     fn scheduler_default_retention() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
         assert!((s.optimal_retention() - 0.9).abs() < f32::EPSILON);
     }
 
@@ -405,8 +407,8 @@ mod tests {
 
     #[test]
     fn schedule_new_card_produces_all_states() {
-        let s = Scheduler::new();
-        let now = Utc::now();
+        let s = Scheduler::new().unwrap();
+        let now = fixed_now();
         let states = s.schedule_new_card(CardId::new(1), now).unwrap();
 
         assert_eq!(states.card_id, CardId::new(1));
@@ -425,17 +427,17 @@ mod tests {
 
     #[test]
     fn schedule_review_increases_interval_on_good() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
 
         let first = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap();
         let first_good = first.good.clone();
 
         let mem = MemoryState::new(first_good.stability, first_good.difficulty);
 
         let later = s
-            .schedule_review(CardId::new(1), &mem, 3.0, Utc::now())
+            .schedule_review(CardId::new(1), &mem, 3.0, fixed_now())
             .unwrap();
         let later_good = later.good.clone();
 
@@ -445,17 +447,17 @@ mod tests {
 
     #[test]
     fn again_is_shorter_than_good_after_review() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
 
         let first = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap();
         let first_good = first.good.clone();
 
         let mem = MemoryState::new(first_good.stability, first_good.difficulty);
 
         let next = s
-            .schedule_review(CardId::new(1), &mem, 4.0, Utc::now())
+            .schedule_review(CardId::new(1), &mem, 4.0, fixed_now())
             .unwrap();
 
         assert!(next.again.scheduled_days < next.good.scheduled_days);
@@ -463,16 +465,16 @@ mod tests {
 
     #[test]
     fn schedule_review_rejects_negative_elapsed() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
         let outcome = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap()
             .good
             .clone();
         let memory = MemoryState::from_outcome(&outcome);
 
         let err = s
-            .schedule_review(CardId::new(1), &memory, -1.0, Utc::now())
+            .schedule_review(CardId::new(1), &memory, -1.0, fixed_now())
             .unwrap_err();
         assert!(matches!(
             err,
@@ -494,9 +496,9 @@ mod tests {
 
     #[test]
     fn memory_state_from_outcome_round_trips() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
         let states = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap();
         let outcome = states.good.clone();
 
@@ -507,8 +509,8 @@ mod tests {
 
     #[test]
     fn apply_review_new_card_returns_log_and_memory() {
-        let s = Scheduler::new();
-        let now = Utc::now();
+        let s = Scheduler::new().unwrap();
+        let now = fixed_now();
 
         let applied = s
             .apply_review(CardId::new(1), None, ReviewGrade::Good, now, 0.0)
@@ -530,14 +532,14 @@ mod tests {
 
     #[test]
     fn apply_review_existing_card_matches_schedule_review() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
         let first = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap();
         let memory = MemoryState::from_outcome(&first.good);
 
         let elapsed = 2.7;
-        let now = Utc::now();
+        let now = fixed_now();
 
         let applied = s
             .apply_review(
@@ -558,9 +560,9 @@ mod tests {
 
     #[test]
     fn apply_review_rejects_invalid_elapsed_days() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
         let first = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap();
         let memory = MemoryState::from_outcome(&first.good);
 
@@ -569,7 +571,7 @@ mod tests {
                 CardId::new(1),
                 Some(&memory),
                 ReviewGrade::Good,
-                Utc::now(),
+                fixed_now(),
                 f64::NAN,
             )
             .unwrap_err();
@@ -582,7 +584,7 @@ mod tests {
         for retention in [0.7_f32, 0.9_f32, 1.0_f32] {
             let s = Scheduler::try_with_retention(retention).unwrap();
             let states = s
-                .schedule_new_card(CardId::new(99), Utc::now())
+                .schedule_new_card(CardId::new(99), fixed_now())
                 .unwrap();
             assert!(states.again.scheduled_days <= states.hard.scheduled_days);
             assert!(states.hard.scheduled_days <= states.good.scheduled_days);
@@ -592,9 +594,9 @@ mod tests {
 
     #[test]
     fn select_picks_correct_outcome() {
-        let s = Scheduler::new();
+        let s = Scheduler::new().unwrap();
         let states = s
-            .schedule_new_card(CardId::new(1), Utc::now())
+            .schedule_new_card(CardId::new(1), fixed_now())
             .unwrap();
 
         assert_eq!(

@@ -9,6 +9,7 @@ use crate::model::ids::CardId;
 
 /// Errors that can occur during review operations.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReviewError {
     #[error("invalid review grade value: {0}")]
     InvalidGrade(u8),
@@ -143,6 +144,7 @@ impl ReviewOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::fixed_now;
 
     #[test]
     fn numeric_grade_conversion_works() {
@@ -162,14 +164,14 @@ mod tests {
 
     #[test]
     fn log_creation_works() {
-        let log = ReviewLog::new(CardId::new(10), ReviewGrade::Good, Utc::now());
+        let log = ReviewLog::new(CardId::new(10), ReviewGrade::Good, fixed_now());
         assert_eq!(log.card_id, CardId::new(10));
         assert_eq!(log.grade, ReviewGrade::Good);
     }
 
     #[test]
     fn outcome_creation_works() {
-        let now = Utc::now();
+        let now = fixed_now();
         let out = ReviewOutcome::new(now, 3.0, 4.0, 1.0, 5.0);
 
         assert_eq!(out.next_review, now);

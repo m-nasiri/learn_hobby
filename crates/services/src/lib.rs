@@ -5,3 +5,4 @@ pub use review_service::{
     compute_elapsed_days, ReviewResult, ReviewService, ReviewServiceError,
 };
 pub use session_service::{SessionBuilder, SessionError, SessionPlan, SessionReview, SessionService};
+pub use learn_core::Clock;

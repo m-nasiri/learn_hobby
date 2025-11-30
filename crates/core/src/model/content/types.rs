@@ -10,8 +10,8 @@ use crate::model::content::{ImageMeta, MediaDraft, MediaHash, MediaValidationErr
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentDraft {
-    pub text: String,
-    pub media: Option<MediaDraft>,
+    text: String,
+    media: Option<MediaDraft>,
 }
 
 /// Validated content with text and optional media reference.
@@ -29,6 +29,7 @@ pub struct Content {
 //
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ContentValidationError {
     #[error("Text content cannot be empty.")]
     EmptyText,
@@ -127,18 +128,19 @@ impl Content {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::fixed_now;
     use crate::model::content::media::MediaUri;
     #[test]
     fn empty_text_fails() {
         let d = ContentDraft::text_only("   ");
-        let err = d.validate(Utc::now(), None, None).unwrap_err();
+        let err = d.validate(fixed_now(), None, None).unwrap_err();
         assert_eq!(err, ContentValidationError::EmptyText);
     }
 
     #[test]
     fn text_only_passes() {
         let d = ContentDraft::text_only("hello");
-        let c = d.validate(Utc::now(), None, None).unwrap();
+        let c = d.validate(fixed_now(), None, None).unwrap();
         assert_eq!(c.text(), "hello");
         assert!(!c.has_media());
     }
@@ -147,7 +149,7 @@ mod tests {
     fn media_requires_meta() {
         let md = MediaDraft::new_image(MediaUri::from_file("img.png").unwrap(), None);
         let d = ContentDraft::with_media("hello", md);
-        let err = d.validate(Utc::now(), None, None).unwrap_err();
+        let err = d.validate(fixed_now(), None, None).unwrap_err();
         assert_eq!(err, ContentValidationError::MissingImageMeta);
     }
 
@@ -157,7 +159,7 @@ mod tests {
         let d = ContentDraft::with_media("hello", md);
 
         let meta = ImageMeta::new(100, 50).unwrap();
-        let c = d.validate(Utc::now(), Some(meta), None).unwrap();
+        let c = d.validate(fixed_now(), Some(meta), None).unwrap();
 
         assert_eq!(c.text(), "hello");
         assert!(c.has_media());

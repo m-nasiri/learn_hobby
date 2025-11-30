@@ -17,6 +17,7 @@ use crate::review_service::{ReviewResult, ReviewService, ReviewServiceError};
 //
 
 #[derive(Debug, Error, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SessionError {
     #[error("no cards available for session")]
     Empty,
@@ -43,6 +44,7 @@ pub struct SessionPlan {
     pub cards: Vec<Card>,
     pub due_selected: usize,
     pub new_selected: usize,
+    pub future_selected: usize,
 }
 
 impl SessionPlan {
@@ -64,6 +66,7 @@ pub struct SessionBuilder<'a> {
     deck: &'a Deck,
     now: DateTime<Utc>,
     shuffle_new: bool,
+    allow_future_due: bool,
 }
 
 impl<'a> SessionBuilder<'a> {
@@ -73,6 +76,7 @@ impl<'a> SessionBuilder<'a> {
             deck,
             now,
             shuffle_new: false,
+            allow_future_due: false,
         }
     }
 
@@ -80,6 +84,13 @@ impl<'a> SessionBuilder<'a> {
     #[must_use]
     pub fn with_shuffle_new(mut self, shuffle: bool) -> Self {
         self.shuffle_new = shuffle;
+        self
+    }
+
+    /// Allow pulling not-yet-due review cards if there are not enough due/new cards.
+    #[must_use]
+    pub fn with_future_due(mut self, allow: bool) -> Self {
+        self.allow_future_due = allow;
         self
     }
 
@@ -134,10 +145,31 @@ impl<'a> SessionBuilder<'a> {
             selected.extend(new_cards);
         }
 
+        let remaining = micro_cap.saturating_sub(selected.len());
+        let mut future_count = 0;
+        if remaining > 0 && self.allow_future_due {
+            let mut future_due: Vec<Card> = pool
+                .iter()
+                .filter(|c| {
+                    c.review_count() > 0
+                        && c.next_review_at() > now
+                        && !selected_ids.contains(&c.id())
+                })
+                .cloned()
+                .collect();
+            future_due.sort_by_key(Card::next_review_at);
+
+            let extras: Vec<Card> = future_due.into_iter().take(remaining).collect();
+            future_count = extras.len();
+            selected_ids.extend(extras.iter().map(Card::id));
+            selected.extend(extras);
+        }
+
         SessionPlan {
             cards: selected,
             due_selected: due_count,
             new_selected: new_count,
+            future_selected: future_count,
         }
     }
 }
@@ -166,7 +198,6 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns `SessionError::Empty` if no cards are provided.
-    /// Propagates scheduler/review errors via `SessionError::Review`.
     pub fn new(
         deck: &Deck,
         mut cards: Vec<Card>,
@@ -179,12 +210,13 @@ impl SessionService {
             return Err(SessionError::Empty);
         }
 
+        let now = review_service.now();
         Ok(Self {
             deck_id: deck.id(),
             cards,
             current: 0,
             results: Vec::new(),
-            started_at: Utc::now(),
+            started_at: now,
             completed_at: None,
             review_service,
         })
@@ -195,13 +227,13 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns `SessionError::Empty` if no cards are provided.
-    /// Propagates scheduler/review errors via `SessionError::Review`.
     pub fn with_scheduler(
         deck: &Deck,
         cards: Vec<Card>,
         scheduler: Scheduler,
     ) -> Result<Self, SessionError> {
-        Self::new(deck, cards, ReviewService::with_scheduler(scheduler))
+        let service = ReviewService::with_scheduler(scheduler);
+        Self::new(deck, cards, service)
     }
 
     #[must_use]
@@ -265,7 +297,6 @@ impl SessionService {
     pub fn answer_current(
         &mut self,
         grade: ReviewGrade,
-        reviewed_at: DateTime<Utc>,
     ) -> Result<&SessionReview, SessionError> {
         if self.is_complete() {
             return Err(SessionError::Completed);
@@ -275,7 +306,10 @@ impl SessionService {
             return Err(SessionError::Completed);
         };
 
-        let result = self.review_service.review_card(card, grade, reviewed_at)?;
+        let reviewed_at = self.review_service.now();
+        let result = self
+            .review_service
+            .review_card(card, grade, reviewed_at)?;
 
         self.results.push(SessionReview {
             card_id: card.id(),
@@ -304,20 +338,6 @@ impl fmt::Debug for SessionService {
     }
 }
 
-impl Default for SessionService {
-    fn default() -> Self {
-        Self {
-            deck_id: DeckId::new(0),
-            cards: Vec::new(),
-            current: 0,
-            results: Vec::new(),
-            started_at: Utc::now(),
-            completed_at: Some(Utc::now()),
-            review_service: ReviewService::new(),
-        }
-    }
-}
-
 //
 // ─── TESTS ─────────────────────────────────────────────────────────────────────
 //
@@ -325,17 +345,19 @@ impl Default for SessionService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use learn_core::model::{DeckId, content::ContentDraft};
+    use learn_core::model::{DeckId, ReviewOutcome, content::ContentDraft};
     use learn_core::scheduler::Scheduler;
+    use learn_core::time::fixed_now;
+    use learn_core::Clock;
 
     fn build_card(id: u64) -> Card {
         let prompt = ContentDraft::text_only("Q")
-            .validate(Utc::now(), None, None)
+            .validate(fixed_now(), None, None)
             .unwrap();
         let answer = ContentDraft::text_only("A")
-            .validate(Utc::now(), None, None)
+            .validate(fixed_now(), None, None)
             .unwrap();
-        let now = Utc::now();
+        let now = fixed_now();
         Card::new(
             learn_core::model::CardId::new(id),
             DeckId::new(1),
@@ -353,14 +375,14 @@ mod tests {
             "Test",
             None,
             learn_core::model::DeckSettings::default_for_adhd(),
-            Utc::now(),
+            fixed_now(),
         )
         .unwrap()
     }
 
     fn build_due_card(id: u64, reviewed_days_ago: i64) -> Card {
         let mut card = build_card(id);
-        let scheduler = Scheduler::new();
+        let scheduler = Scheduler::new().unwrap();
         let reviewed_at = Utc::now() - chrono::Duration::days(reviewed_days_ago);
         let applied = scheduler
             .apply_review(card.id(), None, ReviewGrade::Good, reviewed_at, 0.0)
@@ -373,7 +395,8 @@ mod tests {
     fn session_honors_micro_session_size() {
         let deck = build_deck();
         let cards = vec![build_card(1), build_card(2), build_card(3)];
-        let session = SessionService::new(&deck, cards, ReviewService::new()).unwrap();
+        let session =
+            SessionService::new(&deck, cards, ReviewService::new().unwrap()).unwrap();
 
         let expected = deck.settings().micro_session_size().min(3) as usize;
         assert_eq!(session.cards.len(), expected);
@@ -396,6 +419,7 @@ mod tests {
         assert!(plan.cards.iter().any(|c| c.id() == due.id()));
         assert!(plan.new_selected <= deck.settings().new_cards_per_day() as usize);
         assert!(plan.cards.len() <= deck.settings().micro_session_size() as usize);
+        assert_eq!(plan.future_selected, 0);
     }
 
     #[test]
@@ -415,35 +439,62 @@ mod tests {
     }
 
     #[test]
+    fn builder_can_pull_future_due_when_enabled() {
+        let deck = build_deck();
+        let future_due = {
+            let mut card = build_card(10);
+            let tomorrow = Utc::now() + chrono::Duration::days(1);
+            card.apply_review(
+                &ReviewOutcome::new(tomorrow, 1.0, 1.0, 0.0, 1.0),
+                Utc::now(),
+            );
+            card
+        };
+        let due = build_due_card(1, 2);
+        let new_card = build_card(2);
+
+        let plan = SessionBuilder::new(&deck, Utc::now())
+            .with_future_due(true)
+            .build(vec![future_due.clone(), due.clone(), new_card.clone()]);
+
+        assert!(plan.cards.iter().any(|c| c.id() == due.id()));
+        assert!(plan.cards.iter().any(|c| c.id() == future_due.id()));
+        assert!(plan.future_selected <= deck.settings().micro_session_size() as usize);
+    }
+
+    #[test]
     fn empty_session_returns_error() {
         let deck = build_deck();
-        let err = SessionService::new(&deck, Vec::new(), ReviewService::new()).unwrap_err();
+        let service = ReviewService::new()
+            .unwrap()
+            .with_clock(Clock::fixed(fixed_now()));
+        let err = SessionService::new(&deck, Vec::new(), service).unwrap_err();
         assert!(matches!(err, SessionError::Empty));
     }
 
     #[test]
     fn session_advances_and_completes() {
         let deck = build_deck();
+        let review_service =
+            ReviewService::new().unwrap().with_clock(Clock::fixed(fixed_now()));
         let mut session = SessionService::new(
             &deck,
             vec![build_card(1), build_card(2)],
-            ReviewService::new(),
+            review_service,
         )
         .unwrap();
 
         assert!(!session.is_complete());
         let first_card_id = session.current_card().unwrap().id();
-        let t1 = Utc::now();
-        let res1 = session.answer_current(ReviewGrade::Good, t1).unwrap();
+        let res1 = session.answer_current(ReviewGrade::Good).unwrap();
         assert_eq!(res1.card_id, first_card_id);
         assert_eq!(session.results.len(), 1);
         assert!(!session.is_complete());
 
         let second_card_id = session.current_card().unwrap().id();
-        let t2 = t1 + chrono::Duration::minutes(1);
-        let res2 = session.answer_current(ReviewGrade::Hard, t2).unwrap();
+        let res2 = session.answer_current(ReviewGrade::Hard).unwrap();
         assert_eq!(res2.card_id, second_card_id);
         assert!(session.is_complete());
-        assert_eq!(session.completed_at(), Some(t2));
+        assert!(session.completed_at().is_some());
     }
 }

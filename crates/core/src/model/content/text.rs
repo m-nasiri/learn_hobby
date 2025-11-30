@@ -3,6 +3,7 @@ use thiserror::Error;
 
 /// Errors that can occur when validating text content.
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TextError {
     #[error("Text cannot be empty.")]
     Empty,

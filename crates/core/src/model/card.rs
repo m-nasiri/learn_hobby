@@ -12,6 +12,7 @@ use crate::scheduler::MemoryState;
 //
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CardError {
     #[error("invalid prompt content: {0}")]
     InvalidPrompt(#[source] ContentValidationError),
@@ -169,18 +170,19 @@ impl Card {
 mod tests {
     use super::*;
     use crate::model::content::ContentDraft;
+    use crate::time::fixed_now;
 
     #[test]
     fn valid_card_creation() {
         let prompt = ContentDraft::text_only("What is 2+2?")
-            .validate(Utc::now(), None, None)
+            .validate(fixed_now(), None, None)
             .unwrap();
 
         let answer = ContentDraft::text_only("4")
-            .validate(Utc::now(), None, None)
+            .validate(fixed_now(), None, None)
             .unwrap();
 
-        let now = Utc::now();
+        let now = fixed_now();
         let card = Card::new(CardId::new(10), DeckId::new(5), prompt, answer, now, now).unwrap();
 
         assert_eq!(card.id(), CardId::new(10));
@@ -195,7 +197,7 @@ mod tests {
 
         let media_uri = MediaUri::from_url("https://example.com/diagram.png").unwrap();
         let media_draft = MediaDraft::new_image(media_uri, None);
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta::new(800, 600).unwrap();
 
         let prompt = ContentDraft::with_media("Explain this diagram", media_draft)
@@ -215,10 +217,10 @@ mod tests {
     #[test]
     fn content_draft_rejects_empty_text() {
         // This test verifies ContentDraft validation prevents empty content
-        let result = ContentDraft::text_only("").validate(Utc::now(), None, None);
+        let result = ContentDraft::text_only("").validate(fixed_now(), None, None);
         assert!(result.is_err());
 
-        let result = ContentDraft::text_only("   ").validate(Utc::now(), None, None);
+        let result = ContentDraft::text_only("   ").validate(fixed_now(), None, None);
         assert!(result.is_err());
     }
 }
