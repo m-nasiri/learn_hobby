@@ -2925,6 +2925,11 @@ dependencies = [
 [[package]]
 name = "services"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "learn-core",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "sharded-slab"

@@ -10,8 +10,8 @@ use crate::model::ids::CardId;
 /// Errors that can occur during review operations.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReviewError {
-    #[error("invalid review grade")]
-    InvalidGrade,
+    #[error("invalid review grade value: {0}")]
+    InvalidGrade(u8),
 }
 
 //
@@ -49,7 +49,18 @@ impl ReviewGrade {
             1 => Ok(Self::Hard),
             2 => Ok(Self::Good),
             3 => Ok(Self::Easy),
-            _ => Err(ReviewError::InvalidGrade),
+            _ => Err(ReviewError::InvalidGrade(value)),
+        }
+    }
+
+    /// Maps this grade to the FSRS 1-4 rating scale.
+    #[must_use]
+    pub fn to_fsrs_rating(self) -> u8 {
+        match self {
+            ReviewGrade::Again => 1,
+            ReviewGrade::Hard => 2,
+            ReviewGrade::Good => 3,
+            ReviewGrade::Easy => 4,
         }
     }
 }
@@ -137,7 +148,16 @@ mod tests {
     fn numeric_grade_conversion_works() {
         assert_eq!(ReviewGrade::from_u8(0).unwrap(), ReviewGrade::Again);
         assert_eq!(ReviewGrade::from_u8(3).unwrap(), ReviewGrade::Easy);
-        assert!(ReviewGrade::from_u8(5).is_err());
+        let err = ReviewGrade::from_u8(5).unwrap_err();
+        assert!(matches!(err, ReviewError::InvalidGrade(5)));
+    }
+
+    #[test]
+    fn to_fsrs_rating_mapping_is_correct() {
+        assert_eq!(ReviewGrade::Again.to_fsrs_rating(), 1);
+        assert_eq!(ReviewGrade::Hard.to_fsrs_rating(), 2);
+        assert_eq!(ReviewGrade::Good.to_fsrs_rating(), 3);
+        assert_eq!(ReviewGrade::Easy.to_fsrs_rating(), 4);
     }
 
     #[test]

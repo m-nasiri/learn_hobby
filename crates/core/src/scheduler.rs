@@ -86,7 +86,8 @@ impl MemoryState {
 /// # use learn_core::scheduler::Scheduler;
 /// # use learn_core::model::{CardId, ReviewGrade};
 /// let scheduler = Scheduler::new();
-/// let states = scheduler.schedule_new_card(CardId::new(1))?;
+/// let now = chrono::Utc::now();
+/// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
 ///
 /// // Select outcome based on user's rating
 /// let outcome = states.select(ReviewGrade::Good);
@@ -135,7 +136,8 @@ impl ScheduledStates {
 /// # use learn_core::scheduler::Scheduler;
 /// # use learn_core::model::{CardId, ReviewGrade};
 /// let scheduler = Scheduler::new();
-/// let states = scheduler.schedule_new_card(CardId::new(1))?;
+/// let now = chrono::Utc::now();
+/// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
 /// let outcome = states.select(ReviewGrade::Good);
 ///
 /// println!("Next review in {} days", outcome.scheduled_days);
@@ -209,24 +211,27 @@ impl Scheduler {
     /// # use learn_core::scheduler::Scheduler;
     /// # use learn_core::model::{CardId, ReviewGrade};
     /// let scheduler = Scheduler::new();
-    /// let states = scheduler.schedule_new_card(CardId::new(1))?;
+    /// let now = chrono::Utc::now();
+    /// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
     /// let outcome = states.select(ReviewGrade::Good);
     /// # Ok::<(), learn_core::scheduler::SchedulerError>(())
     /// ```
-    pub fn schedule_new_card(&self, card_id: CardId) -> Result<ScheduledStates, SchedulerError> {
+    pub fn schedule_new_card(
+        &self,
+        card_id: CardId,
+        reviewed_at: DateTime<Utc>,
+    ) -> Result<ScheduledStates, SchedulerError> {
         let next = self
             .fsrs
             .next_states(None, self.optimal_retention, 0)
             .map_err(|e| SchedulerError::FsrsError(e.to_string()))?;
 
-        let now = Utc::now();
-
         Ok(ScheduledStates {
             card_id,
-            again: self.to_outcome(&next.again, now, 0.0),
-            hard: self.to_outcome(&next.hard, now, 0.0),
-            good: self.to_outcome(&next.good, now, 0.0),
-            easy: self.to_outcome(&next.easy, now, 0.0),
+            again: self.to_outcome(&next.again, reviewed_at, 0.0),
+            hard: self.to_outcome(&next.hard, reviewed_at, 0.0),
+            good: self.to_outcome(&next.good, reviewed_at, 0.0),
+            easy: self.to_outcome(&next.easy, reviewed_at, 0.0),
         })
     }
 
@@ -253,14 +258,15 @@ impl Scheduler {
     /// let scheduler = Scheduler::new();
     ///
     /// // First review
-    /// let states = scheduler.schedule_new_card(CardId::new(1))?;
+    /// let now = chrono::Utc::now();
+    /// let states = scheduler.schedule_new_card(CardId::new(1), now)?;
     /// let outcome = states.select(ReviewGrade::Good);
     ///
     /// // Save the memory state with the card
     /// let memory = MemoryState::new(outcome.stability, outcome.difficulty);
     ///
     /// // Later: next review (3 days elapsed)
-    /// let states = scheduler.schedule_review(CardId::new(1), &memory, 3.0)?;
+    /// let states = scheduler.schedule_review(CardId::new(1), &memory, 3.0, now)?;
     /// # Ok::<(), learn_core::scheduler::SchedulerError>(())
     /// ```
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -269,6 +275,7 @@ impl Scheduler {
         card_id: CardId,
         state: &MemoryState,
         elapsed_days: f64,
+        reviewed_at: DateTime<Utc>,
     ) -> Result<ScheduledStates, SchedulerError> {
         if !elapsed_days.is_finite() || elapsed_days < 0.0 {
             return Err(SchedulerError::InvalidElapsedDays { provided: elapsed_days });
@@ -288,14 +295,12 @@ impl Scheduler {
             )
             .map_err(|e| SchedulerError::FsrsError(e.to_string()))?;
 
-        let now = Utc::now();
-
         Ok(ScheduledStates {
             card_id,
-            again: self.to_outcome(&next.again, now, elapsed_days),
-            hard: self.to_outcome(&next.hard, now, elapsed_days),
-            good: self.to_outcome(&next.good, now, elapsed_days),
-            easy: self.to_outcome(&next.easy, now, elapsed_days),
+            again: self.to_outcome(&next.again, reviewed_at, elapsed_days),
+            hard: self.to_outcome(&next.hard, reviewed_at, elapsed_days),
+            good: self.to_outcome(&next.good, reviewed_at, elapsed_days),
+            easy: self.to_outcome(&next.easy, reviewed_at, elapsed_days),
         })
     }
 
@@ -354,8 +359,8 @@ impl Scheduler {
         elapsed_days: f64,
     ) -> Result<AppliedReview, SchedulerError> {
         let states = match previous_state {
-            Some(state) => self.schedule_review(card_id, state, elapsed_days)?,
-            None => self.schedule_new_card(card_id)?,
+            Some(state) => self.schedule_review(card_id, state, elapsed_days, reviewed_at)?,
+            None => self.schedule_new_card(card_id, reviewed_at)?,
         };
 
         let outcome = states.select(grade).clone();
@@ -401,7 +406,8 @@ mod tests {
     #[test]
     fn schedule_new_card_produces_all_states() {
         let s = Scheduler::new();
-        let states = s.schedule_new_card(CardId::new(1)).unwrap();
+        let now = Utc::now();
+        let states = s.schedule_new_card(CardId::new(1), now).unwrap();
 
         assert_eq!(states.card_id, CardId::new(1));
 
@@ -421,12 +427,16 @@ mod tests {
     fn schedule_review_increases_interval_on_good() {
         let s = Scheduler::new();
 
-        let first = s.schedule_new_card(CardId::new(1)).unwrap();
+        let first = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap();
         let first_good = first.good.clone();
 
         let mem = MemoryState::new(first_good.stability, first_good.difficulty);
 
-        let later = s.schedule_review(CardId::new(1), &mem, 3.0).unwrap();
+        let later = s
+            .schedule_review(CardId::new(1), &mem, 3.0, Utc::now())
+            .unwrap();
         let later_good = later.good.clone();
 
         assert!(later_good.scheduled_days >= first_good.scheduled_days);
@@ -437,12 +447,16 @@ mod tests {
     fn again_is_shorter_than_good_after_review() {
         let s = Scheduler::new();
 
-        let first = s.schedule_new_card(CardId::new(1)).unwrap();
+        let first = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap();
         let first_good = first.good.clone();
 
         let mem = MemoryState::new(first_good.stability, first_good.difficulty);
 
-        let next = s.schedule_review(CardId::new(1), &mem, 4.0).unwrap();
+        let next = s
+            .schedule_review(CardId::new(1), &mem, 4.0, Utc::now())
+            .unwrap();
 
         assert!(next.again.scheduled_days < next.good.scheduled_days);
     }
@@ -450,11 +464,15 @@ mod tests {
     #[test]
     fn schedule_review_rejects_negative_elapsed() {
         let s = Scheduler::new();
-        let outcome = s.schedule_new_card(CardId::new(1)).unwrap().good.clone();
+        let outcome = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap()
+            .good
+            .clone();
         let memory = MemoryState::from_outcome(&outcome);
 
         let err = s
-            .schedule_review(CardId::new(1), &memory, -1.0)
+            .schedule_review(CardId::new(1), &memory, -1.0, Utc::now())
             .unwrap_err();
         assert!(matches!(
             err,
@@ -477,7 +495,9 @@ mod tests {
     #[test]
     fn memory_state_from_outcome_round_trips() {
         let s = Scheduler::new();
-        let states = s.schedule_new_card(CardId::new(1)).unwrap();
+        let states = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap();
         let outcome = states.good.clone();
 
         let memory = MemoryState::from_outcome(&outcome);
@@ -499,7 +519,9 @@ mod tests {
         assert_eq!(applied.log.reviewed_at, now);
         assert_eq!(applied.memory.stability, applied.outcome.stability);
 
-        let direct = s.schedule_new_card(CardId::new(1)).unwrap();
+        let direct = s
+            .schedule_new_card(CardId::new(1), now)
+            .unwrap();
         assert_eq!(
             applied.outcome.scheduled_days,
             direct.good.scheduled_days
@@ -509,7 +531,9 @@ mod tests {
     #[test]
     fn apply_review_existing_card_matches_schedule_review() {
         let s = Scheduler::new();
-        let first = s.schedule_new_card(CardId::new(1)).unwrap();
+        let first = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap();
         let memory = MemoryState::from_outcome(&first.good);
 
         let elapsed = 2.7;
@@ -525,7 +549,7 @@ mod tests {
             )
             .unwrap();
         let direct = s
-            .schedule_review(CardId::new(1), &memory, elapsed)
+            .schedule_review(CardId::new(1), &memory, elapsed, now)
             .unwrap();
 
         assert_eq!(applied.outcome.scheduled_days, direct.hard.scheduled_days);
@@ -535,7 +559,9 @@ mod tests {
     #[test]
     fn apply_review_rejects_invalid_elapsed_days() {
         let s = Scheduler::new();
-        let first = s.schedule_new_card(CardId::new(1)).unwrap();
+        let first = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap();
         let memory = MemoryState::from_outcome(&first.good);
 
         let err = s
@@ -555,7 +581,9 @@ mod tests {
     fn schedule_new_monotonic_for_various_retentions() {
         for retention in [0.7_f32, 0.9_f32, 1.0_f32] {
             let s = Scheduler::try_with_retention(retention).unwrap();
-            let states = s.schedule_new_card(CardId::new(99)).unwrap();
+            let states = s
+                .schedule_new_card(CardId::new(99), Utc::now())
+                .unwrap();
             assert!(states.again.scheduled_days <= states.hard.scheduled_days);
             assert!(states.hard.scheduled_days <= states.good.scheduled_days);
             assert!(states.good.scheduled_days <= states.easy.scheduled_days);
@@ -565,7 +593,9 @@ mod tests {
     #[test]
     fn select_picks_correct_outcome() {
         let s = Scheduler::new();
-        let states = s.schedule_new_card(CardId::new(1)).unwrap();
+        let states = s
+            .schedule_new_card(CardId::new(1), Utc::now())
+            .unwrap();
 
         assert_eq!(
             states.select(ReviewGrade::Good).scheduled_days,

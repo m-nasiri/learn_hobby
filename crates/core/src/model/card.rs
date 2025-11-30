@@ -4,8 +4,9 @@ use thiserror::Error;
 use crate::model::{
     content::{Content, ContentValidationError},
     ids::{CardId, DeckId},
+    review::ReviewOutcome,
 };
-
+use crate::scheduler::MemoryState;
 //
 // ─── ERRORS ────────────────────────────────────────────────────────────────────
 //
@@ -26,13 +27,18 @@ pub enum CardError {
 /// A flashcard with a prompt (question) and answer.
 ///
 /// Cards are validated at construction to ensure both prompt and answer contain non-empty text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     id: CardId,
     deck_id: DeckId,
     prompt: Content,
     answer: Content,
     created_at: DateTime<Utc>,
+    next_review_at: DateTime<Utc>,
+    last_review_at: Option<DateTime<Utc>>,
+    review_count: u32,
+    stability: f64,
+    difficulty: f64,
 }
 
 impl Card {
@@ -45,6 +51,7 @@ impl Card {
     /// * `prompt` - The question/prompt content (must have non-empty text)
     /// * `answer` - The answer content (must have non-empty text)
     /// * `created_at` - Timestamp when the card was created
+    /// * `next_review_at` - Timestamp for the next review
     ///
     /// # Errors
     ///
@@ -58,6 +65,7 @@ impl Card {
         prompt: Content,
         answer: Content,
         created_at: DateTime<Utc>,
+        next_review_at: DateTime<Utc>,
     ) -> Result<Self, CardError> {
         if prompt.text().trim().is_empty() {
             return Err(CardError::InvalidPrompt(ContentValidationError::EmptyText));
@@ -73,6 +81,11 @@ impl Card {
             prompt,
             answer,
             created_at,
+            next_review_at,
+            last_review_at: None,
+            review_count: 0,
+            stability: 0.0,
+            difficulty: 0.0,
         })
     }
 
@@ -101,6 +114,51 @@ impl Card {
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
+
+    #[must_use]
+    pub fn next_review_at(&self) -> DateTime<Utc> {
+        self.next_review_at
+    }
+
+    #[must_use]
+    pub fn last_review_at(&self) -> Option<DateTime<Utc>> {
+        self.last_review_at
+    }
+
+    #[must_use]
+    pub fn review_count(&self) -> u32 {
+        self.review_count
+    }
+
+    #[must_use]
+    pub fn is_new(&self) -> bool {
+        self.review_count == 0
+    }
+
+    #[must_use]
+    pub fn is_due(&self, now: DateTime<Utc>) -> bool {
+        self.next_review_at <= now
+    }
+
+    #[must_use]
+    pub fn memory_state(&self) -> Option<MemoryState> {
+        if self.review_count == 0 {
+            None
+        } else {
+            Some(MemoryState {
+                stability: self.stability,
+                difficulty: self.difficulty,
+            })
+        }
+    }
+
+    pub fn apply_review(&mut self, outcome: &ReviewOutcome, reviewed_at: DateTime<Utc>) {
+        self.stability = outcome.stability;
+        self.difficulty = outcome.difficulty;
+        self.next_review_at = outcome.next_review;
+        self.last_review_at = Some(reviewed_at);
+        self.review_count = self.review_count.saturating_add(1);
+    }
 }
 
 //
@@ -122,7 +180,8 @@ mod tests {
             .validate(Utc::now(), None, None)
             .unwrap();
 
-        let card = Card::new(CardId::new(10), DeckId::new(5), prompt, answer, Utc::now()).unwrap();
+        let now = Utc::now();
+        let card = Card::new(CardId::new(10), DeckId::new(5), prompt, answer, now, now).unwrap();
 
         assert_eq!(card.id(), CardId::new(10));
         assert_eq!(card.deck_id(), DeckId::new(5));
@@ -147,7 +206,7 @@ mod tests {
             .validate(now, None, None)
             .unwrap();
 
-        let card = Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now).unwrap();
+        let card = Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap();
 
         assert!(card.prompt().has_media());
         assert!(!card.answer().has_media());
