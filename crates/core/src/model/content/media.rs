@@ -283,6 +283,7 @@ impl MediaDraft {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::fixed_now;
 
     // ─── MediaUri Tests ─────────────────────────────────────────────────
 
@@ -441,7 +442,7 @@ mod tests {
         let alt = MediaAltText::new("Test image").ok();
         let draft = MediaDraft::new_image(uri, alt);
 
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta::new(1920, 1080).unwrap();
         let checksum = Some(MediaHash::new("abc123"));
 
@@ -460,7 +461,7 @@ mod tests {
         let uri = MediaUri::from_file("/path/to/image.png").unwrap();
         let draft = MediaDraft::new_image(uri, None);
 
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta {
             width: 0,
             height: 1080,
@@ -475,7 +476,7 @@ mod tests {
         let uri = MediaUri::from_url("https://example.com/image.jpg").unwrap();
         let draft = MediaDraft::new_image(uri, None);
 
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta::new(800, 600).unwrap();
 
         let result = draft.validate(now, meta, None);
@@ -490,7 +491,7 @@ mod tests {
         let uri = MediaUri::from_file("/path/to/image.png").unwrap();
         let draft = MediaDraft::new_image(uri, None);
 
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta::new(1920, 1080).unwrap();
 
         let media_item = draft.validate(now, meta, None).unwrap();
@@ -512,7 +513,7 @@ mod tests {
         let draft = MediaDraft::new_image(uri.clone(), Some(alt.clone()));
 
         // Validate and create media item
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta::new(4096, 2160).unwrap();
         let checksum = MediaHash::new("sha256:abcdef");
 
@@ -571,7 +572,7 @@ mod tests {
         let alt = MediaAltText::new("Product showcase photo").unwrap();
         let draft = MediaDraft::new_image(uri.clone(), Some(alt.clone()));
 
-        let now = Utc::now();
+        let now = fixed_now();
         let meta = ImageMeta::new(2048, 1536).unwrap();
 
         let media_item = draft.validate(now, meta, None).unwrap();

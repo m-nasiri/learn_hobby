@@ -177,12 +177,12 @@ impl Deck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use crate::time::fixed_now;
 
     #[test]
     fn deck_new_rejects_empty_name() {
         let settings = DeckSettings::default_for_adhd();
-        let err = Deck::new(DeckId::new(1), "   ", None, settings, Utc::now()).unwrap_err();
+        let err = Deck::new(DeckId::new(1), "   ", None, settings, fixed_now()).unwrap_err();
         assert_eq!(err, DeckError::EmptyName);
     }
 
@@ -208,7 +208,7 @@ mod tests {
             "German B1",
             Some("verbs + phrases".into()),
             settings,
-            Utc::now(),
+            fixed_now(),
         )
         .unwrap();
 
@@ -226,7 +226,7 @@ mod tests {
             "  Spanish  ",
             Some("  grammar  ".into()),
             settings,
-            Utc::now(),
+            fixed_now(),
         )
         .unwrap();
 
@@ -242,7 +242,7 @@ mod tests {
             "French",
             Some("   ".into()),
             settings,
-            Utc::now(),
+            fixed_now(),
         )
         .unwrap();
 
