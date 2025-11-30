@@ -7,3 +7,4 @@ edition = "2024"
 chrono = "0.4"
 thiserror = "1"
 learn-core = { path = "../core" }
+rand = { version = "0.8", features = ["std"] }

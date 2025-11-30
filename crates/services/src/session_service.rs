@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
-use thiserror::Error;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use std::collections::HashSet;
 use std::fmt;
+use thiserror::Error;
 
 use learn_core::{
     model::{Card, CardId, Deck, DeckId, ReviewGrade},
@@ -32,6 +35,111 @@ pub enum SessionError {
 pub struct SessionReview {
     pub card_id: CardId,
     pub result: ReviewResult,
+}
+
+/// Selection result for a session build.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionPlan {
+    pub cards: Vec<Card>,
+    pub due_selected: usize,
+    pub new_selected: usize,
+}
+
+impl SessionPlan {
+    /// Total number of cards in this plan.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.cards.len()
+    }
+
+    /// Returns true when no cards were selected for this session.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cards.is_empty()
+    }
+}
+
+/// Builds a micro-session by picking due and new cards according to deck settings.
+pub struct SessionBuilder<'a> {
+    deck: &'a Deck,
+    now: DateTime<Utc>,
+    shuffle_new: bool,
+}
+
+impl<'a> SessionBuilder<'a> {
+    #[must_use]
+    pub fn new(deck: &'a Deck, now: DateTime<Utc>) -> Self {
+        Self {
+            deck,
+            now,
+            shuffle_new: false,
+        }
+    }
+
+    /// Enable or disable shuffling among new cards before selection.
+    #[must_use]
+    pub fn with_shuffle_new(mut self, shuffle: bool) -> Self {
+        self.shuffle_new = shuffle;
+        self
+    }
+
+    /// Build a session plan from a pool of cards.
+    ///
+    /// - Prioritizes due cards (`review_count` > 0 and `next_review_at` <= now), sorted by next review time.
+    /// - Then adds new cards (`review_count` == 0), capped by deck `new_cards_per_day`.
+    /// - Total selected cards are capped by `micro_session_size`.
+    pub fn build(self, cards: impl IntoIterator<Item = Card>) -> SessionPlan {
+        let settings = self.deck.settings();
+        let micro_cap = settings.micro_session_size() as usize;
+        let due_cap = settings.review_limit_per_day() as usize;
+        let new_cap = settings.new_cards_per_day() as usize;
+
+        let now = self.now;
+        let pool: Vec<Card> = cards.into_iter().collect();
+
+        let mut due: Vec<Card> = pool
+            .iter()
+            .filter(|c| c.review_count() > 0 && c.next_review_at() <= now)
+            .cloned()
+            .collect();
+        due.sort_by_key(Card::next_review_at);
+
+        let mut selected = Vec::new();
+
+        let due_take = due_cap.min(micro_cap);
+        let due_selected = due.into_iter().take(due_take).collect::<Vec<_>>();
+        let due_count = due_selected.len();
+        selected.extend(due_selected);
+
+        let mut selected_ids: HashSet<_> = selected.iter().map(Card::id).collect();
+
+        let remaining = micro_cap.saturating_sub(selected.len());
+        let mut new_count = 0;
+        if remaining > 0 && new_cap > 0 {
+            let take = new_cap.min(remaining);
+            let mut new_candidates: Vec<Card> = pool
+                .iter()
+                .filter(|c| c.review_count() == 0 && !selected_ids.contains(&c.id()))
+                .cloned()
+                .collect();
+
+            if self.shuffle_new {
+                let mut rng = thread_rng();
+                new_candidates.as_mut_slice().shuffle(&mut rng);
+            }
+
+            let new_cards: Vec<Card> = new_candidates.into_iter().take(take).collect();
+            new_count = new_cards.len();
+            selected_ids.extend(new_cards.iter().map(Card::id));
+            selected.extend(new_cards);
+        }
+
+        SessionPlan {
+            cards: selected,
+            due_selected: due_count,
+            new_selected: new_count,
+        }
+    }
 }
 
 //
@@ -179,9 +287,7 @@ impl SessionService {
             self.completed_at = Some(reviewed_at);
         }
 
-        self.results
-            .last()
-            .ok_or(SessionError::Completed)
+        self.results.last().ok_or(SessionError::Completed)
     }
 }
 
@@ -220,6 +326,7 @@ impl Default for SessionService {
 mod tests {
     use super::*;
     use learn_core::model::{DeckId, content::ContentDraft};
+    use learn_core::scheduler::Scheduler;
 
     fn build_card(id: u64) -> Card {
         let prompt = ContentDraft::text_only("Q")
@@ -251,6 +358,17 @@ mod tests {
         .unwrap()
     }
 
+    fn build_due_card(id: u64, reviewed_days_ago: i64) -> Card {
+        let mut card = build_card(id);
+        let scheduler = Scheduler::new();
+        let reviewed_at = Utc::now() - chrono::Duration::days(reviewed_days_ago);
+        let applied = scheduler
+            .apply_review(card.id(), None, ReviewGrade::Good, reviewed_at, 0.0)
+            .unwrap();
+        card.apply_review(&applied.outcome, reviewed_at);
+        card
+    }
+
     #[test]
     fn session_honors_micro_session_size() {
         let deck = build_deck();
@@ -259,6 +377,41 @@ mod tests {
 
         let expected = deck.settings().micro_session_size().min(3) as usize;
         assert_eq!(session.cards.len(), expected);
+    }
+
+    #[test]
+    fn builder_prioritizes_due_and_limits_new() {
+        let deck = build_deck();
+        let due = build_due_card(1, 2);
+        let new1 = build_card(2);
+        let new2 = build_card(3);
+
+        let plan = SessionBuilder::new(&deck, Utc::now()).build(vec![
+            new1.clone(),
+            due.clone(),
+            new2.clone(),
+        ]);
+
+        assert_eq!(plan.due_selected, 1);
+        assert!(plan.cards.iter().any(|c| c.id() == due.id()));
+        assert!(plan.new_selected <= deck.settings().new_cards_per_day() as usize);
+        assert!(plan.cards.len() <= deck.settings().micro_session_size() as usize);
+    }
+
+    #[test]
+    fn builder_caps_micro_session_size() {
+        let mut cards = Vec::new();
+        for i in 0..10 {
+            let card = if i % 2 == 0 {
+                build_due_card(i, 2)
+            } else {
+                build_card(i)
+            };
+            cards.push(card);
+        }
+        let deck = build_deck();
+        let plan = SessionBuilder::new(&deck, Utc::now()).build(cards);
+        assert!(plan.cards.len() <= deck.settings().micro_session_size() as usize);
     }
 
     #[test]
