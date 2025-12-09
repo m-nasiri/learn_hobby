@@ -61,6 +61,15 @@ impl SessionPlan {
     }
 }
 
+/// Aggregated view of session progress, useful for UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionProgress {
+    pub total: usize,
+    pub answered: usize,
+    pub remaining: usize,
+    pub is_complete: bool,
+}
+
 /// Builds a micro-session by picking due and new cards according to deck settings.
 pub struct SessionBuilder<'a> {
     deck: &'a Deck,
@@ -274,6 +283,17 @@ impl SessionService {
         self.cards.len().saturating_sub(self.current)
     }
 
+    /// Returns a summary of the current session progress.
+    #[must_use]
+    pub fn progress(&self) -> SessionProgress {
+        SessionProgress {
+            total: self.total_cards(),
+            answered: self.answered_count(),
+            remaining: self.remaining(),
+            is_complete: self.is_complete(),
+        }
+    }
+
     #[must_use]
     pub fn current_card(&self) -> Option<&Card> {
         if self.current < self.cards.len() {
@@ -294,10 +314,7 @@ impl SessionService {
     ///
     /// Returns `SessionError::Completed` if the session is already finished.
     /// Propagates scheduler/review errors via `SessionError::Review`.
-    pub fn answer_current(
-        &mut self,
-        grade: ReviewGrade,
-    ) -> Result<&SessionReview, SessionError> {
+    pub fn answer_current(&mut self, grade: ReviewGrade) -> Result<&SessionReview, SessionError> {
         if self.is_complete() {
             return Err(SessionError::Completed);
         }
@@ -345,7 +362,7 @@ impl fmt::Debug for SessionService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use learn_core::model::{DeckId, ReviewOutcome, content::ContentDraft};
+    use learn_core::model::{CardPhase, DeckId, ReviewOutcome, content::ContentDraft};
     use learn_core::scheduler::Scheduler;
     use learn_core::time::fixed_now;
     use learn_core::Clock;
@@ -395,8 +412,7 @@ mod tests {
     fn session_honors_micro_session_size() {
         let deck = build_deck();
         let cards = vec![build_card(1), build_card(2), build_card(3)];
-        let session =
-            SessionService::new(&deck, cards, ReviewService::new().unwrap()).unwrap();
+        let session = SessionService::new(&deck, cards, ReviewService::new().unwrap()).unwrap();
 
         let expected = deck.settings().micro_session_size().min(3) as usize;
         assert_eq!(session.cards.len(), expected);
@@ -475,14 +491,11 @@ mod tests {
     #[test]
     fn session_advances_and_completes() {
         let deck = build_deck();
-        let review_service =
-            ReviewService::new().unwrap().with_clock(Clock::fixed(fixed_now()));
-        let mut session = SessionService::new(
-            &deck,
-            vec![build_card(1), build_card(2)],
-            review_service,
-        )
-        .unwrap();
+        let review_service = ReviewService::new()
+            .unwrap()
+            .with_clock(Clock::fixed(fixed_now()));
+        let mut session =
+            SessionService::new(&deck, vec![build_card(1), build_card(2)], review_service).unwrap();
 
         assert!(!session.is_complete());
         let first_card_id = session.current_card().unwrap().id();
@@ -496,5 +509,33 @@ mod tests {
         assert_eq!(res2.card_id, second_card_id);
         assert!(session.is_complete());
         assert!(session.completed_at().is_some());
+        assert_eq!(session.completed_at(), Some(fixed_now()));
+    }
+
+    #[test]
+    fn integration_session_runs_with_review_logs_and_phase_updates() {
+        let deck = build_deck();
+        let review_service = ReviewService::new()
+            .unwrap()
+            .with_clock(Clock::fixed(fixed_now()));
+        let mut session =
+            SessionService::new(&deck, vec![build_card(1), build_card(2)], review_service).unwrap();
+
+        session.answer_current(ReviewGrade::Good).unwrap();
+        let first = session.results.last().unwrap();
+        assert_eq!(first.card_id, session.results[0].card_id);
+        assert_eq!(first.result.applied.log.grade, ReviewGrade::Good);
+        assert_eq!(session.cards[0].review_count(), 1);
+        assert_eq!(session.cards[0].phase(), CardPhase::Learning);
+
+        session.answer_current(ReviewGrade::Hard).unwrap();
+        let second = session.results.last().unwrap();
+        assert_eq!(second.card_id, session.results[1].card_id);
+        assert_eq!(second.result.applied.log.grade, ReviewGrade::Hard);
+        assert_eq!(session.cards[1].review_count(), 1);
+        assert_eq!(session.cards[1].phase(), CardPhase::Learning);
+
+        assert!(session.is_complete());
+        assert_eq!(session.results.len(), 2);
     }
 }

@@ -4,9 +4,34 @@ use thiserror::Error;
 use crate::model::{
     content::{Content, ContentValidationError},
     ids::{CardId, DeckId},
-    review::ReviewOutcome,
+    review::{ReviewGrade, ReviewOutcome},
 };
 use crate::scheduler::MemoryState;
+
+//
+// ─── STATE MARKERS ─────────────────────────────────────────────────────────────
+//
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct New;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Learning;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reviewing;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Relearning;
+
+/// Persist-able phase discriminator for cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardPhase {
+    New,
+    Learning,
+    Reviewing,
+    Relearning,
+}
 //
 // ─── ERRORS ────────────────────────────────────────────────────────────────────
 //
@@ -34,12 +59,20 @@ pub struct Card {
     deck_id: DeckId,
     prompt: Content,
     answer: Content,
+    phase: CardPhase,
     created_at: DateTime<Utc>,
     next_review_at: DateTime<Utc>,
     last_review_at: Option<DateTime<Utc>>,
     review_count: u32,
     stability: f64,
     difficulty: f64,
+}
+
+/// Type-state wrapper for card lifecycle phases.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CardState<S> {
+    card: Card,
+    state: std::marker::PhantomData<S>,
 }
 
 impl Card {
@@ -81,6 +114,7 @@ impl Card {
             deck_id,
             prompt,
             answer,
+            phase: CardPhase::New,
             created_at,
             next_review_at,
             last_review_at: None,
@@ -99,6 +133,11 @@ impl Card {
     #[must_use]
     pub fn deck_id(&self) -> DeckId {
         self.deck_id
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> CardPhase {
+        self.phase
     }
 
     #[must_use]
@@ -159,6 +198,229 @@ impl Card {
         self.next_review_at = outcome.next_review;
         self.last_review_at = Some(reviewed_at);
         self.review_count = self.review_count.saturating_add(1);
+    }
+
+    /// Apply a review outcome and advance phase based on the grade.
+    ///
+    /// Phase transition rules (can evolve with product needs):
+    /// - `New` -> `Learning` on any grade.
+    /// - `Learning` -> `Reviewing` on Hard/Good/Easy; stay `Learning` on Again.
+    /// - `Reviewing` -> `Relearning` on Again; stay `Reviewing` otherwise.
+    /// - `Relearning` -> `Reviewing` on Hard/Good/Easy; stay `Relearning` on Again.
+    pub fn apply_review_with_phase(
+        &mut self,
+        grade: ReviewGrade,
+        outcome: &ReviewOutcome,
+        reviewed_at: DateTime<Utc>,
+    ) {
+        self.apply_review(outcome, reviewed_at);
+
+        self.phase = match (self.phase, grade) {
+            (CardPhase::New, _) | (CardPhase::Learning, ReviewGrade::Again) => CardPhase::Learning,
+            (
+                CardPhase::Learning
+                | CardPhase::Reviewing
+                | CardPhase::Relearning,
+                ReviewGrade::Hard | ReviewGrade::Good | ReviewGrade::Easy,
+            ) => {
+                CardPhase::Reviewing
+            }
+            (CardPhase::Reviewing | CardPhase::Relearning, ReviewGrade::Again) => {
+                CardPhase::Relearning
+            }
+        };
+    }
+}
+
+#[allow(dead_code)]
+impl CardState<New> {
+    #[must_use]
+    pub fn new(card: Card) -> Self {
+        Self {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub fn card(&self) -> &Card {
+        &self.card
+    }
+
+    #[must_use]
+    pub fn from_persisted(card: Card) -> Self {
+        debug_assert_eq!(card.phase(), CardPhase::New);
+        Self::new(card)
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> Card {
+        self.card
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> CardPhase {
+        self.card.phase
+    }
+
+    #[must_use]
+    pub fn start_learning(self) -> CardState<Learning> {
+        let mut card = self.card;
+        card.phase = CardPhase::Learning;
+        CardState {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+}
+
+#[allow(dead_code)]
+impl CardState<Learning> {
+    #[must_use]
+    pub fn card(&self) -> &Card {
+        &self.card
+    }
+
+    #[must_use]
+    pub fn card_mut(&mut self) -> &mut Card {
+        &mut self.card
+    }
+    #[must_use]
+    pub fn from_persisted(card: Card) -> Self {
+        debug_assert_eq!(card.phase(), CardPhase::Learning);
+        Self {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> Card {
+        self.card
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> CardPhase {
+        self.card.phase
+    }
+
+    #[must_use]
+    pub fn graduate(self) -> CardState<Reviewing> {
+        let mut card = self.card;
+        card.phase = CardPhase::Reviewing;
+        CardState {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+}
+
+#[allow(dead_code)]
+impl CardState<Reviewing> {
+    #[must_use]
+    pub fn card(&self) -> &Card {
+        &self.card
+    }
+
+    #[must_use]
+    pub fn card_mut(&mut self) -> &mut Card {
+        &mut self.card
+    }
+    #[must_use]
+    pub fn from_persisted(card: Card) -> Self {
+        debug_assert_eq!(card.phase(), CardPhase::Reviewing);
+        Self {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> Card {
+        self.card
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> CardPhase {
+        self.card.phase
+    }
+
+    #[must_use]
+    pub fn lapse(self) -> CardState<Relearning> {
+        let mut card = self.card;
+        card.phase = CardPhase::Relearning;
+        CardState {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+    pub fn apply_review_outcome(
+        mut self,
+        outcome: &ReviewOutcome,
+        reviewed_at: DateTime<Utc>,
+    ) -> CardState<Reviewing> {
+        // Use the central phase logic: for a reviewing card, any non-Again
+        // grade keeps it in Reviewing. We treat this helper as a successful
+        // review, so we map it to `Good`.
+        self.card
+            .apply_review_with_phase(ReviewGrade::Good, outcome, reviewed_at);
+        self
+    }
+}
+
+#[allow(dead_code)]
+impl CardState<Relearning> {
+    #[must_use]
+    pub fn card(&self) -> &Card {
+        &self.card
+    }
+
+    #[must_use]
+    pub fn card_mut(&mut self) -> &mut Card {
+        &mut self.card
+    }
+    #[must_use]
+    pub fn from_persisted(card: Card) -> Self {
+        debug_assert_eq!(card.phase(), CardPhase::Relearning);
+        Self {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> Card {
+        self.card
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> CardPhase {
+        self.card.phase
+    }
+
+    #[must_use]
+    pub fn regraduate(self) -> CardState<Reviewing> {
+        let mut card = self.card;
+        card.phase = CardPhase::Reviewing;
+        CardState {
+            card,
+            state: std::marker::PhantomData,
+        }
+    }
+}
+
+impl CardPhase {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CardPhase::New => "new",
+            CardPhase::Learning => "learning",
+            CardPhase::Reviewing => "reviewing",
+            CardPhase::Relearning => "relearning",
+        }
     }
 }
 
@@ -222,5 +484,98 @@ mod tests {
 
         let result = ContentDraft::text_only("   ").validate(fixed_now(), None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn typestate_transitions_preserve_phase() {
+        let prompt = ContentDraft::text_only("Q")
+            .validate(fixed_now(), None, None)
+            .unwrap();
+        let answer = ContentDraft::text_only("A")
+            .validate(fixed_now(), None, None)
+            .unwrap();
+        let now = fixed_now();
+        let card = Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap();
+
+        let new_state = CardState::<New>::new(card);
+        assert_eq!(new_state.phase(), CardPhase::New);
+
+        let learning = new_state.start_learning();
+        assert_eq!(learning.phase(), CardPhase::Learning);
+
+        let reviewing = learning.graduate();
+        assert_eq!(reviewing.phase(), CardPhase::Reviewing);
+
+        let relearning = reviewing.lapse();
+        assert_eq!(relearning.phase(), CardPhase::Relearning);
+
+        let back = relearning.regraduate();
+        assert_eq!(back.phase(), CardPhase::Reviewing);
+    }
+
+    #[test]
+    fn applying_outcome_updates_card_across_states() {
+        let prompt = ContentDraft::text_only("Q")
+            .validate(fixed_now(), None, None)
+            .unwrap();
+        let answer = ContentDraft::text_only("A")
+            .validate(fixed_now(), None, None)
+            .unwrap();
+        let now = fixed_now();
+        let outcome = ReviewOutcome::new(now + chrono::Duration::days(1), 1.0, 2.0, 0.0, 1.0);
+
+        let mut card =
+            Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap();
+
+        card.apply_review_with_phase(ReviewGrade::Good, &outcome, now);
+        assert_eq!(card.review_count(), 1);
+        assert_eq!(card.last_review_at(), Some(now));
+        assert_eq!(card.phase(), CardPhase::Learning);
+
+        card.apply_review_with_phase(ReviewGrade::Good, &outcome, now);
+        assert_eq!(card.review_count(), 2);
+        assert_eq!(card.phase(), CardPhase::Reviewing);
+
+        card.apply_review_with_phase(ReviewGrade::Again, &outcome, now);
+        assert_eq!(card.review_count(), 3);
+        assert_eq!(card.phase(), CardPhase::Relearning);
+
+        card.apply_review_with_phase(ReviewGrade::Hard, &outcome, now);
+        assert_eq!(card.review_count(), 4);
+        assert_eq!(card.phase(), CardPhase::Reviewing);
+    }
+
+    #[test]
+    fn card_phase_as_str() {
+        assert_eq!(CardPhase::New.as_str(), "new");
+        assert_eq!(CardPhase::Learning.as_str(), "learning");
+        assert_eq!(CardPhase::Reviewing.as_str(), "reviewing");
+        assert_eq!(CardPhase::Relearning.as_str(), "relearning");
+    }
+
+    #[test]
+    fn apply_review_with_phase_changes_phase_by_grade() {
+        let prompt = ContentDraft::text_only("Q")
+            .validate(fixed_now(), None, None)
+            .unwrap();
+        let answer = ContentDraft::text_only("A")
+            .validate(fixed_now(), None, None)
+            .unwrap();
+        let now = fixed_now();
+        let outcome = ReviewOutcome::new(now + chrono::Duration::days(1), 1.0, 2.0, 0.0, 1.0);
+        let mut card = Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap();
+
+        assert_eq!(card.phase(), CardPhase::New);
+        card.apply_review_with_phase(ReviewGrade::Good, &outcome, now);
+        assert_eq!(card.phase(), CardPhase::Learning);
+
+        card.apply_review_with_phase(ReviewGrade::Good, &outcome, now);
+        assert_eq!(card.phase(), CardPhase::Reviewing);
+
+        card.apply_review_with_phase(ReviewGrade::Again, &outcome, now);
+        assert_eq!(card.phase(), CardPhase::Relearning);
+
+        card.apply_review_with_phase(ReviewGrade::Hard, &outcome, now);
+        assert_eq!(card.phase(), CardPhase::Reviewing);
     }
 }

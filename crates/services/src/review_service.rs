@@ -148,7 +148,7 @@ impl ReviewService {
             elapsed_days,
         )?;
 
-        card.apply_review(&applied.outcome, reviewed_at);
+        card.apply_review_with_phase(grade, &applied.outcome, reviewed_at);
 
         Ok(ReviewResult { applied })
     }
