@@ -25,7 +25,7 @@ pub struct Reviewing;
 pub struct Relearning;
 
 /// Persist-able phase discriminator for cards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CardPhase {
     New,
     Learning,
@@ -44,6 +44,9 @@ pub enum CardError {
 
     #[error("invalid answer content: {0}")]
     InvalidAnswer(#[source] ContentValidationError),
+
+    #[error("invalid persisted card state: {0}")]
+    InvalidPersistedState(String),
 }
 
 //
@@ -122,6 +125,34 @@ impl Card {
             stability: 0.0,
             difficulty: 0.0,
         })
+    }
+
+    /// Rehydrate a card from persisted state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardError` if prompt/answer validation fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_persisted(
+        id: CardId,
+        deck_id: DeckId,
+        prompt: Content,
+        answer: Content,
+        created_at: DateTime<Utc>,
+        next_review_at: DateTime<Utc>,
+        last_review_at: Option<DateTime<Utc>>,
+        phase: CardPhase,
+        review_count: u32,
+        stability: f64,
+        difficulty: f64,
+    ) -> Result<Self, CardError> {
+        let mut card = Self::new(id, deck_id, prompt, answer, created_at, next_review_at)?;
+        card.last_review_at = last_review_at;
+        card.phase = phase;
+        card.review_count = review_count;
+        card.stability = stability;
+        card.difficulty = difficulty;
+        Ok(card)
     }
 
     // Accessors
@@ -218,13 +249,9 @@ impl Card {
         self.phase = match (self.phase, grade) {
             (CardPhase::New, _) | (CardPhase::Learning, ReviewGrade::Again) => CardPhase::Learning,
             (
-                CardPhase::Learning
-                | CardPhase::Reviewing
-                | CardPhase::Relearning,
+                CardPhase::Learning | CardPhase::Reviewing | CardPhase::Relearning,
                 ReviewGrade::Hard | ReviewGrade::Good | ReviewGrade::Easy,
-            ) => {
-                CardPhase::Reviewing
-            }
+            ) => CardPhase::Reviewing,
             (CardPhase::Reviewing | CardPhase::Relearning, ReviewGrade::Again) => {
                 CardPhase::Relearning
             }
@@ -272,7 +299,6 @@ impl CardState<New> {
             state: std::marker::PhantomData,
         }
     }
-
 }
 
 #[allow(dead_code)]
@@ -314,7 +340,6 @@ impl CardState<Learning> {
             state: std::marker::PhantomData,
         }
     }
-
 }
 
 #[allow(dead_code)]
@@ -524,8 +549,7 @@ mod tests {
         let now = fixed_now();
         let outcome = ReviewOutcome::new(now + chrono::Duration::days(1), 1.0, 2.0, 0.0, 1.0);
 
-        let mut card =
-            Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap();
+        let mut card = Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap();
 
         card.apply_review_with_phase(ReviewGrade::Good, &outcome, now);
         assert_eq!(card.review_count(), 1);
