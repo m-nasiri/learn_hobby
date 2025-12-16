@@ -486,3 +486,311 @@ The core domain follows a validation-focused design pattern with separation betw
 - Sync: design for offline-first; add sync later (WebSocket/REST/CRDT) without breaking local mode.
 - Platforms: target web/desktop/mobile with the same domain/services; avoid platform-specific types in core.
 - Accessibility: ensure keyboard navigation, focus order, and high-contrast readiness in UI components.
+
+# Guideline
+
+This document defines **architectural rules, design principles, and best practices**
+for this repository. It is a **living contract**: code must follow this guideline,
+and the guideline evolves only when the architecture intentionally evolves.
+
+---
+
+## Project Overview
+
+This is a **language learning application** built with **Rust** and **Dioxus**,
+specifically designed to help people with **ADHD and anxiety** who struggle with memorization.
+
+The application uses the **FSRS (Free Spaced Repetition Scheduler)** algorithm via the
+`fsrs` crate to provide scientifically optimized review scheduling.
+
+### Key Goals
+- **ADHD-friendly design**: micro-sessions (5 cards by default), minimal cognitive load
+- **Anxiety-aware UX**: no punishment mechanics, gradual difficulty, encouraging feedback
+- **Type-safe architecture**: invalid states are unrepresentable
+- **Best-practice Rust**: panic-free APIs, explicit errors, future-proofing
+
+---
+
+## Workspace Structure
+
+The project is a Cargo workspace with **strict layering**:
+
+### `crates/core`
+Domain logic only.
+- Models, invariants, validation
+- FSRS scheduler
+- Typestate and lifecycle rules
+
+**Rules**
+- No I/O
+- No SQL
+- No async runtimes
+- No clocks (`Utc::now()` forbidden)
+
+---
+
+### `crates/storage`
+Persistence layer behind repository traits.
+
+SQLite implementation is split by responsibility:
+
+```
+crates/storage/src/sqlite/
+├── mod.rs        // composition root + connect
+├── repo.rs       // SqliteRepository
+├── migrate.rs    // versioned migrations
+├── mapping.rs    // row ↔ domain mapping
+├── deck_repo.rs  // DeckRepository impl
+├── card_repo.rs  // CardRepository impl
+```
+
+**Rules**
+- Never leak SQLx types outside this crate
+- Domain invariants must be enforced during mapping
+- `created_at` is immutable
+- Scheduling fields are nullable until first review
+
+---
+
+### `crates/services`
+Application services and orchestration:
+- `ReviewService`
+- `SessionService`
+- `SessionBuilder`
+- Clock abstraction
+
+**Rules**
+- Services orchestrate workflows
+- Services do not build SQL
+- Services receive repositories and clocks explicitly
+- Fully testable with in-memory repos and fixed clocks
+
+---
+
+### `crates/ui`
+Dioxus-based UI (desktop / web / mobile).
+
+---
+
+## Rust API Design Principles
+
+This project follows three authoritative sources:
+
+1. **Official Rust API Guidelines**  
+   https://rust-lang.github.io/api-guidelines/
+
+2. **Elegant APIs in Rust**  
+   https://ruststack.org/elegant-apis-in-rust/
+
+3. **Type-Driven API Design Patterns**  
+   https://willcrichton.net/rust-api-type-patterns/
+
+### Canonical Rules
+- No panics in public APIs
+- All fallible operations return `Result`
+- Document `# Errors`
+- Mark public enums `#[non_exhaustive]`
+- Prefer types over strings
+- Prefer compile-time guarantees over runtime checks
+
+---
+
+## Time & Determinism (Clock Pattern)
+
+All time-dependent logic must go through a **Clock abstraction**.
+
+```rust
+pub enum Clock {
+    System,
+    Fixed(DateTime<Utc>),
+}
+```
+
+### Rules
+- Never call `Utc::now()` directly in services
+- Services own or receive a `Clock`
+- Tests must use `Clock::Fixed(...)`
+
+### Why
+- Deterministic tests
+- No hidden temporal coupling
+- Predictable scheduling behavior
+
+---
+
+## Core Design Patterns
+
+### 1. Typestate Pattern
+Used to encode lifecycle transitions safely.
+
+Examples:
+- Card phases
+- Session lifecycle
+- Review progression
+
+Invalid transitions must be unrepresentable at compile time where feasible.
+
+---
+
+### 2. Draft → Validated Pattern
+
+Unvalidated input is represented by *Draft* types.
+
+```rust
+ContentDraft::new(...)
+    .validate(timestamp, metadata, checksum)
+    -> Result<Content, Error>
+```
+
+Rules:
+- Drafts accept anything
+- Validation enforces invariants
+- Validated types are immutable
+- IDs are assigned only after validation
+
+---
+
+### 3. Newtype Pattern
+
+Wrap primitives to prevent misuse:
+
+```rust
+pub struct CardId(u64);
+pub struct DeckId(u64);
+pub struct MediaId(u64);
+```
+
+---
+
+### 4. Enum over Strings
+
+Never use stringly-typed APIs for known variants.
+
+```rust
+pub enum ReviewGrade { Again, Hard, Good, Easy }
+```
+
+---
+
+## Error Handling Best Practices
+
+### Domain Errors (`crates/core`)
+Represent violated invariants or invalid state.
+
+```rust
+#[derive(Debug, Error, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum CardError {
+    #[error("invalid prompt: {0}")]
+    InvalidPrompt(ContentValidationError),
+
+    #[error("invalid answer: {0}")]
+    InvalidAnswer(ContentValidationError),
+
+    #[error("invalid persisted card state: {0}")]
+    InvalidPersistedState(String),
+}
+```
+
+---
+
+### Storage Errors (`crates/storage`)
+- Must not depend on SQLx
+- SQLx errors are mapped inside adapters
+- Corrupted persisted state must fail loudly
+
+---
+
+### Service Errors (`crates/services`)
+- Compose domain + storage errors
+- No panics
+- No silent fallbacks
+
+---
+
+## Persistence & Migrations
+
+### Principles
+- SQLite-first, portable SQL
+- One dialect for local + cloud SQLite (libSQL / Turso / D1)
+- Versioned schema evolution
+
+### Migrations
+- `schema_migrations` table
+- Each migration is atomic (transactional)
+- Table rebuilds used when altering constraints
+
+### Storage Rules
+- `created_at` is immutable
+- `stability` / `difficulty` are nullable until first review
+- Foreign keys enabled per connection (`PRAGMA foreign_keys = ON`)
+
+---
+
+## ADHD-Focused Design Principles
+
+### Cognitive Load Reduction
+- Micro-sessions (default: 5 cards)
+- One card at a time
+- Immediate feedback
+- Clear progress indicators
+
+### Anxiety Management
+- No punishment mechanics
+- Gradual difficulty progression
+- Pause/resume anytime
+- Encouraging language
+
+---
+
+## Scheduler (FSRS)
+
+- Scheduler is pure and deterministic
+- All timestamps are supplied by services
+- Uses FSRS v5.x
+- No persistence or clocks inside scheduler
+
+---
+
+## Implementation Roadmap
+
+### Phase 1 — Core Domain (done)
+- Domain models
+- Validation
+- Scheduler
+- Non-exhaustive errors
+- Unit tests
+
+### Phase 2 — Storage (mostly done)
+- [done] Repository traits
+- [done] SQLite adapters
+- [done] Versioned migrations
+- [done] In-memory repositories
+- [todo] ReviewLog persistence
+- [todo] Due-card queries
+
+### Phase 3 — Services
+- Review orchestration
+- Session building
+- Persistence integration
+- Integration tests
+
+### Phase 4 — UI
+- Dioxus shell
+- Micro-session player
+- Keyboard-first UX
+- Accessibility
+
+---
+
+## Non-Negotiable Rules
+
+- No SQL outside `crates/storage`
+- No clocks outside services
+- No persistence logic in domain
+- No stringly-typed APIs
+- No silent data corruption
+
+If a design decision violates these rules, it must be documented and justified.
+
+---

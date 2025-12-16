@@ -73,19 +73,15 @@ pub struct SessionProgress {
 /// Builds a micro-session by picking due and new cards according to deck settings.
 pub struct SessionBuilder<'a> {
     deck: &'a Deck,
-    now: DateTime<Utc>,
     shuffle_new: bool,
-    allow_future_due: bool,
 }
 
 impl<'a> SessionBuilder<'a> {
     #[must_use]
-    pub fn new(deck: &'a Deck, now: DateTime<Utc>) -> Self {
+    pub fn new(deck: &'a Deck) -> Self {
         Self {
             deck,
-            now,
             shuffle_new: false,
-            allow_future_due: false,
         }
     }
 
@@ -96,33 +92,23 @@ impl<'a> SessionBuilder<'a> {
         self
     }
 
-    /// Allow pulling not-yet-due review cards if there are not enough due/new cards.
-    #[must_use]
-    pub fn with_future_due(mut self, allow: bool) -> Self {
-        self.allow_future_due = allow;
-        self
-    }
-
-    /// Build a session plan from a pool of cards.
+    /// Build a session plan from storage-provided lists of due and new cards.
     ///
-    /// - Prioritizes due cards (`review_count` > 0 and `next_review_at` <= now), sorted by next review time.
-    /// - Then adds new cards (`review_count` == 0), capped by deck `new_cards_per_day`.
-    /// - Total selected cards are capped by `micro_session_size`.
-    pub fn build(self, cards: impl IntoIterator<Item = Card>) -> SessionPlan {
+    /// - `due_cards` are assumed to already be due; they are sorted by `next_review_at`.
+    /// - `new_cards` are unreviewed; they are optionally shuffled.
+    /// - Selection respects deck `review_limit_per_day`, `new_cards_per_day`, and `micro_session_size`.
+    pub fn build(
+        self,
+        due_cards: impl IntoIterator<Item = Card>,
+        new_cards: impl IntoIterator<Item = Card>,
+    ) -> SessionPlan {
         let settings = self.deck.settings();
         let micro_cap = settings.micro_session_size() as usize;
         let due_cap = settings.review_limit_per_day() as usize;
         let new_cap = settings.new_cards_per_day() as usize;
 
-        let now = self.now;
-        let pool: Vec<Card> = cards.into_iter().collect();
-
-        let mut due: Vec<Card> = pool
-            .iter()
-            .filter(|c| c.review_count() > 0 && c.next_review_at() <= now)
-            .cloned()
-            .collect();
-        due.sort_by_key(Card::next_review_at);
+        let mut due: Vec<Card> = due_cards.into_iter().collect();
+        due.sort_by_key(|c| (c.next_review_at(), c.id().value()));
 
         let mut selected = Vec::new();
 
@@ -137,15 +123,16 @@ impl<'a> SessionBuilder<'a> {
         let mut new_count = 0;
         if remaining > 0 && new_cap > 0 {
             let take = new_cap.min(remaining);
-            let mut new_candidates: Vec<Card> = pool
-                .iter()
-                .filter(|c| c.review_count() == 0 && !selected_ids.contains(&c.id()))
-                .cloned()
+            let mut new_candidates: Vec<Card> = new_cards
+                .into_iter()
+                .filter(|c| !selected_ids.contains(&c.id()))
                 .collect();
 
             if self.shuffle_new {
                 let mut rng = thread_rng();
                 new_candidates.as_mut_slice().shuffle(&mut rng);
+            } else {
+                new_candidates.sort_by_key(|c| (c.created_at(), c.id().value()));
             }
 
             let new_cards: Vec<Card> = new_candidates.into_iter().take(take).collect();
@@ -154,31 +141,11 @@ impl<'a> SessionBuilder<'a> {
             selected.extend(new_cards);
         }
 
-        let remaining = micro_cap.saturating_sub(selected.len());
-        let mut future_count = 0;
-        if remaining > 0 && self.allow_future_due {
-            let mut future_due: Vec<Card> = pool
-                .iter()
-                .filter(|c| {
-                    c.review_count() > 0
-                        && c.next_review_at() > now
-                        && !selected_ids.contains(&c.id())
-                })
-                .cloned()
-                .collect();
-            future_due.sort_by_key(Card::next_review_at);
-
-            let extras: Vec<Card> = future_due.into_iter().take(remaining).collect();
-            future_count = extras.len();
-            selected_ids.extend(extras.iter().map(Card::id));
-            selected.extend(extras);
-        }
-
         SessionPlan {
             cards: selected,
             due_selected: due_count,
             new_selected: new_count,
-            future_selected: future_count,
+            future_selected: 0,
         }
     }
 }
@@ -324,9 +291,7 @@ impl SessionService {
         };
 
         let reviewed_at = self.review_service.now();
-        let result = self
-            .review_service
-            .review_card(card, grade, reviewed_at)?;
+        let result = self.review_service.review_card(card, grade, reviewed_at)?;
 
         self.results.push(SessionReview {
             card_id: card.id(),
@@ -362,10 +327,10 @@ impl fmt::Debug for SessionService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use learn_core::model::{CardPhase, DeckId, ReviewOutcome, content::ContentDraft};
+    use learn_core::Clock;
+    use learn_core::model::{CardPhase, DeckId, content::ContentDraft};
     use learn_core::scheduler::Scheduler;
     use learn_core::time::fixed_now;
-    use learn_core::Clock;
 
     fn build_card(id: u64) -> Card {
         let prompt = ContentDraft::text_only("Q")
@@ -400,7 +365,7 @@ mod tests {
     fn build_due_card(id: u64, reviewed_days_ago: i64) -> Card {
         let mut card = build_card(id);
         let scheduler = Scheduler::new().unwrap();
-        let reviewed_at = Utc::now() - chrono::Duration::days(reviewed_days_ago);
+        let reviewed_at = fixed_now() - chrono::Duration::days(reviewed_days_ago);
         let applied = scheduler
             .apply_review(card.id(), None, ReviewGrade::Good, reviewed_at, 0.0)
             .unwrap();
@@ -425,11 +390,8 @@ mod tests {
         let new1 = build_card(2);
         let new2 = build_card(3);
 
-        let plan = SessionBuilder::new(&deck, Utc::now()).build(vec![
-            new1.clone(),
-            due.clone(),
-            new2.clone(),
-        ]);
+        let plan =
+            SessionBuilder::new(&deck).build(vec![due.clone()], vec![new1.clone(), new2.clone()]);
 
         assert_eq!(plan.due_selected, 1);
         assert!(plan.cards.iter().any(|c| c.id() == due.id()));
@@ -440,42 +402,18 @@ mod tests {
 
     #[test]
     fn builder_caps_micro_session_size() {
-        let mut cards = Vec::new();
+        let mut due_cards = Vec::new();
+        let mut new_cards = Vec::new();
         for i in 0..10 {
-            let card = if i % 2 == 0 {
-                build_due_card(i, 2)
+            if i % 2 == 0 {
+                due_cards.push(build_due_card(i, 2));
             } else {
-                build_card(i)
-            };
-            cards.push(card);
+                new_cards.push(build_card(i));
+            }
         }
         let deck = build_deck();
-        let plan = SessionBuilder::new(&deck, Utc::now()).build(cards);
+        let plan = SessionBuilder::new(&deck).build(due_cards, new_cards);
         assert!(plan.cards.len() <= deck.settings().micro_session_size() as usize);
-    }
-
-    #[test]
-    fn builder_can_pull_future_due_when_enabled() {
-        let deck = build_deck();
-        let future_due = {
-            let mut card = build_card(10);
-            let tomorrow = Utc::now() + chrono::Duration::days(1);
-            card.apply_review(
-                &ReviewOutcome::new(tomorrow, 1.0, 1.0, 0.0, 1.0),
-                Utc::now(),
-            );
-            card
-        };
-        let due = build_due_card(1, 2);
-        let new_card = build_card(2);
-
-        let plan = SessionBuilder::new(&deck, Utc::now())
-            .with_future_due(true)
-            .build(vec![future_due.clone(), due.clone(), new_card.clone()]);
-
-        assert!(plan.cards.iter().any(|c| c.id() == due.id()));
-        assert!(plan.cards.iter().any(|c| c.id() == future_due.id()));
-        assert!(plan.future_selected <= deck.settings().micro_session_size() as usize);
     }
 
     #[test]

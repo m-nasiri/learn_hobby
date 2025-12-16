@@ -5,20 +5,31 @@ use learn_core::model::{Card, CardId, DeckId};
 use super::{SqliteRepository, mapping::map_card_row};
 use crate::repository::{CardRepository, StorageError};
 
+fn media_id_i64(mid: Option<learn_core::model::MediaId>) -> Result<Option<i64>, StorageError> {
+    mid.map(|m| {
+        i64::try_from(m.value())
+            .map_err(|_| StorageError::Serialization("media_id overflow".into()))
+    })
+    .transpose()
+}
+
 #[async_trait::async_trait]
 impl CardRepository for SqliteRepository {
     async fn upsert_card(&self, card: &Card) -> Result<(), StorageError> {
         sqlx::query(
             r"
             INSERT INTO cards (
-                id, deck_id, prompt, answer, phase, created_at,
-                next_review_at, last_review_at, review_count, stability, difficulty
+                id, deck_id, prompt, prompt_media_id, answer, answer_media_id,
+                phase, created_at, next_review_at, last_review_at, review_count,
+                stability, difficulty
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(id, deck_id) DO UPDATE SET
                 -- keep created_at from the original insert; only update mutable fields
                 prompt = excluded.prompt,
+                prompt_media_id = excluded.prompt_media_id,
                 answer = excluded.answer,
+                answer_media_id = excluded.answer_media_id,
                 phase = excluded.phase,
                 next_review_at = excluded.next_review_at,
                 last_review_at = excluded.last_review_at,
@@ -29,14 +40,16 @@ impl CardRepository for SqliteRepository {
         )
         .bind(
             i64::try_from(card.id().value())
-                .map_err(|_| StorageError::Serialization("card id overflow".into()))?,
+                .map_err(|_| StorageError::Serialization("card_id overflow".into()))?,
         )
         .bind(
             i64::try_from(card.deck_id().value())
-                .map_err(|_| StorageError::Serialization("deck id overflow".into()))?,
+                .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?,
         )
         .bind(card.prompt().text().to_owned())
+        .bind(media_id_i64(card.prompt().media_id())?)
         .bind(card.answer().text().to_owned())
+        .bind(media_id_i64(card.answer().media_id())?)
         .bind(card.phase().as_str())
         .bind(card.created_at())
         .bind(card.next_review_at())
@@ -59,7 +72,7 @@ impl CardRepository for SqliteRepository {
         let mut sql = String::from(
             r"
             SELECT
-                id, deck_id, prompt, answer, phase, created_at,
+                id, deck_id, prompt, prompt_media_id, answer, answer_media_id, phase, created_at,
                 next_review_at, last_review_at, review_count, stability, difficulty
             FROM cards
             WHERE deck_id = ?1 AND id IN (
@@ -108,5 +121,72 @@ impl CardRepository for SqliteRepository {
         }
 
         Ok(out)
+    }
+
+    async fn due_cards(
+        &self,
+        deck_id: DeckId,
+        now: chrono::DateTime<chrono::Utc>,
+        limit: u32,
+    ) -> Result<Vec<Card>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let lim = i64::from(limit);
+
+        let rows = sqlx::query(
+            r"
+            SELECT
+                id, deck_id, prompt, prompt_media_id, answer, answer_media_id, phase, created_at,
+                next_review_at, last_review_at, review_count, stability, difficulty
+            FROM cards
+            WHERE deck_id = ?1
+              AND review_count > 0
+              AND next_review_at <= ?2
+            ORDER BY next_review_at ASC
+            LIMIT ?3
+            ",
+        )
+        .bind(deck)
+        .bind(now)
+        .bind(lim)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut cards = Vec::with_capacity(rows.len());
+        for row in rows {
+            cards.push(map_card_row(&row)?);
+        }
+        Ok(cards)
+    }
+
+    async fn new_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let lim = i64::from(limit);
+
+        let rows = sqlx::query(
+            r"
+            SELECT
+                id, deck_id, prompt, prompt_media_id, answer, answer_media_id, phase, created_at,
+                next_review_at, last_review_at, review_count, stability, difficulty
+            FROM cards
+            WHERE deck_id = ?1
+              AND review_count = 0
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?2
+            ",
+        )
+        .bind(deck)
+        .bind(lim)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut cards = Vec::with_capacity(rows.len());
+        for row in rows {
+            cards.push(map_card_row(&row)?);
+        }
+        Ok(cards)
     }
 }

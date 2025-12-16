@@ -1,9 +1,11 @@
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 use super::SqliteInitError;
 
-#[allow(clippy::too_many_lines)]
+/// Runs a single, consolidated migration for the current schema.
+///
+/// creates the full schema (decks, cards with media, review logs, and indexes).
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
     async fn is_applied(pool: &SqlitePool, version: i64) -> Result<bool, sqlx::Error> {
         let row = sqlx::query("SELECT 1 FROM schema_migrations WHERE version = ?1")
@@ -13,7 +15,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         Ok(row.is_some())
     }
 
-    // Ensure we can store applied migration versions.
     sqlx::query(
         r"
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -25,7 +26,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
     .execute(pool)
     .await?;
 
-    // ─── Migration V1: initial tables ─────────────────────────────────────
+    // Version 1: full schema.
     if !is_applied(pool, 1).await? {
         let mut tx = pool.begin().await?;
 
@@ -51,7 +52,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
                     id INTEGER NOT NULL,
                     deck_id INTEGER NOT NULL,
                     prompt TEXT NOT NULL,
+                    prompt_media_id INTEGER,
                     answer TEXT NOT NULL,
+                    answer_media_id INTEGER,
                     phase TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     next_review_at TEXT NOT NULL,
@@ -69,95 +72,51 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
 
         sqlx::query(
             r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
+                CREATE TABLE IF NOT EXISTS review_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    deck_id INTEGER NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    grade INTEGER NOT NULL,
+                    reviewed_at TEXT NOT NULL,
+                    elapsed_days REAL NOT NULL,
+                    scheduled_days REAL NOT NULL,
+                    stability REAL NOT NULL,
+                    difficulty REAL NOT NULL,
+                    next_review_at TEXT NOT NULL,
+                    FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE,
+                    FOREIGN KEY (card_id, deck_id) REFERENCES cards(id, deck_id) ON DELETE CASCADE
+                );
             ",
         )
-        .bind(1_i64)
-        .bind(Utc::now())
         .execute(&mut *tx)
         .await?;
 
-        tx.commit().await?;
-    }
+        sqlx::query(
+            r"
+                CREATE INDEX IF NOT EXISTS idx_cards_deck_next_review
+                    ON cards(deck_id, next_review_at);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
 
-    // ─── Migration V2: ensure stability/difficulty are nullable ───────────
-    if !is_applied(pool, 2).await? {
-        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                CREATE INDEX IF NOT EXISTS idx_cards_deck_reviewcount_created
+                    ON cards(deck_id, review_count, created_at, id);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
 
-        let cols = sqlx::query(r"PRAGMA table_info(cards);")
-            .fetch_all(&mut *tx)
-            .await?;
-
-        let mut stability_notnull = false;
-        let mut difficulty_notnull = false;
-
-        for row in cols {
-            let name: String = row.try_get("name")?;
-            let notnull: i64 = row.try_get("notnull")?;
-            if name == "stability" {
-                stability_notnull = notnull == 1;
-            }
-            if name == "difficulty" {
-                difficulty_notnull = notnull == 1;
-            }
-        }
-
-        if stability_notnull || difficulty_notnull {
-            // already in transaction
-
-            sqlx::query("PRAGMA foreign_keys=OFF;")
-                .execute(&mut *tx)
-                .await?;
-
-            sqlx::query(
-                r"
-                    CREATE TABLE IF NOT EXISTS cards_new (
-                        id INTEGER NOT NULL,
-                        deck_id INTEGER NOT NULL,
-                        prompt TEXT NOT NULL,
-                        answer TEXT NOT NULL,
-                        phase TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        next_review_at TEXT NOT NULL,
-                        last_review_at TEXT,
-                        review_count INTEGER NOT NULL,
-                        stability REAL,
-                        difficulty REAL,
-                        PRIMARY KEY (id, deck_id),
-                        FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE
-                    );
-                    ",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(
-                r"
-                    INSERT INTO cards_new (
-                        id, deck_id, prompt, answer, phase, created_at,
-                        next_review_at, last_review_at, review_count, stability, difficulty
-                    )
-                    SELECT
-                        id, deck_id, prompt, answer, phase, created_at,
-                        next_review_at, last_review_at, review_count, stability, difficulty
-                    FROM cards;
-                    ",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query("DROP TABLE cards;").execute(&mut *tx).await?;
-
-            sqlx::query("ALTER TABLE cards_new RENAME TO cards;")
-                .execute(&mut *tx)
-                .await?;
-
-            sqlx::query("PRAGMA foreign_keys=ON;")
-                .execute(&mut *tx)
-                .await?;
-        }
+        sqlx::query(
+            r"
+                CREATE INDEX IF NOT EXISTS review_logs_deck_card_idx
+                    ON review_logs (deck_id, card_id, reviewed_at);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
 
         sqlx::query(
             r"
@@ -166,7 +125,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
                 ON CONFLICT(version) DO NOTHING
             ",
         )
-        .bind(2_i64)
+        .bind(1_i64)
         .bind(Utc::now())
         .execute(&mut *tx)
         .await?;

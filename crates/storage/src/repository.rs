@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use learn_core::model::{content::ContentDraft, Card, CardError, CardId, CardPhase, Deck, DeckId};
+use learn_core::model::{
+    Card, CardError, CardId, CardPhase, Deck, DeckId, MediaId, ReviewGrade, ReviewLog,
+    ReviewOutcome, content::Content,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -30,8 +33,10 @@ pub enum StorageError {
 pub struct CardRecord {
     pub id: CardId,
     pub deck_id: DeckId,
-    pub prompt: String,
-    pub answer: String,
+    pub prompt_text: String,
+    pub prompt_media_id: Option<u64>,
+    pub answer_text: String,
+    pub answer_media_id: Option<u64>,
     pub phase: CardPhase,
     pub created_at: DateTime<Utc>,
     pub next_review_at: DateTime<Utc>,
@@ -47,8 +52,10 @@ impl CardRecord {
         Self {
             id: card.id(),
             deck_id: card.deck_id(),
-            prompt: card.prompt().text().to_owned(),
-            answer: card.answer().text().to_owned(),
+            prompt_text: card.prompt().text().to_owned(),
+            prompt_media_id: card.prompt().media_id().map(|m| m.value()),
+            answer_text: card.answer().text().to_owned(),
+            answer_media_id: card.answer().media_id().map(|m| m.value()),
             phase: card.phase(),
             created_at: card.created_at(),
             next_review_at: card.next_review_at(),
@@ -65,12 +72,12 @@ impl CardRecord {
     ///
     /// Returns `CardError` if prompt/answer fail validation or phase cannot be applied.
     pub fn into_card(self) -> Result<Card, CardError> {
-        let prompt = ContentDraft::text_only(self.prompt)
-            .validate(self.created_at, None, None)
-            .map_err(CardError::InvalidPrompt)?;
-        let answer = ContentDraft::text_only(self.answer)
-            .validate(self.created_at, None, None)
-            .map_err(CardError::InvalidAnswer)?;
+        let prompt =
+            Content::from_persisted(self.prompt_text, self.prompt_media_id.map(MediaId::new))
+                .map_err(CardError::InvalidPrompt)?;
+        let answer =
+            Content::from_persisted(self.answer_text, self.answer_media_id.map(MediaId::new))
+                .map_err(CardError::InvalidAnswer)?;
 
         // For brand-new cards (review_count == 0), stability/difficulty are semantically unset.
         // We allow `None` in storage and normalize to 0.0 for the persisted constructor.
@@ -98,6 +105,50 @@ impl CardRecord {
             stability,
             difficulty,
         )
+    }
+}
+
+/// Persisted representation of a review event, including FSRS outputs.
+#[derive(Debug, Clone)]
+pub struct ReviewLogRecord {
+    pub id: Option<i64>,
+    pub deck_id: DeckId,
+    pub card_id: CardId,
+    pub grade: ReviewGrade,
+    pub reviewed_at: DateTime<Utc>,
+    pub elapsed_days: f64,
+    pub scheduled_days: f64,
+    pub stability: f64,
+    pub difficulty: f64,
+    pub next_review_at: DateTime<Utc>,
+}
+
+impl ReviewLogRecord {
+    /// Build a storage record from a domain log and FSRS outcome.
+    ///
+    /// # Errors
+    ///
+    /// None. This helper only moves data between layers.
+    #[must_use]
+    pub fn from_applied(deck_id: DeckId, log: &ReviewLog, outcome: &ReviewOutcome) -> Self {
+        Self {
+            id: None,
+            deck_id,
+            card_id: log.card_id,
+            grade: log.grade,
+            reviewed_at: log.reviewed_at,
+            elapsed_days: outcome.elapsed_days,
+            scheduled_days: outcome.scheduled_days,
+            stability: outcome.stability,
+            difficulty: outcome.difficulty,
+            next_review_at: outcome.next_review,
+        }
+    }
+
+    #[must_use]
+    pub fn with_id(mut self, id: i64) -> Self {
+        self.id = Some(id);
+        self
     }
 }
 
@@ -134,6 +185,46 @@ pub trait CardRepository: Send + Sync {
     ///
     /// Returns `StorageError::NotFound` if any are missing, or other storage errors.
     async fn get_cards(&self, deck_id: DeckId, ids: &[CardId]) -> Result<Vec<Card>, StorageError>;
+
+    /// Fetch due cards for a deck up to the given limit, ordered by next review time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn due_cards(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<Card>, StorageError>;
+
+    /// Fetch new (unreviewed) cards for a deck up to the given limit, ordered by creation time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn new_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
+}
+
+#[async_trait]
+pub trait ReviewLogRepository: Send + Sync {
+    /// Append a review log, returning the assigned ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` if the log cannot be persisted or serialized.
+    async fn append_log(&self, log: ReviewLogRecord) -> Result<i64, StorageError>;
+
+    /// Fetch all logs for a card, ordered by review time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on storage failures or deserialization issues.
+    async fn logs_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<Vec<ReviewLogRecord>, StorageError>;
 }
 
 /// Simple in-memory repository implementation for testing and prototyping.
@@ -141,6 +232,8 @@ pub trait CardRepository: Send + Sync {
 pub struct InMemoryRepository {
     decks: Arc<Mutex<HashMap<DeckId, Deck>>>,
     cards: Arc<Mutex<HashMap<(DeckId, CardId), Card>>>,
+    logs: Arc<Mutex<Vec<ReviewLogRecord>>>,
+    next_log_id: Arc<Mutex<i64>>,
 }
 
 impl InMemoryRepository {
@@ -149,6 +242,8 @@ impl InMemoryRepository {
         Self {
             decks: Arc::new(Mutex::new(HashMap::new())),
             cards: Arc::new(Mutex::new(HashMap::new())),
+            logs: Arc::new(Mutex::new(Vec::new())),
+            next_log_id: Arc::new(Mutex::new(1)),
         }
     }
 }
@@ -198,6 +293,85 @@ impl CardRepository for InMemoryRepository {
         }
         Ok(found)
     }
+
+    async fn due_cards(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<Card>, StorageError> {
+        let guard = self
+            .cards
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut due: Vec<Card> = guard
+            .values()
+            .filter(|c| c.deck_id() == deck_id && c.review_count() > 0 && c.next_review_at() <= now)
+            .cloned()
+            .collect();
+        due.sort_by_key(|c| (c.next_review_at(), c.id().value()));
+        due.truncate(limit as usize);
+        Ok(due)
+    }
+
+    async fn new_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError> {
+        let guard = self
+            .cards
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut new_cards: Vec<Card> = guard
+            .values()
+            .filter(|c| c.deck_id() == deck_id && c.review_count() == 0)
+            .cloned()
+            .collect();
+        new_cards.sort_by_key(|c| (c.created_at(), c.id().value()));
+        new_cards.truncate(limit as usize);
+        Ok(new_cards)
+    }
+}
+
+#[async_trait]
+impl ReviewLogRepository for InMemoryRepository {
+    async fn append_log(&self, mut log: ReviewLogRecord) -> Result<i64, StorageError> {
+        let mut id_guard = self
+            .next_log_id
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let id = log.id.unwrap_or(*id_guard);
+        *id_guard = id.saturating_add(1);
+
+        log.id = Some(id);
+
+        let mut guard = self
+            .logs
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        guard.push(log);
+        Ok(id)
+    }
+
+    async fn logs_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<Vec<ReviewLogRecord>, StorageError> {
+        let guard = self
+            .logs
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut logs: Vec<_> = guard
+            .iter()
+            .filter(|log| log.deck_id == deck_id && log.card_id == card_id)
+            .cloned()
+            .collect();
+
+        logs.sort_by_key(|l| l.reviewed_at);
+
+        Ok(logs)
+    }
 }
 
 /// Aggregates deck and card repositories behind trait objects for easy backend swapping.
@@ -205,6 +379,7 @@ impl CardRepository for InMemoryRepository {
 pub struct Storage {
     pub decks: Arc<dyn DeckRepository>,
     pub cards: Arc<dyn CardRepository>,
+    pub review_logs: Arc<dyn ReviewLogRepository>,
 }
 
 impl Storage {
@@ -212,8 +387,13 @@ impl Storage {
     pub fn in_memory() -> Self {
         let repo = InMemoryRepository::new();
         let decks: Arc<dyn DeckRepository> = Arc::new(repo.clone());
-        let cards: Arc<dyn CardRepository> = Arc::new(repo);
-        Self { decks, cards }
+        let cards: Arc<dyn CardRepository> = Arc::new(repo.clone());
+        let review_logs: Arc<dyn ReviewLogRepository> = Arc::new(repo);
+        Self {
+            decks,
+            cards,
+            review_logs,
+        }
     }
 }
 

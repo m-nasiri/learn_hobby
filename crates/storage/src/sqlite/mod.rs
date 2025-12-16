@@ -4,12 +4,13 @@ use std::time::Duration;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use thiserror::Error;
 
-use crate::repository::{CardRepository, DeckRepository, Storage};
+use crate::repository::{CardRepository, DeckRepository, ReviewLogRepository, Storage};
 
 mod card_repo;
 mod deck_repo;
 mod mapping;
 mod migrate;
+mod review_log_repo;
 
 #[derive(Clone)]
 pub struct SqliteRepository {
@@ -37,7 +38,13 @@ impl SqliteRepository {
             .after_connect(|conn, _meta| {
                 Box::pin(async move {
                     sqlx::query("PRAGMA foreign_keys = ON;")
-                        .execute(conn)
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA journal_mode = WAL;")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA busy_timeout = 5000;")
+                        .execute(&mut *conn)
                         .await?;
                     Ok(())
                 })
@@ -73,10 +80,12 @@ impl Storage {
         let repo = SqliteRepository::connect(database_url).await?;
         repo.migrate().await?;
         let deck_repo: Arc<dyn DeckRepository> = Arc::new(repo.clone());
-        let card_repo: Arc<dyn CardRepository> = Arc::new(repo);
+        let card_repo: Arc<dyn CardRepository> = Arc::new(repo.clone());
+        let log_repo: Arc<dyn ReviewLogRepository> = Arc::new(repo);
         Ok(Self {
             decks: deck_repo,
             cards: card_repo,
+            review_logs: log_repo,
         })
     }
 }

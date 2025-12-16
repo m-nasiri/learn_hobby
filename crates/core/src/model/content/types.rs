@@ -105,6 +105,21 @@ impl ContentDraft {
 //
 
 impl Content {
+    /// Rehydrate content from persisted storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContentValidationError::EmptyText` if the text is empty.
+    pub fn from_persisted(
+        text: String,
+        media: Option<MediaId>,
+    ) -> Result<Self, ContentValidationError> {
+        if text.trim().is_empty() {
+            return Err(ContentValidationError::EmptyText);
+        }
+        Ok(Self { text, media })
+    }
+
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
