@@ -16,7 +16,7 @@ use crate::review_service::{ReviewResult, ReviewService, ReviewServiceError};
 // ─── ERRORS ────────────────────────────────────────────────────────────────────
 //
 
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum SessionError {
     #[error("no cards available for session")]

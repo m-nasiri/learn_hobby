@@ -2,16 +2,11 @@ use std::collections::HashMap;
 
 use learn_core::model::{Card, CardId, DeckId};
 
-use super::{SqliteRepository, mapping::map_card_row};
+use super::{
+    SqliteRepository,
+    mapping::{map_card_row, media_id_to_i64},
+};
 use crate::repository::{CardRepository, StorageError};
-
-fn media_id_i64(mid: Option<learn_core::model::MediaId>) -> Result<Option<i64>, StorageError> {
-    mid.map(|m| {
-        i64::try_from(m.value())
-            .map_err(|_| StorageError::Serialization("media_id overflow".into()))
-    })
-    .transpose()
-}
 
 #[async_trait::async_trait]
 impl CardRepository for SqliteRepository {
@@ -47,9 +42,9 @@ impl CardRepository for SqliteRepository {
                 .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?,
         )
         .bind(card.prompt().text().to_owned())
-        .bind(media_id_i64(card.prompt().media_id())?)
+        .bind(media_id_to_i64(card.prompt().media_id())?)
         .bind(card.answer().text().to_owned())
-        .bind(media_id_i64(card.answer().media_id())?)
+        .bind(media_id_to_i64(card.answer().media_id())?)
         .bind(card.phase().as_str())
         .bind(card.created_at())
         .bind(card.next_review_at())
@@ -142,7 +137,7 @@ impl CardRepository for SqliteRepository {
             WHERE deck_id = ?1
               AND review_count > 0
               AND next_review_at <= ?2
-            ORDER BY next_review_at ASC
+            ORDER BY next_review_at ASC, id ASC
             LIMIT ?3
             ",
         )

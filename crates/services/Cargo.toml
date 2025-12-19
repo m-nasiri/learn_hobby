@@ -8,3 +8,7 @@ chrono = "0.4"
 thiserror = "1"
 learn-core = { path = "../core" }
 rand = { version = "0.8", features = ["std"] }
+storage = { path = "../storage" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

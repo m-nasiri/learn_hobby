@@ -2,20 +2,25 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use learn_core::{
-    model::{Card, ReviewGrade},
+    model::{Card, CardId, DeckId, ReviewGrade},
     scheduler::{AppliedReview, MemoryState, Scheduler, SchedulerError},
     time::Clock,
 };
+use storage::repository::{CardRepository, ReviewLogRecord, ReviewPersistence, StorageError};
+
+const SECONDS_PER_DAY: f64 = 86_400.0;
 
 //
 // ─── ERRORS ────────────────────────────────────────────────────────────────────
 //
 
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ReviewServiceError {
     #[error(transparent)]
     Scheduler(#[from] SchedulerError),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }
 
 //
@@ -26,6 +31,14 @@ pub enum ReviewServiceError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReviewResult {
     pub applied: AppliedReview,
+}
+
+/// Result of a persisted review: updated card, applied outcome, and log ID.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersistedReview {
+    pub card: Card,
+    pub log_id: i64,
+    pub result: ReviewResult,
 }
 
 //
@@ -53,8 +66,17 @@ pub fn compute_elapsed_days(
     reviewed_at: DateTime<Utc>,
 ) -> f64 {
     match last_review_at {
-        #[allow(clippy::cast_precision_loss)]
-        Some(last) => reviewed_at.signed_duration_since(last).num_seconds() as f64 / 86_400.0,
+        Some(last) => {
+            let seconds = reviewed_at.signed_duration_since(last).num_seconds();
+
+            // NOTE: `num_seconds()` returns `i64`. Converting to `f64` may lose
+            // precision for extremely large durations, but review intervals in
+            // this app are bounded to human timescales.
+            #[allow(clippy::cast_precision_loss)]
+            let seconds_f = seconds as f64;
+
+            seconds_f / SECONDS_PER_DAY
+        }
         None => 0.0,
     }
 }
@@ -125,10 +147,10 @@ impl ReviewService {
     /// };
     ///
     /// let service = ReviewService::new().unwrap();
-/// let reviewed_at = service.now();
-/// let result = service
-///     .review_card(&mut card, ReviewGrade::Good, reviewed_at)
-///     .unwrap();
+    /// let reviewed_at = service.now();
+    /// let result = service
+    ///     .review_card(&mut card, ReviewGrade::Good, reviewed_at)
+    ///     .unwrap();
     /// assert_eq!(result.applied.log.card_id, card.id());
     /// ```
     pub fn review_card(
@@ -152,6 +174,43 @@ impl ReviewService {
 
         Ok(ReviewResult { applied })
     }
+
+    /// Load a card, apply a review, and persist the updated card and review log.
+    ///
+    /// Uses the service clock for `reviewed_at` to keep time deterministic.
+    ///
+    /// # Errors
+    ///
+    /// Propagates storage errors for missing cards or persistence failures,
+    /// and scheduler errors for invalid elapsed time or FSRS failures.
+    pub async fn review_card_persisted(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+        cards: &dyn CardRepository,
+        reviews: &dyn ReviewPersistence,
+        grade: ReviewGrade,
+    ) -> Result<PersistedReview, ReviewServiceError> {
+        let mut card = cards
+            .get_cards(deck_id, &[card_id])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(StorageError::NotFound)?;
+
+        let reviewed_at = self.now();
+        let result = self.review_card(&mut card, grade, reviewed_at)?;
+
+        let record =
+            ReviewLogRecord::from_applied(deck_id, &result.applied.log, &result.applied.outcome);
+        let log_id = reviews.apply_review(&card, record).await?;
+
+        Ok(PersistedReview {
+            card,
+            log_id,
+            result,
+        })
+    }
 }
 
 //
@@ -162,10 +221,11 @@ impl ReviewService {
 mod tests {
     use super::*;
     use learn_core::{
-        model::{CardId, DeckId, content::ContentDraft},
+        model::{CardId, Deck, DeckId, DeckSettings, content::ContentDraft},
         scheduler::Scheduler,
         time::fixed_now,
     };
+    use storage::repository::{DeckRepository, InMemoryRepository, ReviewLogRepository};
 
     fn build_card() -> Card {
         let prompt = ContentDraft::text_only("What is 2+2?")
@@ -178,11 +238,24 @@ mod tests {
         Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap()
     }
 
+    fn build_deck() -> Deck {
+        Deck::new(
+            DeckId::new(1),
+            "Test",
+            None,
+            DeckSettings::default_for_adhd(),
+            fixed_now(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn review_new_card_updates_state_and_log() {
         let mut card = build_card();
         let fixed = fixed_now();
-        let service = ReviewService::new().unwrap().with_clock(Clock::fixed(fixed));
+        let service = ReviewService::new()
+            .unwrap()
+            .with_clock(Clock::fixed(fixed));
 
         let reviewed_at = service.now();
         let result = service
@@ -226,9 +299,7 @@ mod tests {
         let now = fixed_now();
 
         // First review at time = now
-        let service1 = ReviewService::new()
-            .unwrap()
-            .with_clock(Clock::fixed(now));
+        let service1 = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
         service1
             .review_card(&mut card, ReviewGrade::Good, service1.now())
             .unwrap();
@@ -259,5 +330,29 @@ mod tests {
 
         assert!(compute_elapsed_days(Some(now), earlier) < 0.0);
         assert!(compute_elapsed_days(Some(now), later) > 0.0);
+    }
+
+    #[tokio::test]
+    async fn review_card_persisted_updates_card_and_log() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card = build_card();
+        repo.upsert_card(&card).await.unwrap();
+
+        let service = ReviewService::new()
+            .unwrap()
+            .with_clock(Clock::fixed(fixed_now()));
+        let result = service
+            .review_card_persisted(deck.id(), card.id(), &repo, &repo, ReviewGrade::Hard)
+            .await
+            .unwrap();
+
+        assert_eq!(result.card.review_count(), 1);
+        let logs = repo.logs_for_card(deck.id(), card.id()).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].id, Some(result.log_id));
+        assert_eq!(logs[0].grade, ReviewGrade::Hard);
     }
 }

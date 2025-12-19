@@ -23,6 +23,16 @@ pub(crate) fn media_id_from_i64(v: i64) -> Result<learn_core::model::MediaId, St
     Ok(learn_core::model::MediaId::new(i64_to_u64("media_id", v)?))
 }
 
+pub(crate) fn media_id_to_i64(
+    mid: Option<learn_core::model::MediaId>,
+) -> Result<Option<i64>, StorageError> {
+    mid.map(|m| {
+        i64::try_from(m.value())
+            .map_err(|_| StorageError::Serialization("media_id overflow".into()))
+    })
+    .transpose()
+}
+
 pub(crate) fn parse_card_phase(s: &str) -> Result<CardPhase, StorageError> {
     match s {
         "new" => Ok(CardPhase::New),
@@ -58,8 +68,9 @@ pub(crate) fn map_card_row(row: &sqlx::sqlite::SqliteRow) -> Result<Card, Storag
     let phase = parse_card_phase(phase_str.as_str())?;
 
     let review_count_i64: i64 = row.try_get("review_count").map_err(ser)?;
-    let review_count: u32 = u32::try_from(review_count_i64)
-        .map_err(|_| StorageError::Serialization("review_count overflow".into()))?;
+    let review_count: u32 = u32::try_from(review_count_i64).map_err(|_| {
+        StorageError::Serialization(format!("invalid review_count: {review_count_i64}"))
+    })?;
 
     let stability: f64 = if review_count == 0 {
         0.0

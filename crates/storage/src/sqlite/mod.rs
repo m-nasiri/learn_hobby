@@ -4,7 +4,9 @@ use std::time::Duration;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use thiserror::Error;
 
-use crate::repository::{CardRepository, DeckRepository, ReviewLogRepository, Storage};
+use crate::repository::{
+    CardRepository, DeckRepository, ReviewLogRepository, ReviewPersistence, Storage,
+};
 
 mod card_repo;
 mod deck_repo;
@@ -81,11 +83,13 @@ impl Storage {
         repo.migrate().await?;
         let deck_repo: Arc<dyn DeckRepository> = Arc::new(repo.clone());
         let card_repo: Arc<dyn CardRepository> = Arc::new(repo.clone());
-        let log_repo: Arc<dyn ReviewLogRepository> = Arc::new(repo);
+        let log_repo: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
+        let review_repo: Arc<dyn ReviewPersistence> = Arc::new(repo);
         Ok(Self {
             decks: deck_repo,
             cards: card_repo,
             review_logs: log_repo,
+            reviews: review_repo,
         })
     }
 }

@@ -227,23 +227,38 @@ pub trait ReviewLogRepository: Send + Sync {
     ) -> Result<Vec<ReviewLogRecord>, StorageError>;
 }
 
+#[async_trait]
+pub trait ReviewPersistence: Send + Sync {
+    /// Persist a card update and the associated review log atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` if persistence fails or if the log/card IDs mismatch.
+    async fn apply_review(&self, card: &Card, log: ReviewLogRecord) -> Result<i64, StorageError>;
+}
+
+#[derive(Default)]
+struct InMemState {
+    decks: HashMap<DeckId, Deck>,
+    cards: HashMap<(DeckId, CardId), Card>,
+    logs: Vec<ReviewLogRecord>,
+    next_log_id: i64,
+}
+
 /// Simple in-memory repository implementation for testing and prototyping.
 #[derive(Clone, Default)]
 pub struct InMemoryRepository {
-    decks: Arc<Mutex<HashMap<DeckId, Deck>>>,
-    cards: Arc<Mutex<HashMap<(DeckId, CardId), Card>>>,
-    logs: Arc<Mutex<Vec<ReviewLogRecord>>>,
-    next_log_id: Arc<Mutex<i64>>,
+    state: Arc<Mutex<InMemState>>,
 }
 
 impl InMemoryRepository {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            decks: Arc::new(Mutex::new(HashMap::new())),
-            cards: Arc::new(Mutex::new(HashMap::new())),
-            logs: Arc::new(Mutex::new(Vec::new())),
-            next_log_id: Arc::new(Mutex::new(1)),
+            state: Arc::new(Mutex::new(InMemState {
+                next_log_id: 1,
+                ..InMemState::default()
+            })),
         }
     }
 }
@@ -252,19 +267,19 @@ impl InMemoryRepository {
 impl DeckRepository for InMemoryRepository {
     async fn upsert_deck(&self, deck: &Deck) -> Result<(), StorageError> {
         let mut guard = self
-            .decks
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard.insert(deck.id(), deck.clone());
+        guard.decks.insert(deck.id(), deck.clone());
         Ok(())
     }
 
     async fn get_deck(&self, id: DeckId) -> Result<Deck, StorageError> {
         let guard = self
-            .decks
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard.get(&id).cloned().ok_or(StorageError::NotFound)
+        guard.decks.get(&id).cloned().ok_or(StorageError::NotFound)
     }
 }
 
@@ -272,21 +287,23 @@ impl DeckRepository for InMemoryRepository {
 impl CardRepository for InMemoryRepository {
     async fn upsert_card(&self, card: &Card) -> Result<(), StorageError> {
         let mut guard = self
-            .cards
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard.insert((card.deck_id(), card.id()), card.clone());
+        guard
+            .cards
+            .insert((card.deck_id(), card.id()), card.clone());
         Ok(())
     }
 
     async fn get_cards(&self, deck_id: DeckId, ids: &[CardId]) -> Result<Vec<Card>, StorageError> {
         let guard = self
-            .cards
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
-            match guard.get(&(deck_id, *id)) {
+            match guard.cards.get(&(deck_id, *id)) {
                 Some(card) => found.push(card.clone()),
                 None => return Err(StorageError::NotFound),
             }
@@ -301,11 +318,12 @@ impl CardRepository for InMemoryRepository {
         limit: u32,
     ) -> Result<Vec<Card>, StorageError> {
         let guard = self
-            .cards
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
 
         let mut due: Vec<Card> = guard
+            .cards
             .values()
             .filter(|c| c.deck_id() == deck_id && c.review_count() > 0 && c.next_review_at() <= now)
             .cloned()
@@ -317,11 +335,12 @@ impl CardRepository for InMemoryRepository {
 
     async fn new_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError> {
         let guard = self
-            .cards
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
 
         let mut new_cards: Vec<Card> = guard
+            .cards
             .values()
             .filter(|c| c.deck_id() == deck_id && c.review_count() == 0)
             .cloned()
@@ -335,20 +354,14 @@ impl CardRepository for InMemoryRepository {
 #[async_trait]
 impl ReviewLogRepository for InMemoryRepository {
     async fn append_log(&self, mut log: ReviewLogRecord) -> Result<i64, StorageError> {
-        let mut id_guard = self
-            .next_log_id
-            .lock()
-            .map_err(|e| StorageError::Connection(e.to_string()))?;
-        let id = log.id.unwrap_or(*id_guard);
-        *id_guard = id.saturating_add(1);
-
-        log.id = Some(id);
-
         let mut guard = self
-            .logs
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard.push(log);
+        let id = log.id.unwrap_or(guard.next_log_id);
+        guard.next_log_id = id.saturating_add(1);
+        log.id = Some(id);
+        guard.logs.push(log);
         Ok(id)
     }
 
@@ -358,11 +371,12 @@ impl ReviewLogRepository for InMemoryRepository {
         card_id: CardId,
     ) -> Result<Vec<ReviewLogRecord>, StorageError> {
         let guard = self
-            .logs
+            .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
 
         let mut logs: Vec<_> = guard
+            .logs
             .iter()
             .filter(|log| log.deck_id == deck_id && log.card_id == card_id)
             .cloned()
@@ -374,12 +388,38 @@ impl ReviewLogRepository for InMemoryRepository {
     }
 }
 
+#[async_trait]
+impl ReviewPersistence for InMemoryRepository {
+    async fn apply_review(
+        &self,
+        card: &Card,
+        mut log: ReviewLogRecord,
+    ) -> Result<i64, StorageError> {
+        if log.card_id != card.id() || log.deck_id != card.deck_id() {
+            return Err(StorageError::Conflict);
+        }
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        guard
+            .cards
+            .insert((card.deck_id(), card.id()), card.clone());
+        let id = log.id.unwrap_or(guard.next_log_id);
+        guard.next_log_id = id.saturating_add(1);
+        log.id = Some(id);
+        guard.logs.push(log);
+        Ok(id)
+    }
+}
+
 /// Aggregates deck and card repositories behind trait objects for easy backend swapping.
 #[derive(Clone)]
 pub struct Storage {
     pub decks: Arc<dyn DeckRepository>,
     pub cards: Arc<dyn CardRepository>,
     pub review_logs: Arc<dyn ReviewLogRepository>,
+    pub reviews: Arc<dyn ReviewPersistence>,
 }
 
 impl Storage {
@@ -388,11 +428,13 @@ impl Storage {
         let repo = InMemoryRepository::new();
         let decks: Arc<dyn DeckRepository> = Arc::new(repo.clone());
         let cards: Arc<dyn CardRepository> = Arc::new(repo.clone());
-        let review_logs: Arc<dyn ReviewLogRepository> = Arc::new(repo);
+        let review_logs: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
+        let reviews: Arc<dyn ReviewPersistence> = Arc::new(repo);
         Self {
             decks,
             cards,
             review_logs,
+            reviews,
         }
     }
 }
