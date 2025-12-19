@@ -6,8 +6,11 @@ use std::fmt;
 use thiserror::Error;
 
 use learn_core::{
-    model::{Card, CardId, Deck, DeckId, ReviewGrade},
+    model::{Card, CardId, Deck, DeckId, ReviewGrade, SessionSummary, SessionSummaryError},
     scheduler::Scheduler,
+};
+use storage::repository::{
+    CardRepository, DeckRepository, ReviewPersistence, SessionSummaryRepository, StorageError,
 };
 
 use crate::review_service::{ReviewResult, ReviewService, ReviewServiceError};
@@ -23,8 +26,14 @@ pub enum SessionError {
     Empty,
     #[error("session already completed")]
     Completed,
+    #[error("not enough grades to complete session")]
+    InsufficientGrades,
+    #[error(transparent)]
+    Summary(#[from] SessionSummaryError),
     #[error(transparent)]
     Review(#[from] ReviewServiceError),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }
 
 //
@@ -70,6 +79,17 @@ pub struct SessionProgress {
     pub is_complete: bool,
 }
 
+/// Summary of a persisted session run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionRunSummary {
+    pub total: usize,
+    pub answered: usize,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+    pub results: Vec<SessionReview>,
+    pub summary_id: Option<i64>,
+}
+
 /// Builds a micro-session by picking due and new cards according to deck settings.
 pub struct SessionBuilder<'a> {
     deck: &'a Deck,
@@ -103,9 +123,9 @@ impl<'a> SessionBuilder<'a> {
         new_cards: impl IntoIterator<Item = Card>,
     ) -> SessionPlan {
         let settings = self.deck.settings();
-        let micro_cap = settings.micro_session_size() as usize;
-        let due_cap = settings.review_limit_per_day() as usize;
-        let new_cap = settings.new_cards_per_day() as usize;
+        let micro_cap = usize::try_from(settings.micro_session_size()).unwrap_or(usize::MAX);
+        let due_cap = usize::try_from(settings.review_limit_per_day()).unwrap_or(usize::MAX);
+        let new_cap = usize::try_from(settings.new_cards_per_day()).unwrap_or(usize::MAX);
 
         let mut due: Vec<Card> = due_cards.into_iter().collect();
         due.sort_by_key(|c| (c.next_review_at(), c.id().value()));
@@ -165,6 +185,7 @@ pub struct SessionService {
     results: Vec<SessionReview>,
     started_at: DateTime<Utc>,
     completed_at: Option<DateTime<Utc>>,
+    summary_id: Option<i64>,
     review_service: ReviewService,
 }
 
@@ -194,6 +215,7 @@ impl SessionService {
             results: Vec::new(),
             started_at: now,
             completed_at: None,
+            summary_id: None,
             review_service,
         })
     }
@@ -210,6 +232,74 @@ impl SessionService {
     ) -> Result<Self, SessionError> {
         let service = ReviewService::with_scheduler(scheduler);
         Self::new(deck, cards, service)
+    }
+
+    /// Build a session plan using repository data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` when repository access fails.
+    pub async fn build_plan_from_storage(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        now: DateTime<Utc>,
+        shuffle_new: bool,
+    ) -> Result<(Deck, SessionPlan), SessionError> {
+        let deck = decks.get_deck(deck_id).await?;
+        let settings = deck.settings();
+        let due = cards
+            .due_cards(deck_id, now, settings.review_limit_per_day())
+            .await?;
+        let new_cards = cards
+            .new_cards(deck_id, settings.new_cards_per_day())
+            .await?;
+
+        let plan = SessionBuilder::new(&deck)
+            .with_shuffle_new(shuffle_new)
+            .build(due, new_cards);
+
+        Ok((deck, plan))
+    }
+
+    /// Create a session directly from storage-backed data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Empty` if no cards are available, or
+    /// `SessionError::Storage` on repository failures.
+    pub async fn start_from_storage(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        now: DateTime<Utc>,
+        shuffle_new: bool,
+        review_service: ReviewService,
+    ) -> Result<(Deck, SessionService), SessionError> {
+        let (deck, plan) =
+            Self::build_plan_from_storage(deck_id, decks, cards, now, shuffle_new).await?;
+        let session = SessionService::new(&deck, plan.cards, review_service)?;
+        Ok((deck, session))
+    }
+
+    /// Create a session directly from storage and return the plan for UI summary.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Empty` if no cards are available, or
+    /// `SessionError::Storage` on repository failures.
+    pub async fn start_from_storage_with_plan(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        now: DateTime<Utc>,
+        shuffle_new: bool,
+        review_service: ReviewService,
+    ) -> Result<(Deck, SessionPlan, SessionService), SessionError> {
+        let (deck, plan) =
+            Self::build_plan_from_storage(deck_id, decks, cards, now, shuffle_new).await?;
+        let session = SessionService::new(&deck, plan.cards.clone(), review_service)?;
+        Ok((deck, plan, session))
     }
 
     #[must_use]
@@ -305,6 +395,175 @@ impl SessionService {
 
         self.results.last().ok_or(SessionError::Completed)
     }
+
+    /// Apply a grade to the current card, persist the update, and advance the session.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Completed` if the session is finished.
+    /// Returns `SessionError::Review` for scheduler failures.
+    /// Returns `SessionError::Storage` if persistence fails.
+    pub async fn answer_current_persisted(
+        &mut self,
+        grade: ReviewGrade,
+        reviews: &dyn ReviewPersistence,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<&SessionReview, SessionError> {
+        self.answer_current_persisted_with_log_id(grade, reviews, summaries)
+            .await?;
+        self.results.last().ok_or(SessionError::Completed)
+    }
+
+    /// Apply a grade to the current card, persist the update, and return the log ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Completed` if the session is finished.
+    /// Returns `SessionError::Review` for scheduler failures.
+    /// Returns `SessionError::Storage` if persistence fails.
+    pub async fn answer_current_persisted_with_log_id(
+        &mut self,
+        grade: ReviewGrade,
+        reviews: &dyn ReviewPersistence,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<(SessionReview, i64), SessionError> {
+        if self.is_complete() {
+            return Err(SessionError::Completed);
+        }
+
+        let Some(card) = self.cards.get_mut(self.current) else {
+            return Err(SessionError::Completed);
+        };
+
+        let reviewed_at = self.review_service.now();
+
+        // ReviewService owns persistence orchestration (including atomic card+log persistence).
+        let (result, log_id) = self
+            .review_service
+            .review_card_persisted(card, grade, reviewed_at, reviews)
+            .await?;
+
+        let review = SessionReview {
+            card_id: card.id(),
+            result,
+        };
+        self.results.push(review.clone());
+
+        self.current += 1;
+        if self.current >= self.cards.len() {
+            self.completed_at = Some(reviewed_at);
+            if self.summary_id.is_none() {
+                let summary = self.build_summary()?;
+                let id = summaries.append_summary(&summary).await?;
+                self.summary_id = Some(id);
+            }
+        }
+
+        Ok((review, log_id))
+    }
+
+    /// Run the entire session with provided grades and persist each review.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::InsufficientGrades` if the session is not completed
+    /// after consuming all grades.
+    pub async fn run_persisted(
+        &mut self,
+        grades: impl IntoIterator<Item = ReviewGrade>,
+        reviews: &dyn ReviewPersistence,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<SessionRunSummary, SessionError> {
+        for grade in grades {
+            if self.is_complete() {
+                break;
+            }
+            self.answer_current_persisted(grade, reviews, summaries)
+                .await?;
+        }
+
+        if !self.is_complete() {
+            return Err(SessionError::InsufficientGrades);
+        }
+
+        let completed_at = self.completed_at.ok_or(SessionError::Completed)?;
+        Ok(SessionRunSummary {
+            total: self.total_cards(),
+            answered: self.answered_count(),
+            started_at: self.started_at,
+            completed_at,
+            results: self.results.clone(),
+            summary_id: self.summary_id,
+        })
+    }
+
+    /// Run the entire session with provided grades from a `Vec`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::InsufficientGrades` if the session is not completed.
+    pub async fn run_persisted_with_grades(
+        &mut self,
+        grades: Vec<ReviewGrade>,
+        reviews: &dyn ReviewPersistence,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<SessionRunSummary, SessionError> {
+        self.run_persisted(grades, reviews, summaries).await
+    }
+
+    /// Run the session and return both summary and persisted log IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::InsufficientGrades` if the session is not completed.
+    pub async fn run_persisted_with_log_ids(
+        &mut self,
+        grades: impl IntoIterator<Item = ReviewGrade>,
+        reviews: &dyn ReviewPersistence,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<(SessionRunSummary, Vec<i64>), SessionError> {
+        let mut log_ids = Vec::new();
+        for grade in grades {
+            if self.is_complete() {
+                break;
+            }
+            let (_review, log_id) = self
+                .answer_current_persisted_with_log_id(grade, reviews, summaries)
+                .await?;
+            log_ids.push(log_id);
+        }
+
+        if !self.is_complete() {
+            return Err(SessionError::InsufficientGrades);
+        }
+
+        let completed_at = self.completed_at.ok_or(SessionError::Completed)?;
+        let summary = SessionRunSummary {
+            total: self.total_cards(),
+            answered: self.answered_count(),
+            started_at: self.started_at,
+            completed_at,
+            results: self.results.clone(),
+            summary_id: self.summary_id,
+        };
+
+        Ok((summary, log_ids))
+    }
+
+    fn build_summary(&self) -> Result<SessionSummary, SessionError> {
+        let completed_at = self.completed_at.ok_or(SessionError::Completed)?;
+        let logs: Vec<_> = self
+            .results
+            .iter()
+            .map(|review| review.result.applied.log.clone())
+            .collect();
+        Ok(SessionSummary::from_logs(
+            self.deck_id,
+            self.started_at,
+            completed_at,
+            &logs,
+        )?)
+    }
 }
 
 impl fmt::Debug for SessionService {
@@ -331,6 +590,10 @@ mod tests {
     use learn_core::model::{CardPhase, DeckId, content::ContentDraft};
     use learn_core::scheduler::Scheduler;
     use learn_core::time::fixed_now;
+    use storage::repository::{
+        CardRepository, DeckRepository, InMemoryRepository, ReviewLogRepository,
+        SessionSummaryRepository,
+    };
 
     fn build_card(id: u64) -> Card {
         let prompt = ContentDraft::text_only("Q")
@@ -475,5 +738,200 @@ mod tests {
 
         assert!(session.is_complete());
         assert_eq!(session.results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn persisted_session_updates_storage() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        let card2 = build_card(2);
+        repo.upsert_card(&card1).await.unwrap();
+        repo.upsert_card(&card2).await.unwrap();
+
+        let now = fixed_now();
+        let (deck, plan) =
+            SessionService::build_plan_from_storage(deck.id(), &repo, &repo, now, false)
+                .await
+                .unwrap();
+
+        let review_service = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
+        let mut session = SessionService::new(&deck, plan.cards, review_service).unwrap();
+
+        session
+            .answer_current_persisted(ReviewGrade::Good, &repo, &repo)
+            .await
+            .unwrap();
+        session
+            .answer_current_persisted(ReviewGrade::Hard, &repo, &repo)
+            .await
+            .unwrap();
+
+        let logs1 = repo.logs_for_card(deck.id(), CardId::new(1)).await.unwrap();
+        let logs2 = repo.logs_for_card(deck.id(), CardId::new(2)).await.unwrap();
+        assert_eq!(logs1.len(), 1);
+        assert_eq!(logs2.len(), 1);
+        let summary_id = session.summary_id.expect("summary persisted");
+        let summary = repo.get_summary(summary_id).await.unwrap();
+        assert_eq!(summary.deck_id(), deck.id());
+        assert!(session.is_complete());
+    }
+
+    #[tokio::test]
+    async fn start_from_storage_builds_session() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        repo.upsert_card(&card1).await.unwrap();
+
+        let now = fixed_now();
+        let review_service = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
+        let (loaded, session) =
+            SessionService::start_from_storage(deck.id(), &repo, &repo, now, false, review_service)
+                .await
+                .unwrap();
+
+        assert_eq!(loaded.id(), deck.id());
+        assert_eq!(session.total_cards(), 1);
+    }
+
+    #[tokio::test]
+    async fn start_from_storage_with_plan_returns_summary() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        let card2 = build_card(2);
+        repo.upsert_card(&card1).await.unwrap();
+        repo.upsert_card(&card2).await.unwrap();
+
+        let now = fixed_now();
+        let review_service = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
+        let (loaded, plan, session) = SessionService::start_from_storage_with_plan(
+            deck.id(),
+            &repo,
+            &repo,
+            now,
+            false,
+            review_service,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(loaded.id(), deck.id());
+        assert_eq!(plan.total(), session.total_cards());
+        assert!(plan.total() > 0);
+    }
+
+    #[tokio::test]
+    async fn run_persisted_completes_and_logs() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        let card2 = build_card(2);
+        repo.upsert_card(&card1).await.unwrap();
+        repo.upsert_card(&card2).await.unwrap();
+
+        let now = fixed_now();
+        let review_service = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
+        let (deck, plan, mut session) = SessionService::start_from_storage_with_plan(
+            deck.id(),
+            &repo,
+            &repo,
+            now,
+            false,
+            review_service,
+        )
+        .await
+        .unwrap();
+
+        let summary = session
+            .run_persisted([ReviewGrade::Good, ReviewGrade::Hard], &repo, &repo)
+            .await
+            .unwrap();
+
+        assert_eq!(summary.total, plan.total());
+        assert_eq!(summary.answered, plan.total());
+        assert!(summary.completed_at >= summary.started_at);
+        let summary_id = summary.summary_id.expect("summary persisted");
+        let stored = repo.get_summary(summary_id).await.unwrap();
+        assert_eq!(stored.total_reviews(), summary.total as u32);
+
+        let logs1 = repo.logs_for_card(deck.id(), CardId::new(1)).await.unwrap();
+        let logs2 = repo.logs_for_card(deck.id(), CardId::new(2)).await.unwrap();
+        assert_eq!(logs1.len(), 1);
+        assert_eq!(logs2.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_persisted_fails_with_insufficient_grades() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        let card2 = build_card(2);
+        repo.upsert_card(&card1).await.unwrap();
+        repo.upsert_card(&card2).await.unwrap();
+
+        let now = fixed_now();
+        let review_service = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
+        let (_deck, _plan, mut session) = SessionService::start_from_storage_with_plan(
+            deck.id(),
+            &repo,
+            &repo,
+            now,
+            false,
+            review_service,
+        )
+        .await
+        .unwrap();
+
+        let err = session
+            .run_persisted([ReviewGrade::Good], &repo, &repo)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SessionError::InsufficientGrades));
+    }
+
+    #[tokio::test]
+    async fn run_persisted_with_log_ids_returns_log_ids() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        let card2 = build_card(2);
+        repo.upsert_card(&card1).await.unwrap();
+        repo.upsert_card(&card2).await.unwrap();
+
+        let now = fixed_now();
+        let review_service = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
+        let (_deck, _plan, mut session) = SessionService::start_from_storage_with_plan(
+            deck.id(),
+            &repo,
+            &repo,
+            now,
+            false,
+            review_service,
+        )
+        .await
+        .unwrap();
+
+        let (summary, log_ids) = session
+            .run_persisted_with_log_ids([ReviewGrade::Good, ReviewGrade::Hard], &repo, &repo)
+            .await
+            .unwrap();
+
+        assert_eq!(summary.answered, summary.total);
+        assert_eq!(log_ids.len(), summary.total);
     }
 }

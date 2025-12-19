@@ -3,6 +3,7 @@ pub mod content;
 mod deck;
 mod ids;
 mod review;
+mod session;
 
 pub use content::{
     Content, ContentDraft, ContentValidationError, ImageMeta, MediaHash, MediaUri,
@@ -13,3 +14,4 @@ pub use ids::{CardId, DeckId, MediaId};
 pub use card::{Card, CardError, CardPhase};
 pub use deck::{Deck, DeckError, DeckSettings};
 pub use review::{ReviewError, ReviewGrade, ReviewLog, ReviewOutcome};
+pub use session::{SessionSummary, SessionSummaryError};

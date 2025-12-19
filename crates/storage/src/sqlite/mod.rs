@@ -5,7 +5,8 @@ use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use thiserror::Error;
 
 use crate::repository::{
-    CardRepository, DeckRepository, ReviewLogRepository, ReviewPersistence, Storage,
+    CardRepository, DeckRepository, ReviewLogRepository, ReviewPersistence,
+    SessionSummaryRepository, Storage,
 };
 
 mod card_repo;
@@ -13,6 +14,7 @@ mod deck_repo;
 mod mapping;
 mod migrate;
 mod review_log_repo;
+mod session_summary_repo;
 
 #[derive(Clone)]
 pub struct SqliteRepository {
@@ -81,15 +83,18 @@ impl Storage {
     pub async fn sqlite(database_url: &str) -> Result<Self, SqliteInitError> {
         let repo = SqliteRepository::connect(database_url).await?;
         repo.migrate().await?;
+
         let deck_repo: Arc<dyn DeckRepository> = Arc::new(repo.clone());
         let card_repo: Arc<dyn CardRepository> = Arc::new(repo.clone());
         let log_repo: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
-        let review_repo: Arc<dyn ReviewPersistence> = Arc::new(repo);
+        let review_repo: Arc<dyn ReviewPersistence> = Arc::new(repo.clone());
+        let summary_repo: Arc<dyn SessionSummaryRepository> = Arc::new(repo);
         Ok(Self {
             decks: deck_repo,
             cards: card_repo,
             review_logs: log_repo,
             reviews: review_repo,
+            session_summaries: summary_repo,
         })
     }
 }

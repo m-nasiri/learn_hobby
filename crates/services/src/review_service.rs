@@ -34,6 +34,9 @@ pub struct ReviewResult {
 }
 
 /// Result of a persisted review: updated card, applied outcome, and log ID.
+///
+/// This struct encapsulates the card after review, the ID of the persisted review log,
+/// and the detailed review result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PersistedReview {
     pub card: Card,
@@ -175,15 +178,50 @@ impl ReviewService {
         Ok(ReviewResult { applied })
     }
 
-    /// Load a card, apply a review, and persist the updated card and review log.
+    /// Apply a review to an in-memory card and persist the update + log atomically.
+    ///
+    /// If persistence fails, the card is rolled back to its original state.
+    ///
+    /// # Errors
+    ///
+    /// Returns scheduler errors for invalid elapsed time or FSRS failures.
+    /// Returns storage errors if persistence fails.
+    pub async fn review_card_persisted(
+        &self,
+        card: &mut Card,
+        grade: ReviewGrade,
+        reviewed_at: DateTime<Utc>,
+        reviews: &dyn ReviewPersistence,
+    ) -> Result<(ReviewResult, i64), ReviewServiceError> {
+        let original = card.clone();
+
+        let result = self.review_card(card, grade, reviewed_at)?;
+
+        let record = ReviewLogRecord::from_applied(
+            card.deck_id(),
+            &result.applied.log,
+            &result.applied.outcome,
+        );
+
+        match reviews.apply_review(card, record).await {
+            Ok(id) => Ok((result, id)),
+            Err(err) => {
+                *card = original;
+                Err(err.into())
+            }
+        }
+    }
+
+    /// Load a card, apply a review, and persist the updated card and review log atomically.
     ///
     /// Uses the service clock for `reviewed_at` to keep time deterministic.
     ///
     /// # Errors
     ///
-    /// Propagates storage errors for missing cards or persistence failures,
-    /// and scheduler errors for invalid elapsed time or FSRS failures.
-    pub async fn review_card_persisted(
+    /// Returns `StorageError::NotFound` if the card is missing.
+    /// Returns scheduler errors for invalid elapsed time or FSRS failures.
+    /// Returns storage errors if persistence fails.
+    pub async fn review_card_persisted_by_id(
         &self,
         deck_id: DeckId,
         card_id: CardId,
@@ -199,11 +237,9 @@ impl ReviewService {
             .ok_or(StorageError::NotFound)?;
 
         let reviewed_at = self.now();
-        let result = self.review_card(&mut card, grade, reviewed_at)?;
-
-        let record =
-            ReviewLogRecord::from_applied(deck_id, &result.applied.log, &result.applied.outcome);
-        let log_id = reviews.apply_review(&card, record).await?;
+        let (result, log_id) = self
+            .review_card_persisted(&mut card, grade, reviewed_at, reviews)
+            .await?;
 
         Ok(PersistedReview {
             card,
@@ -345,7 +381,7 @@ mod tests {
             .unwrap()
             .with_clock(Clock::fixed(fixed_now()));
         let result = service
-            .review_card_persisted(deck.id(), card.id(), &repo, &repo, ReviewGrade::Hard)
+            .review_card_persisted_by_id(deck.id(), card.id(), &repo, &repo, ReviewGrade::Hard)
             .await
             .unwrap();
 

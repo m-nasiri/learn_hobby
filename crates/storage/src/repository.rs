@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use learn_core::model::{
     Card, CardError, CardId, CardPhase, Deck, DeckId, MediaId, ReviewGrade, ReviewLog,
-    ReviewOutcome, content::Content,
+    ReviewOutcome, SessionSummary, content::Content,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -27,8 +27,8 @@ pub enum StorageError {
 
 /// Persisted shape for a card, including lifecycle phase.
 ///
-/// This mirrors the domain `Card` so repositories can serialize/deserialize
-/// without leaking storage concerns into the domain layer.
+/// This is a storage-friendly representation used to round-trip the domain `Card`
+/// while allowing nullable persisted state (e.g. stability/difficulty before first review).
 #[derive(Debug, Clone)]
 pub struct CardRecord {
     pub id: CardId,
@@ -237,12 +237,31 @@ pub trait ReviewPersistence: Send + Sync {
     async fn apply_review(&self, card: &Card, log: ReviewLogRecord) -> Result<i64, StorageError>;
 }
 
+#[async_trait]
+pub trait SessionSummaryRepository: Send + Sync {
+    /// Persist a session summary, returning the assigned ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` if persistence fails.
+    async fn append_summary(&self, summary: &SessionSummary) -> Result<i64, StorageError>;
+
+    /// Fetch a session summary by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError::NotFound` if missing.
+    async fn get_summary(&self, id: i64) -> Result<SessionSummary, StorageError>;
+}
+
 #[derive(Default)]
 struct InMemState {
     decks: HashMap<DeckId, Deck>,
     cards: HashMap<(DeckId, CardId), Card>,
     logs: Vec<ReviewLogRecord>,
+    summaries: HashMap<i64, SessionSummary>,
     next_log_id: i64,
+    next_summary_id: i64,
 }
 
 /// Simple in-memory repository implementation for testing and prototyping.
@@ -257,10 +276,15 @@ impl InMemoryRepository {
         Self {
             state: Arc::new(Mutex::new(InMemState {
                 next_log_id: 1,
+                next_summary_id: 1,
                 ..InMemState::default()
             })),
         }
     }
+}
+
+fn limit_usize(limit: u32) -> usize {
+    usize::try_from(limit).unwrap_or(usize::MAX)
 }
 
 #[async_trait]
@@ -329,7 +353,7 @@ impl CardRepository for InMemoryRepository {
             .cloned()
             .collect();
         due.sort_by_key(|c| (c.next_review_at(), c.id().value()));
-        due.truncate(limit as usize);
+        due.truncate(limit_usize(limit));
         Ok(due)
     }
 
@@ -346,7 +370,7 @@ impl CardRepository for InMemoryRepository {
             .cloned()
             .collect();
         new_cards.sort_by_key(|c| (c.created_at(), c.id().value()));
-        new_cards.truncate(limit as usize);
+        new_cards.truncate(limit_usize(limit));
         Ok(new_cards)
     }
 }
@@ -358,7 +382,7 @@ impl ReviewLogRepository for InMemoryRepository {
             .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        let id = log.id.unwrap_or(guard.next_log_id);
+        let id = guard.next_log_id;
         guard.next_log_id = id.saturating_add(1);
         log.id = Some(id);
         guard.logs.push(log);
@@ -405,11 +429,37 @@ impl ReviewPersistence for InMemoryRepository {
         guard
             .cards
             .insert((card.deck_id(), card.id()), card.clone());
-        let id = log.id.unwrap_or(guard.next_log_id);
+        let id = guard.next_log_id;
         guard.next_log_id = id.saturating_add(1);
         log.id = Some(id);
         guard.logs.push(log);
         Ok(id)
+    }
+}
+
+#[async_trait]
+impl SessionSummaryRepository for InMemoryRepository {
+    async fn append_summary(&self, summary: &SessionSummary) -> Result<i64, StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let id = guard.next_summary_id;
+        guard.next_summary_id = id.saturating_add(1);
+        guard.summaries.insert(id, summary.clone());
+        Ok(id)
+    }
+
+    async fn get_summary(&self, id: i64) -> Result<SessionSummary, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        guard
+            .summaries
+            .get(&id)
+            .cloned()
+            .ok_or(StorageError::NotFound)
     }
 }
 
@@ -420,6 +470,7 @@ pub struct Storage {
     pub cards: Arc<dyn CardRepository>,
     pub review_logs: Arc<dyn ReviewLogRepository>,
     pub reviews: Arc<dyn ReviewPersistence>,
+    pub session_summaries: Arc<dyn SessionSummaryRepository>,
 }
 
 impl Storage {
@@ -429,12 +480,14 @@ impl Storage {
         let decks: Arc<dyn DeckRepository> = Arc::new(repo.clone());
         let cards: Arc<dyn CardRepository> = Arc::new(repo.clone());
         let review_logs: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
-        let reviews: Arc<dyn ReviewPersistence> = Arc::new(repo);
+        let reviews: Arc<dyn ReviewPersistence> = Arc::new(repo.clone());
+        let session_summaries: Arc<dyn SessionSummaryRepository> = Arc::new(repo);
         Self {
             decks,
             cards,
             review_logs,
             reviews,
+            session_summaries,
         }
     }
 }

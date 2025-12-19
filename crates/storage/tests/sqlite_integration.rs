@@ -1,9 +1,13 @@
 use chrono::Duration;
 use learn_core::model::Card;
 use learn_core::model::content::ContentDraft;
-use learn_core::model::{CardId, CardPhase, DeckId, DeckSettings, MediaId, ReviewGrade};
+use learn_core::model::{
+    CardId, CardPhase, DeckId, DeckSettings, MediaId, ReviewGrade, ReviewLog, SessionSummary,
+};
 use learn_core::time::fixed_now;
-use storage::repository::{CardRepository, DeckRepository, ReviewLogRecord, ReviewLogRepository};
+use storage::repository::{
+    CardRepository, DeckRepository, ReviewLogRecord, ReviewLogRepository, SessionSummaryRepository,
+};
 use storage::sqlite::SqliteRepository;
 
 fn build_card(id: u64, deck_id: DeckId) -> Card {
@@ -165,4 +169,40 @@ async fn sqlite_supports_due_new_and_logs() {
     assert_eq!(logs[0].id, Some(id));
     assert_eq!(logs[0].grade, ReviewGrade::Good);
     assert_eq!(logs[0].next_review_at, outcome.next_review);
+}
+
+#[tokio::test]
+async fn sqlite_persists_session_summary() {
+    let repo =
+        SqliteRepository::connect("sqlite:file:memdb_session_summary?mode=memory&cache=shared")
+            .await
+            .expect("connect");
+    repo.migrate().await.expect("migrate");
+
+    let deck = learn_core::model::Deck::new(
+        DeckId::new(1),
+        "Test",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    repo.upsert_deck(&deck).await.unwrap();
+
+    let now = fixed_now();
+    let logs = vec![
+        ReviewLog::new(CardId::new(1), ReviewGrade::Good, now),
+        ReviewLog::new(CardId::new(2), ReviewGrade::Again, now),
+        ReviewLog::new(CardId::new(3), ReviewGrade::Hard, now),
+    ];
+
+    let summary = SessionSummary::from_logs(deck.id(), now, now, &logs).unwrap();
+    let id = repo.append_summary(&summary).await.unwrap();
+
+    let stored = repo.get_summary(id).await.unwrap();
+    assert_eq!(stored.deck_id(), deck.id());
+    assert_eq!(stored.total_reviews(), 3);
+    assert_eq!(stored.good(), 1);
+    assert_eq!(stored.again(), 1);
+    assert_eq!(stored.hard(), 1);
 }
