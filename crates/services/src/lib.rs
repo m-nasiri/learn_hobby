@@ -6,5 +6,5 @@ pub use review_service::{
     compute_elapsed_days, PersistedReview, ReviewResult, ReviewService, ReviewServiceError,
 };
 pub use session_service::{SessionBuilder, SessionError, SessionPlan, SessionReview, SessionService};
-pub use session_view::SessionSummaryCardView;
+pub use session_view::{list_recent_summary_cards, SessionSummaryCardView};
 pub use learn_core::Clock;
