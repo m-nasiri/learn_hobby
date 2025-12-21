@@ -237,6 +237,23 @@ pub trait ReviewPersistence: Send + Sync {
     async fn apply_review(&self, card: &Card, log: ReviewLogRecord) -> Result<i64, StorageError>;
 }
 
+/// A session summary paired with its storage-assigned identifier.
+///
+/// This is useful for UI navigation (e.g. “open summary details”) without requiring
+/// a separate lookup after listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummaryRow {
+    pub id: i64,
+    pub summary: SessionSummary,
+}
+
+impl SessionSummaryRow {
+    #[must_use]
+    pub fn new(id: i64, summary: SessionSummary) -> Self {
+        Self { id, summary }
+    }
+}
+
 #[async_trait]
 pub trait SessionSummaryRepository: Send + Sync {
     /// Persist a session summary, returning the assigned ID.
@@ -252,6 +269,36 @@ pub trait SessionSummaryRepository: Send + Sync {
     ///
     /// Returns `StorageError::NotFound` if missing.
     async fn get_summary(&self, id: i64) -> Result<SessionSummary, StorageError>;
+
+    /// List session summaries for a deck within an optional time range.
+    ///
+    /// Results are ordered by `completed_at` descending, limited by `limit`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn list_summaries(
+        &self,
+        deck_id: DeckId,
+        completed_from: Option<DateTime<Utc>>,
+        completed_until: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<SessionSummary>, StorageError>;
+
+    /// List session summaries for a deck within an optional time range, preserving storage IDs.
+    ///
+    /// Results are ordered by `completed_at` descending, then `id` descending, limited by `limit`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn list_summary_rows(
+        &self,
+        deck_id: DeckId,
+        completed_from: Option<DateTime<Utc>>,
+        completed_until: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<SessionSummaryRow>, StorageError>;
 }
 
 #[derive(Default)]
@@ -460,6 +507,56 @@ impl SessionSummaryRepository for InMemoryRepository {
             .get(&id)
             .cloned()
             .ok_or(StorageError::NotFound)
+    }
+
+    async fn list_summaries(
+        &self,
+        deck_id: DeckId,
+        completed_from: Option<DateTime<Utc>>,
+        completed_until: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<SessionSummary>, StorageError> {
+        let rows = self
+            .list_summary_rows(deck_id, completed_from, completed_until, limit)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.summary).collect())
+    }
+
+    async fn list_summary_rows(
+        &self,
+        deck_id: DeckId,
+        completed_from: Option<DateTime<Utc>>,
+        completed_until: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<SessionSummaryRow>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut rows: Vec<SessionSummaryRow> = guard
+            .summaries
+            .iter()
+            .filter(|(_, summary)| summary.deck_id() == deck_id)
+            .filter(|(_, summary)| {
+                completed_from.is_none_or(|from| summary.completed_at() >= from)
+            })
+            .filter(|(_, summary)| {
+                completed_until.is_none_or(|until| summary.completed_at() <= until)
+            })
+            .map(|(id, summary)| SessionSummaryRow::new(*id, summary.clone()))
+            .collect();
+
+        // Match SQLite ordering: completed_at DESC, id DESC
+        rows.sort_by(|a, b| {
+            b.summary
+                .completed_at()
+                .cmp(&a.summary.completed_at())
+                .then_with(|| b.id.cmp(&a.id))
+        });
+
+        rows.truncate(limit_usize(limit));
+        Ok(rows)
     }
 }
 

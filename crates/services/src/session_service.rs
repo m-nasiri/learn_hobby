@@ -10,7 +10,8 @@ use learn_core::{
     scheduler::Scheduler,
 };
 use storage::repository::{
-    CardRepository, DeckRepository, ReviewPersistence, SessionSummaryRepository, StorageError,
+    CardRepository, DeckRepository, ReviewPersistence, SessionSummaryRepository, SessionSummaryRow,
+    StorageError,
 };
 
 use crate::review_service::{ReviewResult, ReviewService, ReviewServiceError};
@@ -302,6 +303,76 @@ impl SessionService {
         Ok((deck, plan, session))
     }
 
+    /// List persisted session summaries for a deck within an optional time range.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_summaries(
+        deck_id: DeckId,
+        summaries: &dyn SessionSummaryRepository,
+        completed_from: Option<DateTime<Utc>>,
+        completed_until: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<SessionSummary>, SessionError> {
+        let items = summaries
+            .list_summaries(deck_id, completed_from, completed_until, limit)
+            .await?;
+        Ok(items)
+    }
+
+    /// List persisted session summaries for a deck within an optional time range, preserving IDs.
+    ///
+    /// This is useful for UI navigation (e.g. “open summary details”) without requiring a follow-up lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_summary_rows(
+        deck_id: DeckId,
+        summaries: &dyn SessionSummaryRepository,
+        completed_from: Option<DateTime<Utc>>,
+        completed_until: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<Vec<SessionSummaryRow>, SessionError> {
+        let items = summaries
+            .list_summary_rows(deck_id, completed_from, completed_until, limit)
+            .await?;
+        Ok(items)
+    }
+
+    /// List recent summaries for a deck with a default time window.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_recent_summaries(
+        deck_id: DeckId,
+        summaries: &dyn SessionSummaryRepository,
+        now: DateTime<Utc>,
+        days: i64,
+        limit: u32,
+    ) -> Result<Vec<SessionSummary>, SessionError> {
+        let from = now - chrono::Duration::days(days);
+        Self::list_summaries(deck_id, summaries, Some(from), Some(now), limit).await
+    }
+
+    /// List recent persisted session summaries for a deck within a default time window, preserving IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_recent_summary_rows(
+        deck_id: DeckId,
+        summaries: &dyn SessionSummaryRepository,
+        now: DateTime<Utc>,
+        days: i64,
+        limit: u32,
+    ) -> Result<Vec<SessionSummaryRow>, SessionError> {
+        let from = now - chrono::Duration::days(days);
+        Self::list_summary_rows(deck_id, summaries, Some(from), Some(now), limit).await
+    }
+
     #[must_use]
     pub fn deck_id(&self) -> DeckId {
         self.deck_id
@@ -587,7 +658,7 @@ impl fmt::Debug for SessionService {
 mod tests {
     use super::*;
     use learn_core::Clock;
-    use learn_core::model::{CardPhase, DeckId, content::ContentDraft};
+    use learn_core::model::{CardPhase, DeckId, ReviewLog, content::ContentDraft};
     use learn_core::scheduler::Scheduler;
     use learn_core::time::fixed_now;
     use storage::repository::{
@@ -826,6 +897,89 @@ mod tests {
         assert_eq!(loaded.id(), deck.id());
         assert_eq!(plan.total(), session.total_cards());
         assert!(plan.total() > 0);
+    }
+
+    #[tokio::test]
+    async fn list_summaries_returns_recent_first() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let now = fixed_now();
+        let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
+
+        let summary1 = SessionSummary::from_logs(deck.id(), now, now, &logs).unwrap();
+        let summary2 =
+            SessionSummary::from_logs(deck.id(), now, now + chrono::Duration::days(1), &logs)
+                .unwrap();
+
+        let id1 = repo.append_summary(&summary1).await.unwrap();
+        let id2 = repo.append_summary(&summary2).await.unwrap();
+        assert_ne!(id1, id2);
+
+        let listed = SessionService::list_summaries(
+            deck.id(),
+            &repo,
+            Some(now),
+            Some(now + chrono::Duration::days(1)),
+            10,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].completed_at(), summary2.completed_at());
+        assert_eq!(listed[1].completed_at(), summary1.completed_at());
+
+        let rows = SessionService::list_summary_rows(
+            deck.id(),
+            &repo,
+            Some(now),
+            Some(now + chrono::Duration::days(1)),
+            10,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].summary.completed_at(), summary2.completed_at());
+        assert_eq!(rows[1].summary.completed_at(), summary1.completed_at());
+        assert!(rows[0].id != rows[1].id);
+    }
+
+    #[tokio::test]
+    async fn list_recent_summaries_uses_window() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let now = fixed_now();
+        let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
+
+        let summary_old = SessionSummary::from_logs(
+            deck.id(),
+            now - chrono::Duration::days(11),
+            now - chrono::Duration::days(10),
+            &logs,
+        )
+        .unwrap();
+        let summary_recent = SessionSummary::from_logs(
+            deck.id(),
+            now - chrono::Duration::days(3),
+            now - chrono::Duration::days(2),
+            &logs,
+        )
+        .unwrap();
+
+        repo.append_summary(&summary_old).await.unwrap();
+        repo.append_summary(&summary_recent).await.unwrap();
+
+        let listed = SessionService::list_recent_summaries(deck.id(), &repo, now, 7, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].completed_at(), summary_recent.completed_at());
     }
 
     #[tokio::test]

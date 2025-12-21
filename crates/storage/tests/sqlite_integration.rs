@@ -206,3 +206,81 @@ async fn sqlite_persists_session_summary() {
     assert_eq!(stored.again(), 1);
     assert_eq!(stored.hard(), 1);
 }
+
+#[tokio::test]
+async fn sqlite_lists_session_summaries_by_range() {
+    let repo = SqliteRepository::connect("sqlite:file:memdb_session_list?mode=memory&cache=shared")
+        .await
+        .expect("connect");
+    repo.migrate().await.expect("migrate");
+
+    let deck = learn_core::model::Deck::new(
+        DeckId::new(1),
+        "Test",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    repo.upsert_deck(&deck).await.unwrap();
+
+    let now = fixed_now();
+    let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
+
+    let summary1 = SessionSummary::from_logs(deck.id(), now, now, &logs).unwrap();
+    let summary2 =
+        SessionSummary::from_logs(deck.id(), now, now + Duration::days(1), &logs).unwrap();
+    let summary3 =
+        SessionSummary::from_logs(deck.id(), now, now + Duration::days(2), &logs).unwrap();
+
+    let id1 = repo.append_summary(&summary1).await.unwrap();
+    let id2 = repo.append_summary(&summary2).await.unwrap();
+    let id3 = repo.append_summary(&summary3).await.unwrap();
+
+    // Same completed_at as summary3 to validate the `id DESC` tie-breaker.
+    let summary4 =
+        SessionSummary::from_logs(deck.id(), now, now + Duration::days(2), &logs).unwrap();
+    let id4 = repo.append_summary(&summary4).await.unwrap();
+
+    let listed = repo
+        .list_summaries(
+            deck.id(),
+            Some(now + Duration::days(1)),
+            Some(now + Duration::days(2)),
+            10,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(listed.len(), 3);
+    assert!(listed[0].completed_at() >= listed[1].completed_at());
+    assert!(listed[1].completed_at() >= listed[2].completed_at());
+
+    assert_eq!(listed[0].completed_at(), now + Duration::days(2));
+    assert_eq!(listed[1].completed_at(), now + Duration::days(2));
+    assert_eq!(listed[2].completed_at(), now + Duration::days(1));
+
+    let rows = repo
+        .list_summary_rows(
+            deck.id(),
+            Some(now + Duration::days(1)),
+            Some(now + Duration::days(2)),
+            10,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(rows.len(), 3);
+
+    // Two summaries have the same completed_at (day 2); id DESC should put the later insert first.
+    assert_eq!(rows[0].summary.completed_at(), now + Duration::days(2));
+    assert_eq!(rows[1].summary.completed_at(), now + Duration::days(2));
+    assert_eq!(rows[2].summary.completed_at(), now + Duration::days(1));
+
+    assert_eq!(rows[0].id, id4);
+    assert_eq!(rows[1].id, id3);
+    assert_eq!(rows[2].id, id2);
+
+    // (Optional sanity) ensure the out-of-range summary1 is not included.
+    assert_ne!(rows[2].id, id1);
+}
