@@ -201,7 +201,7 @@ impl SessionService {
         mut cards: Vec<Card>,
         review_service: ReviewService,
     ) -> Result<Self, SessionError> {
-        let limit = deck.settings().micro_session_size() as usize;
+        let limit = usize::try_from(deck.settings().micro_session_size()).unwrap_or(usize::MAX);
         cards.truncate(limit);
 
         if cards.is_empty() {
@@ -339,6 +339,32 @@ impl SessionService {
             .list_summary_rows(deck_id, completed_from, completed_until, limit)
             .await?;
         Ok(items)
+    }
+
+    /// Fetch a persisted session summary by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` if the summary is missing or storage fails.
+    pub async fn get_summary(
+        id: i64,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<SessionSummary, SessionError> {
+        let summary = summaries.get_summary(id).await?;
+        Ok(summary)
+    }
+
+    /// Fetch a persisted session summary row by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` if the summary is missing or storage fails.
+    pub async fn get_summary_row(
+        id: i64,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<SessionSummaryRow, SessionError> {
+        let summary = summaries.get_summary(id).await?;
+        Ok(SessionSummaryRow::new(id, summary))
     }
 
     /// List recent summaries for a deck with a default time window.
@@ -945,6 +971,22 @@ mod tests {
         assert_eq!(rows[0].summary.completed_at(), summary2.completed_at());
         assert_eq!(rows[1].summary.completed_at(), summary1.completed_at());
         assert!(rows[0].id != rows[1].id);
+    }
+
+    #[tokio::test]
+    async fn get_summary_row_returns_id_and_summary() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let now = fixed_now();
+        let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
+        let summary = SessionSummary::from_logs(deck.id(), now, now, &logs).unwrap();
+        let id = repo.append_summary(&summary).await.unwrap();
+
+        let row = SessionService::get_summary_row(id, &repo).await.unwrap();
+        assert_eq!(row.id, id);
+        assert_eq!(row.summary, summary);
     }
 
     #[tokio::test]
