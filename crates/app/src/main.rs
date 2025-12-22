@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use dioxus::LaunchBuilder;
 use learn_core::model::DeckId;
-use services::Clock;
-use services::session_view::SessionSummaryService;
+use services::{Clock, SessionLoopService, SessionSummaryService};
 use storage::repository::Storage;
 use ui::{App, UiApp, build_app_context};
 
@@ -39,6 +38,7 @@ fn require_value(
 struct DesktopApp {
     deck_id: DeckId,
     session_summaries: Arc<SessionSummaryService>,
+    session_loop: Arc<SessionLoopService>,
 }
 
 impl UiApp for DesktopApp {
@@ -48,6 +48,10 @@ impl UiApp for DesktopApp {
 
     fn session_summaries(&self) -> Arc<SessionSummaryService> {
         Arc::clone(&self.session_summaries)
+    }
+
+    fn session_loop(&self) -> Arc<SessionLoopService> {
+        Arc::clone(&self.session_loop)
     }
 }
 
@@ -89,13 +93,11 @@ impl Args {
     fn parse_ui(args: &mut impl Iterator<Item = String>) -> Result<Self, ArgsError> {
         let mut db_url = std::env::var("LEARN_DB_URL")
             .ok()
-            .map(normalize_sqlite_url)
-            .unwrap_or_else(|| "sqlite://dev.sqlite3".into());
+            .map_or_else(|| "sqlite://dev.sqlite3".into(), normalize_sqlite_url);
         let mut deck_id = std::env::var("LEARN_DECK_ID")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .map(DeckId::new)
-            .unwrap_or_else(|| DeckId::new(1));
+            .map_or_else(|| DeckId::new(1), DeckId::new);
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -158,7 +160,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Default behavior: launching UI when no subcommand is provided.
     let cmd = match argv.first().map(String::as_str) {
         None => Command::Ui,
-        Some("--help") | Some("-h") => {
+        Some("--help" | "-h") => {
             print_usage();
             return Ok(());
         }
@@ -170,15 +172,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         })?,
     };
 
-    if matches!(cmd, Command::Ui | Command::Seed)
-        && argv.first().is_some()
-        && !argv[0].starts_with("--")
+    if matches!(cmd, Command::Ui | Command::Seed) && !argv.is_empty() && !argv[0].starts_with("--")
     {
         argv.remove(0);
     }
 
     let mut iter = argv.into_iter();
-    let args = match cmd {
+    let parsed = match cmd {
         Command::Ui => Args::parse_ui(&mut iter),
         Command::Seed => Args::parse_seed(&mut iter),
     }
@@ -189,19 +189,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     // Open + migrate SQLite at startup. Keep this in the binary glue so core/services stay pure.
-    prepare_sqlite_file(&args.db_url)?;
-    let storage = Storage::sqlite(&args.db_url).await?;
+    prepare_sqlite_file(&parsed.db_url)?;
+    let storage = Storage::sqlite(&parsed.db_url).await?;
 
     match cmd {
         Command::Ui => {
-            let summaries = Arc::new(SessionSummaryService::new(
-                Clock::default(),
-                storage.session_summaries,
+            let clock = Clock::default_clock();
+            let summaries_repo = storage.session_summaries.clone();
+            let summaries = Arc::new(SessionSummaryService::new(clock, summaries_repo.clone()));
+            let session_loop = Arc::new(SessionLoopService::new(
+                clock,
+                storage.decks,
+                storage.cards,
+                storage.reviews,
+                summaries_repo,
             ));
 
             let app = DesktopApp {
-                deck_id: args.deck_id,
+                deck_id: parsed.deck_id,
                 session_summaries: summaries,
+                session_loop,
             };
 
             let context = build_app_context(Arc::new(app));
@@ -214,7 +221,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // storage/services API is finalized.
             eprintln!(
                 "seed: not implemented yet (db={}, deck_id={}).",
-                args.db_url, args.deck_id
+                parsed.db_url, parsed.deck_id
             );
             drop(storage);
             Ok(())
@@ -249,6 +256,7 @@ fn prepare_sqlite_file(db_url: &str) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(false)
             .open(path)?;
     }
 

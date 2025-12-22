@@ -1,7 +1,7 @@
 use std::fmt;
 
 use chrono::{DateTime, Duration, Utc};
-use learn_core::model::{Deck, DeckId, DeckSettings, SessionSummary};
+use learn_core::model::{Card, CardId, ContentDraft, Deck, DeckId, DeckSettings, SessionSummary};
 use storage::repository::Storage;
 
 #[derive(Debug, Clone)]
@@ -11,6 +11,7 @@ struct Args {
     deck_name: String,
     deck_desc: Option<String>,
     summaries: u32,
+    cards: u32,
     now: Option<DateTime<Utc>>,
 }
 
@@ -22,6 +23,7 @@ enum ArgsError {
     InvalidSummaries { raw: String },
     InvalidDbUrl { raw: String },
     InvalidNow { raw: String },
+    InvalidCards { raw: String },
 }
 
 impl fmt::Display for ArgsError {
@@ -35,6 +37,7 @@ impl fmt::Display for ArgsError {
             ArgsError::InvalidNow { raw } => {
                 write!(f, "invalid --now value (expected RFC3339): {raw}")
             }
+            ArgsError::InvalidCards { raw } => write!(f, "invalid --cards value: {raw}"),
         }
     }
 }
@@ -55,14 +58,17 @@ impl Args {
         let mut deck_id = std::env::var("LEARN_DECK_ID")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .map(DeckId::new)
-            .unwrap_or_else(|| DeckId::new(1));
+            .map_or_else(|| DeckId::new(1), DeckId::new);
         let mut deck_name = std::env::var("LEARN_DECK_NAME").unwrap_or_else(|_| "Japanese".into());
         let mut deck_desc = std::env::var("LEARN_DECK_DESC").ok();
         let mut summaries = std::env::var("LEARN_SUMMARIES")
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(3);
+        let mut cards = std::env::var("LEARN_CARDS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(5);
         let mut now: Option<DateTime<Utc>> = None;
 
         let mut args = std::env::args().skip(1);
@@ -96,6 +102,12 @@ impl Args {
                         .parse::<u32>()
                         .map_err(|_| ArgsError::InvalidSummaries { raw: value.clone() })?;
                 }
+                "--cards" => {
+                    let value = require_value(&mut args, "--cards")?;
+                    cards = value
+                        .parse::<u32>()
+                        .map_err(|_| ArgsError::InvalidCards { raw: value.clone() })?;
+                }
                 "--now" => {
                     let value = require_value(&mut args, "--now")?;
                     let parsed = DateTime::parse_from_rfc3339(&value)
@@ -117,6 +129,7 @@ impl Args {
             deck_name,
             deck_desc,
             summaries,
+            cards,
             now,
         })
     }
@@ -132,11 +145,14 @@ fn print_usage() {
     eprintln!("  --deck-name <name>        Deck name (default: Japanese)");
     eprintln!("  --deck-desc <text>        Optional deck description");
     eprintln!("  --summaries <n>           Number of session summaries to append (default: 3)");
+    eprintln!("  --cards <n>               Number of sample cards to upsert (default: 5)");
     eprintln!("  --now <rfc3339>           Fixed current time for deterministic seeding");
     eprintln!("  -h, --help                Show this help");
     eprintln!();
     eprintln!("Environment (same as flags):");
-    eprintln!("  LEARN_DB_URL, LEARN_DECK_ID, LEARN_DECK_NAME, LEARN_DECK_DESC, LEARN_SUMMARIES");
+    eprintln!(
+        "  LEARN_DB_URL, LEARN_DECK_ID, LEARN_DECK_NAME, LEARN_DECK_DESC, LEARN_SUMMARIES, LEARN_CARDS"
+    );
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -158,6 +174,31 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     storage.decks.upsert_deck(&deck).await?;
 
+    let samples = [
+        ("Hallo", "Hello"),
+        ("Danke", "Thank you"),
+        ("Bitte", "Please / You are welcome"),
+        ("Tschuss", "Bye"),
+        ("Guten Morgen", "Good morning"),
+    ];
+    for i in 0..args.cards {
+        let idx = (i as usize) % samples.len();
+        let (prompt_text, answer_text) = samples[idx];
+        let prompt = ContentDraft::text_only(prompt_text)
+            .validate(now, None, None)?;
+        let answer = ContentDraft::text_only(answer_text)
+            .validate(now, None, None)?;
+        let card = Card::new(
+            CardId::new(u64::from(i + 1)),
+            args.deck_id,
+            prompt,
+            answer,
+            now,
+            now,
+        )?;
+        storage.cards.upsert_card(&card).await?;
+    }
+
     for i in 0..args.summaries {
         let days_ago = i64::from(i) * 2;
         let started_at = now - Duration::days(days_ago) - Duration::minutes(10);
@@ -170,8 +211,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!(
-        "Seeded deck {} with {} session summaries into {}",
+        "Seeded deck {} with {} cards and {} session summaries into {}",
         args.deck_id.value(),
+        args.cards,
         args.summaries,
         args.db_url
     );

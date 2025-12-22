@@ -1,10 +1,12 @@
 pub mod review_service;
 pub mod session_service;
+pub mod session_loop;
 pub mod session_view;
 
 pub use review_service::{
     compute_elapsed_days, PersistedReview, ReviewResult, ReviewService, ReviewServiceError,
 };
+pub use session_loop::{SessionAnswerResult, SessionLoopService};
 pub use session_service::{SessionBuilder, SessionError, SessionPlan, SessionReview, SessionService};
 pub use session_view::{SessionSummaryListItem, SessionSummaryService};
 pub use learn_core::Clock;

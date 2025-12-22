@@ -186,6 +186,7 @@ pub struct SessionService {
     results: Vec<SessionReview>,
     started_at: DateTime<Utc>,
     completed_at: Option<DateTime<Utc>>,
+    pending_completed_at: Option<DateTime<Utc>>,
     summary_id: Option<i64>,
     review_service: ReviewService,
 }
@@ -216,6 +217,7 @@ impl SessionService {
             results: Vec::new(),
             started_at: now,
             completed_at: None,
+            pending_completed_at: None,
             summary_id: None,
             review_service,
         })
@@ -281,6 +283,23 @@ impl SessionService {
             Self::build_plan_from_storage(deck_id, decks, cards, now, shuffle_new).await?;
         let session = SessionService::new(&deck, plan.cards, review_service)?;
         Ok((deck, session))
+    }
+
+    /// Create a session using the review service's clock as "now".
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Empty` if no cards are available, or
+    /// `SessionError::Storage` on repository failures.
+    pub async fn start_session(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        shuffle_new: bool,
+        review_service: ReviewService,
+    ) -> Result<(Deck, SessionService), SessionError> {
+        let now = review_service.now();
+        Self::start_from_storage(deck_id, decks, cards, now, shuffle_new, review_service).await
     }
 
     /// Create a session directly from storage and return the plan for UI summary.
@@ -412,6 +431,11 @@ impl SessionService {
     #[must_use]
     pub fn completed_at(&self) -> Option<DateTime<Utc>> {
         self.completed_at
+    }
+
+    #[must_use]
+    pub fn summary_id(&self) -> Option<i64> {
+        self.summary_id
     }
 
     #[must_use]
@@ -548,11 +572,19 @@ impl SessionService {
 
         self.current += 1;
         if self.current >= self.cards.len() {
-            self.completed_at = Some(reviewed_at);
+            // We have applied the last review in-memory. Mark completion as pending and try to
+            // persist the summary. If persistence fails, callers can retry via `finalize_persisted`.
+            if self.pending_completed_at.is_none() {
+                self.pending_completed_at = Some(reviewed_at);
+            }
+
+            // Persist summary first; only then mark the session as completed.
             if self.summary_id.is_none() {
-                let summary = self.build_summary()?;
-                let id = summaries.append_summary(&summary).await?;
-                self.summary_id = Some(id);
+                self.try_persist_summary(reviewed_at, summaries).await?;
+            } else if self.completed_at.is_none() {
+                // Summary already exists (or was set externally) but completion flag wasn't set.
+                self.completed_at = Some(reviewed_at);
+                self.pending_completed_at = None;
             }
         }
 
@@ -577,6 +609,18 @@ impl SessionService {
             }
             self.answer_current_persisted(grade, reviews, summaries)
                 .await?;
+        }
+
+        // If the session reached the end but the final summary persistence failed previously,
+        // allow a best-effort finalize before deciding it's incomplete.
+        if !self.is_complete()
+            && self.current >= self.cards.len()
+            && self.summary_id.is_none()
+            && let Some(completed_at) = self.pending_completed_at
+        {
+            let _ = self.finalize_persisted(summaries).await?;
+            // `finalize_persisted` sets `completed_at` on success.
+            let _ = completed_at;
         }
 
         if !self.is_complete() {
@@ -630,6 +674,18 @@ impl SessionService {
             log_ids.push(log_id);
         }
 
+        // If the session reached the end but the final summary persistence failed previously,
+        // allow a best-effort finalize before deciding it's incomplete.
+        if !self.is_complete()
+            && self.current >= self.cards.len()
+            && self.summary_id.is_none()
+            && let Some(completed_at) = self.pending_completed_at
+        {
+            let _ = self.finalize_persisted(summaries).await?;
+            // `finalize_persisted` sets `completed_at` on success.
+            let _ = completed_at;
+        }
+
         if !self.is_complete() {
             return Err(SessionError::InsufficientGrades);
         }
@@ -647,8 +703,58 @@ impl SessionService {
         Ok((summary, log_ids))
     }
 
-    fn build_summary(&self) -> Result<SessionSummary, SessionError> {
-        let completed_at = self.completed_at.ok_or(SessionError::Completed)?;
+    /// Persist the session summary if the last card has been answered but finalization failed.
+    ///
+    /// This provides an explicit retry path when persistence fails after the last review
+    /// was already applied in-memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Completed` if the session is not ready to be finalized.
+    /// Returns `SessionError::Storage` on persistence failure.
+    pub async fn finalize_persisted(
+        &mut self,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<i64, SessionError> {
+        // Already finalized.
+        if let Some(id) = self.summary_id {
+            return Ok(id);
+        }
+
+        // Only meaningful once all cards have been answered.
+        if self.current < self.cards.len() {
+            return Err(SessionError::Completed);
+        }
+
+        let completed_at = self.pending_completed_at.ok_or(SessionError::Completed)?;
+
+        self.try_persist_summary(completed_at, summaries).await
+    }
+
+    async fn try_persist_summary(
+        &mut self,
+        completed_at: DateTime<Utc>,
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<i64, SessionError> {
+        // Ensure we don't accidentally finalize twice.
+        if let Some(id) = self.summary_id {
+            return Ok(id);
+        }
+
+        let summary = self.build_summary_at(completed_at)?;
+        let id = summaries.append_summary(&summary).await?;
+
+        self.summary_id = Some(id);
+        self.completed_at = Some(completed_at);
+        self.pending_completed_at = None;
+
+        Ok(id)
+    }
+
+    fn build_summary_at(
+        &self,
+        completed_at: DateTime<Utc>,
+    ) -> Result<SessionSummary, SessionError> {
         let logs: Vec<_> = self
             .results
             .iter()
@@ -672,6 +778,7 @@ impl fmt::Debug for SessionService {
             .field("results_len", &self.results.len())
             .field("started_at", &self.started_at)
             .field("completed_at", &self.completed_at)
+            .field("summary_id", &self.summary_id)
             .finish_non_exhaustive()
     }
 }

@@ -9,7 +9,7 @@ use crate::session_service::{SessionError, SessionService};
 
 /// Storage identifier for a persisted session summary.
 ///
-/// NOTE: This is currently `i64` to match SQLite row IDs.
+/// NOTE: This is currently `i64` to match `SQLite` row IDs.
 pub type SessionSummaryId = i64;
 
 /// Presentation-agnostic list item for a session summary.

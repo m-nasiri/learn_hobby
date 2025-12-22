@@ -8,6 +8,9 @@ pub enum ViewError {
 
     /// A transient failure (e.g., network or IO) where retry is likely to help.
     Transient,
+
+    /// No cards available to start a session.
+    EmptySession,
 }
 
 impl ViewError {
@@ -16,6 +19,7 @@ impl ViewError {
         match self {
             ViewError::Unknown => "Something went wrong. Please try again.",
             ViewError::Transient => "Temporary problem. Please try again in a moment.",
+            ViewError::EmptySession => "No cards available yet. Add some cards first.",
         }
     }
 }
@@ -32,14 +36,15 @@ pub enum ViewState<T> {
 pub fn view_state_from_resource<T: Clone>(
     resource: &Resource<Result<T, ViewError>>,
 ) -> ViewState<T> {
-    match *resource.state().read() {
+    let state = *resource.state().read();
+
+    match state {
         UseResourceState::Pending => ViewState::Loading,
         UseResourceState::Ready => {
-            let value_sig = resource.value();
-            let value = value_sig.read();
-            match value.as_ref() {
-                Some(Ok(data)) => ViewState::Ready(data.clone()),
-                Some(Err(err)) => ViewState::Error(*err),
+            let value = resource.value().read().clone();
+            match value {
+                Some(Ok(data)) => ViewState::Ready(data),
+                Some(Err(err)) => ViewState::Error(err),
                 None => ViewState::Error(ViewError::Unknown),
             }
         }

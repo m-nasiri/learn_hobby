@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use learn_core::model::DeckId;
-use services::SessionSummaryService;
+use services::{SessionLoopService, SessionSummaryService};
 
 pub trait UiApp: Send + Sync {
     fn current_deck_id(&self) -> DeckId;
 
     fn session_summaries(&self) -> Arc<SessionSummaryService>;
+    fn session_loop(&self) -> Arc<SessionLoopService>;
 }
 
 #[derive(Clone)]
@@ -33,6 +34,11 @@ impl AppContext {
     #[must_use]
     pub fn session_summaries(&self) -> Arc<SessionSummaryService> {
         self.app.as_ref().session_summaries()
+    }
+
+    #[must_use]
+    pub fn session_loop(&self) -> Arc<SessionLoopService> {
+        self.app.as_ref().session_loop()
     }
 }
 

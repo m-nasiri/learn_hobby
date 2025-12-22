@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 use crate::context::AppContext;
+use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +30,8 @@ pub fn HomeView() -> Element {
                 .map_err(|_| ViewError::Unknown)?;
 
             // `limit` is tiny, but keep the conversion explicit and safe.
-            let recent_count = (items.len().min(u32::MAX as usize)) as u32;
+            let capped = items.len().min(u32::MAX as usize);
+            let recent_count = u32::try_from(capped).unwrap_or(u32::MAX);
 
             Ok::<_, ViewError>(HomeData {
                 deck_id_label: format!("{deck_id:?}"),
@@ -53,6 +56,7 @@ pub fn HomeView() -> Element {
                 ViewState::Ready(data) => rsx! {
                     p { "Current deck: {data.deck_id_label}" }
                     p { "Recent sessions (7d): {data.recent_count}" }
+                    Link { class: "btn btn-primary", to: Route::Session {}, "Practice now" }
                 },
                 ViewState::Error(err) => rsx! {
                     p { "{err.message()}" }
