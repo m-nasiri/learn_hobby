@@ -5,4 +5,4 @@ pub mod vm;
 pub mod views;
 
 pub use app::App;
-pub use context::{AppContext, UiApp};
+pub use context::{AppContext, UiApp, build_app_context};

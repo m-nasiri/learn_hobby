@@ -6,7 +6,7 @@ use learn_core::model::DeckId;
 use services::Clock;
 use services::session_view::SessionSummaryService;
 use storage::repository::Storage;
-use ui::{App, AppContext, UiApp};
+use ui::{App, UiApp, build_app_context};
 
 #[derive(Debug)]
 enum ArgsError {
@@ -204,7 +204,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 session_summaries: summaries,
             };
 
-            let context = AppContext::new(Arc::new(app));
+            let context = build_app_context(Arc::new(app));
             LaunchBuilder::desktop().with_context(context).launch(App);
             Ok(())
         }

@@ -37,3 +37,9 @@ impl AppContext {
 }
 
 // This context is provided by the application composition root (e.g. `crates/app`).
+
+/// Build an `AppContext` from a UI-facing app implementation.
+#[must_use]
+pub fn build_app_context(app: Arc<dyn UiApp>) -> AppContext {
+    AppContext::new(app)
+}
