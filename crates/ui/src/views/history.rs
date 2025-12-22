@@ -1,14 +1,12 @@
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
-
-use services::SessionSummaryListItem;
 
 use crate::context::AppContext;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
+use crate::vm::{SessionSummaryCardVm, map_session_summary_cards};
 
 #[derive(Clone, Debug, PartialEq)]
 struct HistoryData {
-    items: Vec<SessionSummaryListItem>,
+    cards: Vec<SessionSummaryCardVm>,
 }
 
 #[component]
@@ -24,7 +22,8 @@ pub fn HistoryView() -> Element {
                 .list_recent_summaries(deck_id, 7, 10)
                 .await
                 .map_err(|_| ViewError::Unknown)?;
-            Ok(HistoryData { items })
+            let cards = map_session_summary_cards(&items);
+            Ok(HistoryData { cards })
         }
     });
 
@@ -42,12 +41,12 @@ pub fn HistoryView() -> Element {
                     p { "Loading..." }
                 },
                 ViewState::Ready(data) => rsx! {
-                    if data.items.is_empty() {
+                    if data.cards.is_empty() {
                         p { "No recent sessions yet." }
                     } else {
                         ul {
-                            for item in data.items {
-                                SummaryCard { item }
+                            for card in data.cards {
+                                SummaryCard { card }
                             }
                         }
                     }
@@ -61,20 +60,13 @@ pub fn HistoryView() -> Element {
 }
 
 #[component]
-fn SummaryCard(item: SessionSummaryListItem) -> Element {
-    let completed_at_str = format_datetime(item.completed_at);
-
+fn SummaryCard(card: SessionSummaryCardVm) -> Element {
     rsx! {
         li {
-            p { "{completed_at_str}" }
+            p { "{card.completed_at_str}" }
             p {
-                "Total: {item.total} | Again: {item.again} | Hard: {item.hard} | Good: {item.good} | Easy: {item.easy}"
+                "Total: {card.total} | Again: {card.again} | Hard: {card.hard} | Good: {card.good} | Easy: {card.easy}"
             }
         }
     }
-}
-
-fn format_datetime(value: DateTime<Utc>) -> String {
-    // UI-level formatting. If you later want locale/relative time, change it here.
-    value.to_rfc3339()
 }
