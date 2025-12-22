@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 chrono = "0.4"
-thiserror = "1"
+thiserror = "2"
+rand = { version = "0.9", features = ["std"] }
+
 learn-core = { path = "../core" }
-rand = { version = "0.8", features = ["std"] }
 storage = { path = "../storage" }
 
 [dev-dependencies]

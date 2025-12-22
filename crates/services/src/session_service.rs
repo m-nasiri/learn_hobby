@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
+use rand::rng;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 use std::collections::HashSet;
 use std::fmt;
 use thiserror::Error;
@@ -150,7 +150,7 @@ impl<'a> SessionBuilder<'a> {
                 .collect();
 
             if self.shuffle_new {
-                let mut rng = thread_rng();
+                let mut rng = rng();
                 new_candidates.as_mut_slice().shuffle(&mut rng);
             } else {
                 new_candidates.sort_by_key(|c| (c.created_at(), c.id().value()));
