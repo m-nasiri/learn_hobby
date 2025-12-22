@@ -43,6 +43,12 @@ a {
   text-decoration: none;
 }
 
+:where(a, button, [role="button"], input, textarea, select):focus-visible {
+  outline: 3px solid rgba(208, 122, 69, 0.7);
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
 .app {
   display: flex;
   min-height: 100vh;
@@ -88,6 +94,53 @@ a {
   transform: translateY(-1px);
 }
 
+/* ─── Buttons ───────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  border-color: rgba(91, 127, 82, 0.3);
+  background: rgba(91, 127, 82, 0.15);
+}
+
+.btn-primary:hover {
+  background: rgba(91, 127, 82, 0.22);
+}
+
+.btn-secondary {
+  border-color: rgba(208, 122, 69, 0.35);
+  background: rgba(208, 122, 69, 0.18);
+}
+
+.btn-secondary:hover {
+  background: rgba(208, 122, 69, 0.26);
+}
+
 .content {
   flex: 1;
   padding: var(--space-4);
@@ -104,14 +157,12 @@ a {
   position: absolute;
   inset: 0;
   background:
-    repeating-linear-gradient(
-      135deg,
+    repeating-linear-gradient(135deg,
       rgba(255, 255, 255, 0.5),
       rgba(255, 255, 255, 0.5) 10px,
       rgba(255, 255, 255, 0.25) 10px,
-      rgba(255, 255, 255, 0.25) 20px
-    );
-  opacity: 0.35;
+      rgba(255, 255, 255, 0.25) 20px);
+  opacity: 0.22;
   pointer-events: none;
 }
 
@@ -128,6 +179,32 @@ a {
 }
 
 .page p {
+  color: var(--ink-2);
+}
+
+.summary-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(91, 127, 82, 0.2);
+  background: rgba(91, 127, 82, 0.08);
+  font-weight: 600;
+}
+
+.summary-link:hover {
+  background: rgba(208, 122, 69, 0.14);
+}
+
+.summary-date {
+  font-family: var(--font-serif);
+}
+
+.summary-cta {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--ink-2);
 }
 
@@ -148,31 +225,24 @@ a {
 }
 
 .session-text {
-  font-size: 1.4rem;
+  font-size: clamp(1.15rem, 1.2rem + 0.6vw, 1.4rem);
   margin: 0 0 var(--space-4);
   font-family: var(--font-serif);
 }
 
 .session-reveal {
   padding: 12px 18px;
-  border-radius: 12px;
-  border: 1px solid rgba(91, 127, 82, 0.3);
-  background: rgba(91, 127, 82, 0.15);
-  font-weight: 600;
 }
 
 .session-grades {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: var(--space-3);
 }
 
 .grade-button {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(208, 122, 69, 0.35);
-  background: rgba(208, 122, 69, 0.18);
-  font-weight: 600;
+  /* visual styles are inherited from .btn + .btn-secondary */
 }
 
 @keyframes page-in {
@@ -180,9 +250,21 @@ a {
     opacity: 0;
     transform: translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page {
+    animation: none;
+  }
+
+  .sidebar li a,
+  .btn {
+    transition: none;
   }
 }
 

@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_router::{Link, Outlet, Routable};
 
-use crate::views::{EditorView, HistoryView, HomeView, SessionView, SettingsView};
+use crate::views::{EditorView, HistoryView, HomeView, SessionView, SettingsView, SummaryView};
 
 #[derive(Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -11,6 +11,7 @@ pub enum Route {
         #[route("/session", SessionView)] Session {},
         #[route("/editor", EditorView)] Editor {},
         #[route("/history", HistoryView)] History {},
+        #[route("/history/:summary_id", SummaryView)] Summary { summary_id: i64 },
         #[route("/settings", SettingsView)] Settings {},
 }
 

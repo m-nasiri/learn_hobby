@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 use crate::context::AppContext;
+use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 use crate::vm::{SessionSummaryCardVm, map_session_summary_cards};
 
@@ -63,7 +65,10 @@ pub fn HistoryView() -> Element {
 fn SummaryCard(card: SessionSummaryCardVm) -> Element {
     rsx! {
         li {
-            p { "{card.completed_at_str}" }
+            Link { class: "summary-link", to: Route::Summary { summary_id: card.id },
+                span { class: "summary-date", "{card.completed_at_str}" }
+                span { class: "summary-cta", "View" }
+            }
             p {
                 "Total: {card.total} | Again: {card.again} | Hard: {card.hard} | Good: {card.good} | Easy: {card.easy}"
             }
