@@ -15,8 +15,8 @@ sqlx = { version = "0.8", features = [
     "uuid",
 ] }
 async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 learn-core = { path = "../core" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

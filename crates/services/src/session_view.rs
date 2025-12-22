@@ -1,19 +1,28 @@
 use chrono::{DateTime, Utc};
-use learn_core::model::{DeckId, SessionSummary};
-use storage::repository::{SessionSummaryRepository, SessionSummaryRow};
+use std::sync::Arc;
 
+use learn_core::model::{DeckId, SessionSummary};
+use storage::repository::SessionSummaryRepository;
+
+use crate::Clock;
 use crate::session_service::{SessionError, SessionService};
 
-/// UI-facing summary view for session cards.
+/// Storage identifier for a persisted session summary.
+///
+/// NOTE: This is currently `i64` to match SQLite row IDs.
+pub type SessionSummaryId = i64;
+
+/// Presentation-agnostic list item for a session summary.
+///
+/// This is intentionally **not** a UI view-model:
+/// - no pre-formatted strings
+/// - no localization assumptions
+///
+/// The UI may format timestamps (e.g., relative time, locale) as needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionSummaryCardView {
-    pub id: i64,
-
-    /// Raw timestamp used for sorting/filtering in the UI.
+pub struct SessionSummaryListItem {
+    pub id: SessionSummaryId,
     pub completed_at: DateTime<Utc>,
-
-    /// Pre-formatted timestamp string for display.
-    pub completed_at_str: String,
 
     pub total: u32,
     pub again: u32,
@@ -22,19 +31,12 @@ pub struct SessionSummaryCardView {
     pub easy: u32,
 }
 
-impl SessionSummaryCardView {
+impl SessionSummaryListItem {
     #[must_use]
-    pub fn from_row(row: &SessionSummaryRow) -> Self {
-        Self::from_summary(row.id, &row.summary)
-    }
-
-    #[must_use]
-    pub fn from_summary(id: i64, summary: &SessionSummary) -> Self {
-        let completed_at = summary.completed_at();
+    pub fn from_summary(id: SessionSummaryId, summary: &SessionSummary) -> Self {
         Self {
             id,
-            completed_at,
-            completed_at_str: format_datetime(&completed_at),
+            completed_at: summary.completed_at(),
             total: summary.total_reviews(),
             again: summary.again(),
             hard: summary.hard(),
@@ -44,62 +46,98 @@ impl SessionSummaryCardView {
     }
 }
 
-/// Load recent session summaries and map them to UI-ready cards.
+/// Presentation-facing session summary facade that hides repositories and time from the UI.
 ///
-/// # Errors
+/// This service owns:
+/// - the time source (`Clock`)
+/// - repository access
 ///
-/// Returns `SessionError::Storage` on repository failures.
-pub async fn list_recent_summary_cards(
-    deck_id: DeckId,
-    summaries: &dyn SessionSummaryRepository,
-    now: DateTime<Utc>,
-    days: i64,
-    limit: u32,
-) -> Result<Vec<SessionSummaryCardView>, SessionError> {
-    let rows = SessionService::list_recent_summary_rows(deck_id, summaries, now, days, limit).await?;
-    Ok(rows.iter().map(SessionSummaryCardView::from_row).collect())
+/// It does **not** own UI formatting.
+#[derive(Clone)]
+pub struct SessionSummaryService {
+    clock: Clock,
+    summaries: Arc<dyn SessionSummaryRepository>,
 }
 
-fn format_datetime(value: &DateTime<Utc>) -> String {
-    value.to_rfc3339()
+impl SessionSummaryService {
+    #[must_use]
+    pub fn new(clock: Clock, summaries: Arc<dyn SessionSummaryRepository>) -> Self {
+        Self { clock, summaries }
+    }
+
+    #[must_use]
+    pub fn in_memory(clock: Clock) -> Self {
+        Self::new(
+            clock,
+            Arc::new(storage::repository::InMemoryRepository::new()),
+        )
+    }
+
+    /// Load recent summaries for a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_recent_summaries(
+        &self,
+        deck_id: DeckId,
+        days: i64,
+        limit: u32,
+    ) -> Result<Vec<SessionSummaryListItem>, SessionError> {
+        let now = self.clock.now();
+        let rows = SessionService::list_recent_summary_rows(
+            deck_id,
+            self.summaries.as_ref(),
+            now,
+            days,
+            limit,
+        )
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| SessionSummaryListItem::from_summary(row.id, &row.summary))
+            .collect())
+    }
+
+    /// Fetch a session summary by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` when repository access fails.
+    pub async fn get_summary(&self, id: SessionSummaryId) -> Result<SessionSummary, SessionError> {
+        SessionService::get_summary(id, self.summaries.as_ref()).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use learn_core::model::{DeckId, ReviewGrade, ReviewLog, SessionSummary};
+
+    use learn_core::model::{CardId, DeckId, ReviewGrade, ReviewLog, SessionSummary};
     use learn_core::time::fixed_now;
-    use storage::repository::{InMemoryRepository, SessionSummaryRepository, SessionSummaryRow};
+    use storage::repository::InMemoryRepository;
 
     #[test]
-    fn view_formats_completed_at() {
+    fn list_item_is_presentation_agnostic() {
         let now = fixed_now();
-        let logs = vec![ReviewLog::new(
-            learn_core::model::CardId::new(1),
-            ReviewGrade::Good,
-            now,
-        )];
+        let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
         let summary = SessionSummary::from_logs(DeckId::new(1), now, now, &logs).unwrap();
-        let row = SessionSummaryRow::new(42, summary);
-        let view = SessionSummaryCardView::from_row(&row);
 
-        assert_eq!(view.id, 42);
-        assert_eq!(view.completed_at, now);
-        assert_eq!(view.completed_at_str, now.to_rfc3339());
-        assert_eq!(view.total, 1);
-        assert_eq!(view.good, 1);
+        let item = SessionSummaryListItem::from_summary(42, &summary);
+
+        assert_eq!(item.id, 42);
+        assert_eq!(item.completed_at, now);
+        assert_eq!(item.total, 1);
+        assert_eq!(item.good, 1);
     }
 
     #[tokio::test]
-    async fn list_recent_summary_cards_maps_rows() {
+    async fn list_recent_summaries_filters_by_range() {
         let repo = InMemoryRepository::new();
         let deck_id = DeckId::new(1);
         let now = fixed_now();
-        let logs = vec![ReviewLog::new(
-            learn_core::model::CardId::new(1),
-            ReviewGrade::Good,
-            now,
-        )];
+        let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
 
         let summary_recent = SessionSummary::from_logs(
             deck_id,
@@ -119,12 +157,11 @@ mod tests {
         let _id_recent = repo.append_summary(&summary_recent).await.unwrap();
         let _id_old = repo.append_summary(&summary_old).await.unwrap();
 
-        let views = list_recent_summary_cards(deck_id, &repo, now, 7, 10)
-            .await
-            .unwrap();
+        let svc = SessionSummaryService::new(Clock::Fixed(now), Arc::new(repo));
+        let items = svc.list_recent_summaries(deck_id, 7, 10).await.unwrap();
 
-        assert_eq!(views.len(), 1);
-        assert_eq!(views[0].completed_at, summary_recent.completed_at());
-        assert_eq!(views[0].total, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].completed_at, summary_recent.completed_at());
+        assert_eq!(items[0].total, 1);
     }
 }

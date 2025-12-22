@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 dioxus = { version = "0.7", features = ["asset", "desktop", "document"] }
-dioxus-desktop = { version = "0.7" }
 dioxus-router = { version = "0.7" }
+services = { path = "../services" }
+learn-core = { path = "../core" }
+chrono = { version = "0.4" }

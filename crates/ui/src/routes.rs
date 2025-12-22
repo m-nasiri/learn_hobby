@@ -19,9 +19,8 @@ fn Layout() -> Element {
     rsx! {
         div { class: "app",
             Sidebar {}
-            main { class: "content",
-                Outlet::<Route> {}
-            }
+
+            main { class: "content", role: "main", Outlet::<Route> {} }
         }
     }
 }
@@ -29,15 +28,29 @@ fn Layout() -> Element {
 #[component]
 fn Sidebar() -> Element {
     rsx! {
-        nav { class: "sidebar",
-            h1 { "Learn" }
-            ul {
-                li { Link { to: Route::Home {}, "Home" } }
-                li { Link { to: Route::Session {}, "Practice" } }
-                li { Link { to: Route::Editor {}, "Add / Edit" } }
-                li { Link { to: Route::History {}, "History" } }
-                li { Link { to: Route::Settings {}, "Settings" } }
+        aside { class: "sidebar",
+            header { class: "sidebar__header",
+                h1 { class: "sidebar__title", "Learn" }
             }
+
+            nav { class: "sidebar__nav", "aria-label": "Primary",
+                ul { class: "sidebar__list",
+                    NavItem { to: Route::Home {}, label: "Home" }
+                    NavItem { to: Route::Session {}, label: "Practice" }
+                    NavItem { to: Route::Editor {}, label: "Add / Edit" }
+                    NavItem { to: Route::History {}, label: "History" }
+                    NavItem { to: Route::Settings {}, label: "Settings" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NavItem(to: Route, label: &'static str) -> Element {
+    rsx! {
+        li { class: "sidebar__item",
+            Link { class: "sidebar__link", to, {label} }
         }
     }
 }
