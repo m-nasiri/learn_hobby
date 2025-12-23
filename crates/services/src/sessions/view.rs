@@ -5,7 +5,8 @@ use learn_core::model::{DeckId, SessionSummary};
 use storage::repository::SessionSummaryRepository;
 
 use crate::Clock;
-use crate::session_service::{SessionError, SessionService};
+use super::queries::SessionQueries;
+use crate::error::SessionError;
 
 /// Storage identifier for a persisted session summary.
 ///
@@ -85,7 +86,7 @@ impl SessionSummaryService {
         limit: u32,
     ) -> Result<Vec<SessionSummaryListItem>, SessionError> {
         let now = self.clock.now();
-        let rows = SessionService::list_recent_summary_rows(
+        let rows = SessionQueries::list_recent_summary_rows(
             deck_id,
             self.summaries.as_ref(),
             now,
@@ -106,7 +107,7 @@ impl SessionSummaryService {
     ///
     /// Returns `SessionError::Storage` when repository access fails.
     pub async fn get_summary(&self, id: SessionSummaryId) -> Result<SessionSummary, SessionError> {
-        SessionService::get_summary(id, self.summaries.as_ref()).await
+        SessionQueries::get_summary(id, self.summaries.as_ref()).await
     }
 }
 

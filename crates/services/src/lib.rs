@@ -1,12 +1,16 @@
-pub mod review_service;
-pub mod session_service;
-pub mod session_loop;
-pub mod session_view;
+#![forbid(unsafe_code)]
 
-pub use review_service::{
-    compute_elapsed_days, PersistedReview, ReviewResult, ReviewService, ReviewServiceError,
-};
-pub use session_loop::{SessionAnswerResult, SessionLoopService};
-pub use session_service::{SessionBuilder, SessionError, SessionPlan, SessionReview, SessionService};
-pub use session_view::{SessionSummaryListItem, SessionSummaryService};
+pub mod error;
+pub mod review_service;
+pub mod sessions;
+
 pub use learn_core::Clock;
+pub use sessions as session;
+
+pub use error::{ReviewServiceError, SessionError};
+pub use review_service::{PersistedReview, ReviewResult, ReviewService};
+
+pub use sessions::{
+    SessionAnswerResult, SessionLoopService, SessionReview, SessionService, SessionSummaryId,
+    SessionSummaryListItem, SessionSummaryService,
+};

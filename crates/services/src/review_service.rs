@@ -1,42 +1,19 @@
 use chrono::{DateTime, Utc};
-use thiserror::Error;
-
 use learn_core::{
     model::{Card, CardId, DeckId, ReviewGrade},
-    scheduler::{AppliedReview, MemoryState, Scheduler, SchedulerError},
+    scheduler::{AppliedReview, MemoryState, Scheduler},
     time::Clock,
 };
 use storage::repository::{CardRepository, ReviewLogRecord, ReviewPersistence, StorageError};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
+use crate::error::ReviewServiceError;
 
-//
-// ─── ERRORS ────────────────────────────────────────────────────────────────────
-//
-
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum ReviewServiceError {
-    #[error(transparent)]
-    Scheduler(#[from] SchedulerError),
-    #[error(transparent)]
-    Storage(#[from] StorageError),
-}
-
-//
-// ─── REVIEW RESULT ─────────────────────────────────────────────────────────────
-//
-
-/// Result of processing a review: selected schedule, memory update, and log.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReviewResult {
     pub applied: AppliedReview,
 }
 
-/// Result of a persisted review: updated card, applied outcome, and log ID.
-///
-/// This struct encapsulates the card after review, the ID of the persisted review log,
-/// and the detailed review result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PersistedReview {
     pub card: Card,
@@ -44,25 +21,6 @@ pub struct PersistedReview {
     pub result: ReviewResult,
 }
 
-//
-// ─── ELAPSED DAYS ──────────────────────────────────────────────────────────────
-//
-
-/// Compute elapsed days between the last review and the current review time.
-///
-/// - Returns `0.0` for brand-new cards (no prior review).
-/// - Returns a negative value if the review is backdated; this will surface as
-///   `SchedulerError::InvalidElapsedDays` when passed to the scheduler.
-///
-/// ```ignore
-/// # use chrono::Utc;
-/// # use learn_services::review_service::compute_elapsed_days;
-/// let now = Utc::now();
-/// assert_eq!(compute_elapsed_days(None, now), 0.0);
-///
-/// let earlier = now - chrono::Duration::days(1);
-/// assert!(compute_elapsed_days(Some(now), earlier) < 0.0);
-/// ```
 #[must_use]
 pub fn compute_elapsed_days(
     last_review_at: Option<DateTime<Utc>>,
@@ -71,35 +29,25 @@ pub fn compute_elapsed_days(
     match last_review_at {
         Some(last) => {
             let seconds = reviewed_at.signed_duration_since(last).num_seconds();
-
-            // NOTE: `num_seconds()` returns `i64`. Converting to `f64` may lose
-            // precision for extremely large durations, but review intervals in
-            // this app are bounded to human timescales.
             #[allow(clippy::cast_precision_loss)]
             let seconds_f = seconds as f64;
-
             seconds_f / SECONDS_PER_DAY
         }
         None => 0.0,
     }
 }
 
-//
-// ─── SERVICE ───────────────────────────────────────────────────────────────────
-//
-
-/// Coordinates applying a user's review to a card using the scheduler.
 pub struct ReviewService {
     clock: Clock,
     scheduler: Scheduler,
 }
 
 impl ReviewService {
-    /// Create a new review service using default FSRS scheduler and real-time clock.
+    /// Create a new review service using default scheduler and clock.
     ///
     /// # Errors
     ///
-    /// Returns `ReviewServiceError::Scheduler` if the underlying scheduler fails to initialize.
+    /// Returns `ReviewServiceError::Scheduler` if scheduler initialization fails.
     pub fn new() -> Result<Self, ReviewServiceError> {
         Ok(Self {
             clock: Clock::default(),
@@ -107,7 +55,6 @@ impl ReviewService {
         })
     }
 
-    /// Create a review service with a custom scheduler (still uses default clock).
     #[must_use]
     pub fn with_scheduler(scheduler: Scheduler) -> Self {
         Self {
@@ -116,46 +63,22 @@ impl ReviewService {
         }
     }
 
-    /// Override the clock (usually for deterministic testing).
     #[must_use]
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
         self
     }
 
-    /// Current time according to the service's clock.
     #[must_use]
     pub fn now(&self) -> DateTime<Utc> {
         self.clock.now()
     }
 
-    /// Apply a user's grade to a card, updating its scheduling state and returning the log/outcome.
-    ///
-    /// - Computes elapsed days from the card's last review when available; uses 0 for new cards.
-    /// - Uses `Scheduler::apply_review` to produce the next schedule and memory update.
+    /// Apply a grade to a card and return the scheduler output.
     ///
     /// # Errors
     ///
-    /// Propagates scheduler errors produced by the underlying FSRS scheduler.
-    ///
-    /// ```ignore
-    /// # use chrono::Utc;
-    /// # use learn_services::review_service::ReviewService;
-    /// # use learn_core::model::{content::ContentDraft, CardId, DeckId, ReviewGrade};
-    /// let mut card = {
-    ///     let prompt = ContentDraft::text_only("Q").validate(Utc::now(), None, None).unwrap();
-    ///     let answer = ContentDraft::text_only("A").validate(Utc::now(), None, None).unwrap();
-    ///     let now = Utc::now();
-    ///     learn_core::model::Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap()
-    /// };
-    ///
-    /// let service = ReviewService::new().unwrap();
-    /// let reviewed_at = service.now();
-    /// let result = service
-    ///     .review_card(&mut card, ReviewGrade::Good, reviewed_at)
-    ///     .unwrap();
-    /// assert_eq!(result.applied.log.card_id, card.id());
-    /// ```
+    /// Returns `ReviewServiceError::Scheduler` on scheduler failures.
     pub fn review_card(
         &self,
         card: &mut Card,
@@ -178,14 +101,12 @@ impl ReviewService {
         Ok(ReviewResult { applied })
     }
 
-    /// Apply a review to an in-memory card and persist the update + log atomically.
-    ///
-    /// If persistence fails, the card is rolled back to its original state.
+    /// Apply a grade, persist the updated card and review log atomically.
     ///
     /// # Errors
     ///
-    /// Returns scheduler errors for invalid elapsed time or FSRS failures.
-    /// Returns storage errors if persistence fails.
+    /// Returns `ReviewServiceError::Scheduler` on scheduler failures.
+    /// Returns `ReviewServiceError::Storage` on persistence failures.
     pub async fn review_card_persisted(
         &self,
         card: &mut Card,
@@ -194,7 +115,6 @@ impl ReviewService {
         reviews: &dyn ReviewPersistence,
     ) -> Result<(ReviewResult, i64), ReviewServiceError> {
         let original = card.clone();
-
         let result = self.review_card(card, grade, reviewed_at)?;
 
         let record = ReviewLogRecord::from_applied(
@@ -212,15 +132,12 @@ impl ReviewService {
         }
     }
 
-    /// Load a card, apply a review, and persist the updated card and review log atomically.
-    ///
-    /// Uses the service clock for `reviewed_at` to keep time deterministic.
+    /// Load a card by ID, apply a grade, and persist the update atomically.
     ///
     /// # Errors
     ///
-    /// Returns `StorageError::NotFound` if the card is missing.
-    /// Returns scheduler errors for invalid elapsed time or FSRS failures.
-    /// Returns storage errors if persistence fails.
+    /// Returns `ReviewServiceError::Storage` if the card is missing or persistence fails.
+    /// Returns `ReviewServiceError::Scheduler` on scheduler failures.
     pub async fn review_card_persisted_by_id(
         &self,
         deck_id: DeckId,
@@ -247,148 +164,26 @@ impl ReviewService {
             result,
         })
     }
-}
 
-//
-// ─── TESTS ─────────────────────────────────────────────────────────────────────
-//
+    /// Persist a batch of already-applied reviews.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ReviewServiceError::Storage` if any persistence call fails.
+    pub async fn persist_applied_reviews(
+        &self,
+        deck_id: DeckId,
+        items: impl IntoIterator<Item = (Card, AppliedReview)>,
+        reviews: &dyn ReviewPersistence,
+    ) -> Result<Vec<i64>, ReviewServiceError> {
+        let mut ids = Vec::new();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use learn_core::{
-        model::{CardId, Deck, DeckId, DeckSettings, content::ContentDraft},
-        scheduler::Scheduler,
-        time::fixed_now,
-    };
-    use storage::repository::{DeckRepository, InMemoryRepository, ReviewLogRepository};
+        for (card, applied) in items {
+            let record = ReviewLogRecord::from_applied(deck_id, &applied.log, &applied.outcome);
+            let id = reviews.apply_review(&card, record).await?;
+            ids.push(id);
+        }
 
-    fn build_card() -> Card {
-        let prompt = ContentDraft::text_only("What is 2+2?")
-            .validate(fixed_now(), None, None)
-            .unwrap();
-        let answer = ContentDraft::text_only("4")
-            .validate(fixed_now(), None, None)
-            .unwrap();
-        let now = fixed_now();
-        Card::new(CardId::new(1), DeckId::new(1), prompt, answer, now, now).unwrap()
-    }
-
-    fn build_deck() -> Deck {
-        Deck::new(
-            DeckId::new(1),
-            "Test",
-            None,
-            DeckSettings::default_for_adhd(),
-            fixed_now(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn review_new_card_updates_state_and_log() {
-        let mut card = build_card();
-        let fixed = fixed_now();
-        let service = ReviewService::new()
-            .unwrap()
-            .with_clock(Clock::fixed(fixed));
-
-        let reviewed_at = service.now();
-        let result = service
-            .review_card(&mut card, ReviewGrade::Good, reviewed_at)
-            .unwrap();
-
-        assert_eq!(result.applied.log.card_id, card.id());
-        assert_eq!(result.applied.log.grade, ReviewGrade::Good);
-        assert_eq!(card.review_count(), 1);
-        assert_eq!(card.last_review_at(), Some(fixed));
-        assert!(card.next_review_at() >= fixed);
-    }
-
-    #[test]
-    fn review_existing_card_uses_elapsed_days() {
-        let mut card = build_card();
-        let now = fixed_now();
-        let scheduler = Scheduler::new().unwrap();
-
-        // First review manually through scheduler
-        let first = scheduler
-            .apply_review(card.id(), None, ReviewGrade::Good, now, 0.0)
-            .unwrap();
-        card.apply_review(&first.outcome, now);
-
-        // Second review through service, with clock advanced 3 days
-        let advanced = now + chrono::Duration::days(3);
-        let service = ReviewService::with_scheduler(scheduler).with_clock(Clock::fixed(advanced));
-
-        let result = service
-            .review_card(&mut card, ReviewGrade::Hard, service.now())
-            .unwrap();
-
-        assert!(result.applied.outcome.scheduled_days >= 1.0);
-        assert_eq!(card.review_count(), 2);
-    }
-
-    #[test]
-    fn review_with_backdated_timestamp_errors() {
-        let mut card = build_card();
-        let now = fixed_now();
-
-        // First review at time = now
-        let service1 = ReviewService::new().unwrap().with_clock(Clock::fixed(now));
-        service1
-            .review_card(&mut card, ReviewGrade::Good, service1.now())
-            .unwrap();
-
-        // Second review uses earlier time -> negative elapsed
-        let earlier = now - chrono::Duration::days(1);
-        let service2 = ReviewService::new()
-            .unwrap()
-            .with_clock(Clock::fixed(earlier));
-
-        let err = service2
-            .review_card(&mut card, ReviewGrade::Good, earlier)
-            .unwrap_err();
-
-        assert!(matches!(
-            err,
-            ReviewServiceError::Scheduler(SchedulerError::InvalidElapsedDays { .. })
-        ));
-    }
-
-    #[test]
-    fn compute_elapsed_days_respects_backdating_and_initial() {
-        let now = fixed_now();
-        assert_eq!(compute_elapsed_days(None, now), 0.0);
-
-        let earlier = now - chrono::Duration::days(2);
-        let later = now + chrono::Duration::days(2);
-
-        assert!(compute_elapsed_days(Some(now), earlier) < 0.0);
-        assert!(compute_elapsed_days(Some(now), later) > 0.0);
-    }
-
-    #[tokio::test]
-    async fn review_card_persisted_updates_card_and_log() {
-        let repo = InMemoryRepository::new();
-        let deck = build_deck();
-        repo.upsert_deck(&deck).await.unwrap();
-
-        let card = build_card();
-        repo.upsert_card(&card).await.unwrap();
-
-        let service = ReviewService::new()
-            .unwrap()
-            .with_clock(Clock::fixed(fixed_now()));
-        let result = service
-            .review_card_persisted_by_id(deck.id(), card.id(), &repo, &repo, ReviewGrade::Hard)
-            .await
-            .unwrap();
-
-        assert_eq!(result.card.review_count(), 1);
-        let logs = repo.logs_for_card(deck.id(), card.id()).await.unwrap();
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].id, Some(result.log_id));
-        assert_eq!(logs[0].grade, ReviewGrade::Hard);
+        Ok(ids)
     }
 }

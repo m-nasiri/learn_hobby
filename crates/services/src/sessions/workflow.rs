@@ -5,8 +5,11 @@ use storage::repository::{
     CardRepository, DeckRepository, ReviewPersistence, SessionSummaryRepository,
 };
 
-use crate::session_service::{SessionError, SessionReview, SessionService};
-use crate::{Clock, ReviewService};
+use crate::review_service::ReviewService;
+use crate::Clock;
+use super::queries::SessionQueries;
+use crate::error::SessionError;
+use super::service::{SessionReview, SessionService};
 
 /// Result of answering a single card in a session.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,13 +61,13 @@ impl SessionLoopService {
     ///
     /// Returns `SessionError` for storage or session start failures.
     pub async fn start_session(&self, deck_id: DeckId) -> Result<SessionService, SessionError> {
-        let review_service = ReviewService::new()?.with_clock(self.clock);
-        let (_deck, session) = SessionService::start_session(
+        let now = self.clock.now();
+        let (_deck, session) = SessionQueries::start_from_storage(
             deck_id,
             self.decks.as_ref(),
             self.cards.as_ref(),
+            now,
             self.shuffle_new,
-            review_service,
         )
         .await?;
         Ok(session)
@@ -80,15 +83,55 @@ impl SessionLoopService {
         session: &mut SessionService,
         grade: ReviewGrade,
     ) -> Result<SessionAnswerResult, SessionError> {
+        let review_service = ReviewService::new()?.with_clock(self.clock);
+        let reviewed_at = self.clock.now();
+        let Some(card) = session.current_card_mut() else {
+            return Err(SessionError::Completed);
+        };
+
+        let card_id = card.id();
+        let (result, _log_id) = review_service
+            .review_card_persisted(card, grade, reviewed_at, self.reviews.as_ref())
+            .await?;
         let review = session
-            .answer_current_persisted(grade, self.reviews.as_ref(), self.summaries.as_ref())
-            .await?
+            .record_review_result(card_id, result, reviewed_at)?
             .clone();
+
+        if session.is_complete() && session.summary_id().is_none() {
+            let completed_at = session.completed_at().ok_or(SessionError::Completed)?;
+            let summary = session.build_summary(completed_at)?;
+            let summary_id = self.summaries.append_summary(&summary).await?;
+            session.set_summary_id(summary_id);
+        }
 
         Ok(SessionAnswerResult {
             review,
             is_complete: session.is_complete(),
             summary_id: session.summary_id(),
         })
+    }
+
+    /// Retry summary persistence after a completed session.
+    ///
+    /// This is useful when the final summary append failed (e.g. transient storage error).
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Completed` if the session is not complete or missing timestamps.
+    /// Returns `SessionError::Storage` if persistence fails.
+    pub async fn finalize_summary(&self, session: &mut SessionService) -> Result<i64, SessionError> {
+        if let Some(id) = session.summary_id() {
+            return Ok(id);
+        }
+
+        if !session.is_complete() {
+            return Err(SessionError::Completed);
+        }
+
+        let completed_at = session.completed_at().ok_or(SessionError::Completed)?;
+        let summary = session.build_summary(completed_at)?;
+        let id = self.summaries.append_summary(&summary).await?;
+        session.set_summary_id(id);
+        Ok(id)
     }
 }
