@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
-use dioxus_router::{Link, Outlet, Routable, use_navigator};
+use dioxus_router::{Link, Outlet, Routable, use_navigator, use_route};
 
-use crate::views::{EditorView, HistoryView, HomeView, SessionView, SettingsView, SummaryView};
 use crate::context::AppContext;
+use crate::views::{EditorView, HistoryView, HomeView, SessionView, SettingsView, SummaryView};
 
 #[derive(Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -20,12 +20,11 @@ pub enum Route {
 fn Layout() -> Element {
     let ctx = use_context::<AppContext>();
     let navigator = use_navigator();
-    let mut redirected = use_signal(|| false);
+    let route: Route = use_route();
 
     use_effect(move || {
-        if ctx.open_editor_on_launch() && !redirected() {
+        if ctx.take_open_editor_on_launch() && !matches!(route, Route::Editor { .. }) {
             navigator.push(Route::Editor {});
-            redirected.set(true);
         }
     });
 
@@ -46,7 +45,7 @@ fn Sidebar() -> Element {
                 h1 { class: "sidebar__title", "Learn" }
             }
 
-            nav { class: "sidebar__nav", "aria-label": "Primary",
+            nav { class: "sidebar__nav", aria_label: "Primary",
                 ul { class: "sidebar__list",
                     NavItem { to: Route::Home {}, label: "Home" }
                     NavItem { to: Route::Session {}, label: "Practice" }
@@ -63,7 +62,12 @@ fn Sidebar() -> Element {
 fn NavItem(to: Route, label: &'static str) -> Element {
     rsx! {
         li { class: "sidebar__item",
-            Link { class: "sidebar__link", to, {label} }
+            Link {
+                class: "sidebar__link",
+                active_class: "sidebar__link--active",
+                to,
+                {label}
+            }
         }
     }
 }

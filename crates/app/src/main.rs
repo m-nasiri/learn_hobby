@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use dioxus::LaunchBuilder;
+use dioxus::desktop::{Config as DesktopConfig, WindowBuilder};
 use learn_core::model::{Deck, DeckId, DeckSettings};
 use services::{Clock, SessionLoopService, SessionSummaryService};
 use storage::repository::{DeckRepository, Storage};
@@ -223,7 +224,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let context = build_app_context(Arc::new(app));
-            LaunchBuilder::desktop().with_context(context).launch(App);
+
+            // On macOS, Dioxus/tao can default to an always-on-top window in some dev setups.
+            // Explicitly disable it so the app doesn't behave like a modal window.
+            let desktop_cfg = DesktopConfig::new().with_window(
+                WindowBuilder::new()
+                    .with_title("Learn")
+                    .with_always_on_top(false),
+            );
+
+            LaunchBuilder::desktop()
+                .with_cfg(desktop_cfg)
+                .with_context(context)
+                .launch(App);
             Ok(())
         }
         Command::Seed => {

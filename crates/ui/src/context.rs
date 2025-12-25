@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use learn_core::model::DeckId;
 use services::{SessionLoopService, SessionSummaryService};
@@ -14,12 +17,17 @@ pub trait UiApp: Send + Sync {
 #[derive(Clone)]
 pub struct AppContext {
     app: Arc<dyn UiApp>,
+    open_editor_on_launch_once: Arc<AtomicBool>,
 }
 
 impl AppContext {
     #[must_use]
     pub fn new(app: Arc<dyn UiApp>) -> Self {
-        Self { app }
+        let open = app.open_editor_on_launch();
+        Self {
+            app,
+            open_editor_on_launch_once: Arc::new(AtomicBool::new(open)),
+        }
     }
 
     #[must_use]
@@ -33,7 +41,13 @@ impl AppContext {
     }
 
     #[must_use]
-    pub fn open_editor_on_launch(&self) -> bool {
+    pub fn take_open_editor_on_launch(&self) -> bool {
+        self.open_editor_on_launch_once
+            .swap(false, Ordering::AcqRel)
+    }
+
+    #[must_use]
+    pub fn open_editor_on_launch_configured(&self) -> bool {
         self.app.as_ref().open_editor_on_launch()
     }
 

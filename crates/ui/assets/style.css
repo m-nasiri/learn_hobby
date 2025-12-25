@@ -245,6 +245,179 @@ a {
   /* visual styles are inherited from .btn + .btn-secondary */
 }
 
+/* ─── Editor ─────────────────────────────────────────────────────────────── */
+
+/* Editor window root */
+.editor-root {
+  min-height: 100%;
+  padding: var(--space-4);
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.98), rgba(242, 244, 248, 0.96));
+  display: grid;
+  place-items: center;
+}
+
+.editor-window {
+  width: min(760px, 100%);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(77, 84, 91, 0.16);
+  box-shadow: 0 20px 60px rgba(31, 36, 40, 0.22);
+  overflow: hidden;
+}
+
+.editor-titlebar {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: center;
+  padding: 14px 16px;
+  background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.95),
+      rgba(255, 255, 255, 0.75));
+  border-bottom: 1px solid rgba(77, 84, 91, 0.12);
+}
+
+.editor-title {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.editor-close {
+  display: none;
+}
+
+.editor-content {
+  padding: 18px 20px 16px;
+  display: grid;
+  gap: 16px;
+}
+
+.editor-panel {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.editor-body {
+  display: grid;
+  gap: 16px;
+}
+
+.editor-deck {
+  margin: 0 0 16px;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.editor-section {
+  display: grid;
+  gap: 8px;
+}
+
+.editor-label {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.editor-field {
+  border: 1px solid rgba(77, 84, 91, 0.2);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.editor-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.4;
+  color: var(--ink-1);
+}
+
+.editor-input::placeholder {
+  color: rgba(77, 84, 91, 0.6);
+}
+
+.editor-add {
+  align-self: start;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  padding: 6px 2px;
+  color: rgba(77, 84, 91, 0.9);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editor-add:hover {
+  color: var(--accent-2);
+}
+
+.editor-add-icon {
+  width: 22px;
+  height: 18px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(77, 84, 91, 0.18);
+  background: rgba(91, 127, 82, 0.08);
+  font-weight: 700;
+}
+
+.editor-divider {
+  height: 1px;
+  background: rgba(77, 84, 91, 0.12);
+}
+
+.editor-footer {
+  padding: 14px 0 0;
+  border-top: 1px solid rgba(77, 84, 91, 0.08);
+  display: grid;
+  gap: 8px;
+}
+
+.editor-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.editor-action {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.editor-action-label {
+  font-size: 0.75rem;
+  color: rgba(77, 84, 91, 0.75);
+}
+
+.editor-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: rgba(77, 84, 91, 0.75);
+}
+
+@media (max-width: 700px) {
+  .editor-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 @keyframes page-in {
   from {
     opacity: 0;
