@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
-use dioxus_router::{Link, Outlet, Routable};
+use dioxus_router::{Link, Outlet, Routable, use_navigator};
 
 use crate::views::{EditorView, HistoryView, HomeView, SessionView, SettingsView, SummaryView};
+use crate::context::AppContext;
 
 #[derive(Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -17,6 +18,17 @@ pub enum Route {
 
 #[component]
 fn Layout() -> Element {
+    let ctx = use_context::<AppContext>();
+    let navigator = use_navigator();
+    let mut redirected = use_signal(|| false);
+
+    use_effect(move || {
+        if ctx.open_editor_on_launch() && !redirected() {
+            navigator.push(Route::Editor {});
+            redirected.set(true);
+        }
+    });
+
     rsx! {
         div { class: "app",
             Sidebar {}

@@ -5,6 +5,7 @@ use services::{SessionLoopService, SessionSummaryService};
 
 pub trait UiApp: Send + Sync {
     fn current_deck_id(&self) -> DeckId;
+    fn open_editor_on_launch(&self) -> bool;
 
     fn session_summaries(&self) -> Arc<SessionSummaryService>;
     fn session_loop(&self) -> Arc<SessionLoopService>;
@@ -29,6 +30,11 @@ impl AppContext {
     #[must_use]
     pub fn current_deck_id(&self) -> DeckId {
         self.app.as_ref().current_deck_id()
+    }
+
+    #[must_use]
+    pub fn open_editor_on_launch(&self) -> bool {
+        self.app.as_ref().open_editor_on_launch()
     }
 
     #[must_use]

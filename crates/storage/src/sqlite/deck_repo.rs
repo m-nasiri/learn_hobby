@@ -1,5 +1,6 @@
 use learn_core::model::Deck;
 use sqlx::Row;
+use sqlx::sqlite::SqliteRow;
 
 use super::SqliteRepository;
 use crate::repository::{DeckRepository, StorageError};
@@ -45,7 +46,7 @@ impl DeckRepository for SqliteRepository {
         Ok(())
     }
 
-    async fn get_deck(&self, id: learn_core::model::DeckId) -> Result<Deck, StorageError> {
+    async fn get_deck(&self, id: learn_core::model::DeckId) -> Result<Option<Deck>, StorageError> {
         let row = sqlx::query(
             r"
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size
@@ -57,29 +58,56 @@ impl DeckRepository for SqliteRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| StorageError::Connection(e.to_string()))?
-        .ok_or(StorageError::NotFound)?;
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
 
-        let settings = learn_core::model::DeckSettings::new(
-            u32::try_from(row.try_get::<i64, _>("new_cards_per_day").map_err(ser)?)
-                .map_err(|_| StorageError::Serialization("new_cards_per_day overflow".into()))?,
-            u32::try_from(row.try_get::<i64, _>("review_limit_per_day").map_err(ser)?)
-                .map_err(|_| StorageError::Serialization("review_limit_per_day overflow".into()))?,
-            u32::try_from(row.try_get::<i64, _>("micro_session_size").map_err(ser)?)
-                .map_err(|_| StorageError::Serialization("micro_session_size overflow".into()))?,
-        )
-        .map_err(|e| StorageError::Serialization(e.to_string()))?;
-
-        Deck::new(
-            learn_core::model::DeckId::new(
-                u64::try_from(row.try_get::<i64, _>("id").map_err(ser)?)
-                    .map_err(|_| StorageError::Serialization("id sign overflow".into()))?,
-            ),
-            row.try_get::<String, _>("name").map_err(ser)?,
-            row.try_get::<Option<String>, _>("description").map_err(ser)?,
-            settings,
-            row.try_get("created_at").map_err(ser)?,
-        )
-        .map_err(|e| StorageError::Serialization(e.to_string()))
+        match row {
+            Some(row) => deck_from_row(&row).map(Some),
+            None => Ok(None),
+        }
     }
+
+    async fn list_decks(&self, limit: u32) -> Result<Vec<Deck>, StorageError> {
+        let rows = sqlx::query(
+            r"
+            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size
+            FROM decks
+            ORDER BY id ASC
+            LIMIT ?1
+            ",
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut decks = Vec::with_capacity(rows.len());
+        for row in rows {
+            decks.push(deck_from_row(&row)?);
+        }
+        Ok(decks)
+    }
+}
+
+fn deck_from_row(row: &SqliteRow) -> Result<Deck, StorageError> {
+    let settings = learn_core::model::DeckSettings::new(
+        u32::try_from(row.try_get::<i64, _>("new_cards_per_day").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("new_cards_per_day overflow".into()))?,
+        u32::try_from(row.try_get::<i64, _>("review_limit_per_day").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("review_limit_per_day overflow".into()))?,
+        u32::try_from(row.try_get::<i64, _>("micro_session_size").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("micro_session_size overflow".into()))?,
+    )
+    .map_err(|e| StorageError::Serialization(e.to_string()))?;
+
+    Deck::new(
+        learn_core::model::DeckId::new(
+            u64::try_from(row.try_get::<i64, _>("id").map_err(ser)?)
+                .map_err(|_| StorageError::Serialization("id sign overflow".into()))?,
+        ),
+        row.try_get::<String, _>("name").map_err(ser)?,
+        row.try_get::<Option<String>, _>("description").map_err(ser)?,
+        settings,
+        row.try_get("created_at").map_err(ser)?,
+    )
+    .map_err(|e| StorageError::Serialization(e.to_string()))
 }

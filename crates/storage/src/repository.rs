@@ -164,10 +164,19 @@ pub trait DeckRepository: Send + Sync {
 
     /// Fetch a deck by ID.
     ///
+    /// Returns `Ok(None)` when the deck does not exist.
+    ///
     /// # Errors
     ///
-    /// Returns `StorageError::NotFound` if missing, or other storage errors.
-    async fn get_deck(&self, id: DeckId) -> Result<Deck, StorageError>;
+    /// Returns `StorageError` on storage failures.
+    async fn get_deck(&self, id: DeckId) -> Result<Option<Deck>, StorageError>;
+
+    /// List decks up to the given limit, ordered by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on storage failures.
+    async fn list_decks(&self, limit: u32) -> Result<Vec<Deck>, StorageError>;
 }
 
 #[async_trait]
@@ -345,12 +354,23 @@ impl DeckRepository for InMemoryRepository {
         Ok(())
     }
 
-    async fn get_deck(&self, id: DeckId) -> Result<Deck, StorageError> {
+    async fn get_deck(&self, id: DeckId) -> Result<Option<Deck>, StorageError> {
         let guard = self
             .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard.decks.get(&id).cloned().ok_or(StorageError::NotFound)
+        Ok(guard.decks.get(&id).cloned())
+    }
+
+    async fn list_decks(&self, limit: u32) -> Result<Vec<Deck>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let mut decks: Vec<Deck> = guard.decks.values().cloned().collect();
+        decks.sort_by_key(|deck| deck.id().value());
+        decks.truncate(limit_usize(limit));
+        Ok(decks)
     }
 }
 
@@ -538,9 +558,7 @@ impl SessionSummaryRepository for InMemoryRepository {
             .summaries
             .iter()
             .filter(|(_, summary)| summary.deck_id() == deck_id)
-            .filter(|(_, summary)| {
-                completed_from.is_none_or(|from| summary.completed_at() >= from)
-            })
+            .filter(|(_, summary)| completed_from.is_none_or(|from| summary.completed_at() >= from))
             .filter(|(_, summary)| {
                 completed_until.is_none_or(|until| summary.completed_at() <= until)
             })

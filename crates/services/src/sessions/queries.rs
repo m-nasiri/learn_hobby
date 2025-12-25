@@ -27,7 +27,10 @@ impl SessionQueries {
         now: DateTime<Utc>,
         shuffle_new: bool,
     ) -> Result<(Deck, SessionPlan), SessionError> {
-        let deck = decks.get_deck(deck_id).await?;
+        let deck = decks
+            .get_deck(deck_id)
+            .await?
+            .ok_or(storage::repository::StorageError::NotFound)?;
         let settings = deck.settings();
         let due = cards
             .due_cards(deck_id, now, settings.review_limit_per_day())

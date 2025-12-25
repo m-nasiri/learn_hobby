@@ -2,9 +2,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use dioxus::LaunchBuilder;
-use learn_core::model::DeckId;
+use learn_core::model::{Deck, DeckId, DeckSettings};
 use services::{Clock, SessionLoopService, SessionSummaryService};
-use storage::repository::Storage;
+use storage::repository::{DeckRepository, Storage};
 use ui::{App, UiApp, build_app_context};
 
 #[derive(Debug)]
@@ -39,6 +39,7 @@ struct DesktopApp {
     deck_id: DeckId,
     session_summaries: Arc<SessionSummaryService>,
     session_loop: Arc<SessionLoopService>,
+    open_editor_on_launch: bool,
 }
 
 impl UiApp for DesktopApp {
@@ -52,6 +53,10 @@ impl UiApp for DesktopApp {
 
     fn session_loop(&self) -> Arc<SessionLoopService> {
         Arc::clone(&self.session_loop)
+    }
+
+    fn open_editor_on_launch(&self) -> bool {
+        self.open_editor_on_launch
     }
 }
 
@@ -195,20 +200,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
         Command::Ui => {
             let clock = Clock::default_clock();
+            let decks = Arc::clone(&storage.decks);
+            let cards = Arc::clone(&storage.cards);
+            let reviews = Arc::clone(&storage.reviews);
             let summaries_repo = storage.session_summaries.clone();
             let summaries = Arc::new(SessionSummaryService::new(clock, summaries_repo.clone()));
+            let (deck_id, open_editor_on_launch) =
+                ensure_default_deck(decks.as_ref(), &clock, parsed.deck_id).await?;
             let session_loop = Arc::new(SessionLoopService::new(
                 clock,
-                storage.decks,
-                storage.cards,
-                storage.reviews,
+                decks,
+                cards,
+                reviews,
                 summaries_repo,
             ));
 
             let app = DesktopApp {
-                deck_id: parsed.deck_id,
+                deck_id,
                 session_summaries: summaries,
                 session_loop,
+                open_editor_on_launch,
             };
 
             let context = build_app_context(Arc::new(app));
@@ -227,6 +238,35 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
     }
+}
+
+async fn ensure_default_deck(
+    decks: &dyn DeckRepository,
+    clock: &Clock,
+    preferred_id: DeckId,
+) -> Result<(DeckId, bool), Box<dyn std::error::Error>> {
+    // If the preferred deck exists, use it.
+    if let Some(_) = decks.get_deck(preferred_id).await? {
+        return Ok((preferred_id, false));
+    }
+
+    let existing = decks.list_decks(128).await?;
+    if let Some(first) = existing.first() {
+        return Ok((first.id(), false));
+    }
+
+    // No decks exist: create the default deck using the preferred id.
+    let now = clock.now();
+    let deck = Deck::new(
+        preferred_id,
+        "Default Deck",
+        None,
+        DeckSettings::default_for_adhd(),
+        now,
+    )?;
+    decks.upsert_deck(&deck).await?;
+
+    Ok((deck.id(), true))
 }
 
 fn prepare_sqlite_file(db_url: &str) -> Result<(), Box<dyn std::error::Error>> {
