@@ -9,7 +9,7 @@ use crate::views::{EditorView, HistoryView, HomeView, SessionView, SettingsView,
 pub enum Route {
     #[layout(Layout)]
         #[route("/", HomeView)] Home {},
-        #[route("/session", SessionView)] Session {},
+        #[route("/session/:deck_id", SessionView)] Session { deck_id: u64 },
         #[route("/editor", EditorView)] Editor {},
         #[route("/history", HistoryView)] History {},
         #[route("/history/:summary_id", SummaryView)] Summary { summary_id: i64 },
@@ -55,6 +55,9 @@ fn Layout() -> Element {
 
 #[component]
 fn Sidebar() -> Element {
+    let ctx = use_context::<AppContext>();
+    let deck_id = ctx.current_deck_id().value();
+
     rsx! {
         aside { class: "sidebar", aria_label: "Sidebar",
             header { class: "sidebar__header",
@@ -64,7 +67,7 @@ fn Sidebar() -> Element {
             nav { class: "sidebar__nav", aria_label: "Primary",
                 ul { class: "sidebar__list",
                     NavItem { to: Route::Home {}, label: "Home", icon: NavIcon::Home }
-                    NavItem { to: Route::Session {}, label: "Practice", icon: NavIcon::Practice }
+                    NavItem { to: Route::Session { deck_id }, label: "Practice", icon: NavIcon::Practice }
                     NavItem { to: Route::Editor {}, label: "Add / Edit", icon: NavIcon::Edit }
                     NavItem { to: Route::History {}, label: "History", icon: NavIcon::History }
                     NavItem { to: Route::Settings {}, label: "Settings", icon: NavIcon::Settings }

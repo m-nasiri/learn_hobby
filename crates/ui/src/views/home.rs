@@ -60,7 +60,11 @@ pub fn HomeView() -> Element {
                 ViewState::Ready(data) => rsx! {
                     p { "Current deck: {data.deck_id_label}" }
                     p { "Recent sessions (7d): {data.recent_count}" }
-                    Link { class: "btn btn-primary", to: Route::Session {}, "Practice now" }
+                    Link {
+                        class: "btn btn-primary",
+                        to: Route::Session { deck_id: deck_id.value() },
+                        "Practice now"
+                    }
                 },
                 ViewState::Error(err) => rsx! {
                     p { "{err.message()}" }

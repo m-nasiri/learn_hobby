@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use keyboard_types::{Code, Key};
 
-use learn_core::model::ReviewGrade;
+use learn_core::model::{DeckId, ReviewGrade};
 
 use crate::context::AppContext;
 use crate::routes::Route;
@@ -17,10 +17,10 @@ enum LastAction {
 }
 
 #[component]
-pub fn SessionView() -> Element {
+pub fn SessionView(deck_id: u64) -> Element {
     let ctx = use_context::<AppContext>();
     let navigator = use_navigator();
-    let deck_id = ctx.current_deck_id();
+    let deck_id = DeckId::new(deck_id);
     let session_loop = ctx.session_loop();
 
     let error = use_signal(|| None::<ViewError>);

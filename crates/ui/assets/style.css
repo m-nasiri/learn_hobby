@@ -349,6 +349,74 @@ a {
   font-size: 0.9rem;
 }
 
+.editor-deck-row {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-deck-label {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 0.88rem;
+}
+
+.editor-deck-select {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-1);
+  font-size: 0.9rem;
+  padding: 6px 10px;
+  min-width: 180px;
+  outline: none;
+}
+
+.editor-deck-select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px var(--focus-ring);
+}
+
+.editor-deck-new {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.editor-deck-input {
+  min-width: 200px;
+  flex: 1 1 220px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+  font: inherit;
+  outline: none;
+}
+
+.editor-deck-input:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px var(--focus-ring);
+}
+
+.editor-deck-create {
+  border-color: rgba(0, 122, 255, 0.3);
+  background: rgba(0, 122, 255, 0.92);
+  color: #fff;
+}
+
+.editor-deck-cancel {
+  border-color: var(--border-soft);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.editor-deck-status {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.85rem;
+}
+
 .editor-body {
   padding: 22px 24px 18px;
   display: grid;
@@ -437,9 +505,18 @@ a {
 }
 
 .editor-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 14px 24px;
   border-top: 1px solid var(--border-soft);
   background: rgba(248, 249, 251, 0.96);
+}
+
+.editor-status {
+  min-height: 18px;
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.88rem;
 }
 
 .editor-actions {
