@@ -18,7 +18,11 @@ pub fn SettingsView() -> Element {
 
     rsx! {
         div { class: "page",
-            h2 { "Settings" }
+            header { class: "view-header",
+                h2 { class: "view-title", "Settings" }
+                p { class: "view-subtitle", "Preferences and keyboard shortcuts." }
+            }
+            div { class: "view-divider" }
             match state {
                 ViewState::Idle => rsx! {
                     p { "Idle" }
@@ -31,6 +35,15 @@ pub fn SettingsView() -> Element {
                 },
                 ViewState::Error(err) => rsx! {
                     p { "{err.message()}" }
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let mut resource = resource;
+                            resource.restart();
+                        },
+                        "Retry"
+                    }
                 },
             }
         }

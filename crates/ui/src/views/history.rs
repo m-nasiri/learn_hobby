@@ -33,7 +33,11 @@ pub fn HistoryView() -> Element {
 
     rsx! {
         div { class: "page",
-            h2 { "History" }
+            header { class: "view-header",
+                h2 { class: "view-title", "History" }
+                p { class: "view-subtitle", "Recent sessions from the last week." }
+            }
+            div { class: "view-divider" }
 
             match state {
                 ViewState::Idle => rsx! {
@@ -48,13 +52,22 @@ pub fn HistoryView() -> Element {
                     } else {
                         ul {
                             for card in data.cards {
-                                SummaryCard { card }
+                                SummaryCard { key: "{card.id}", card }
                             }
                         }
                     }
                 },
                 ViewState::Error(err) => rsx! {
                     p { "{err.message()}" }
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let mut resource = resource;
+                            resource.restart();
+                        },
+                        "Retry"
+                    }
                 },
             }
         }

@@ -1,8 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use dioxus::desktop::{Config as DesktopConfig, LogicalSize, WindowBuilder};
 use dioxus::LaunchBuilder;
-use dioxus::desktop::{Config as DesktopConfig, WindowBuilder};
 use learn_core::model::{Deck, DeckId, DeckSettings};
 use services::{Clock, SessionLoopService, SessionSummaryService};
 use storage::repository::{DeckRepository, Storage};
@@ -68,11 +68,11 @@ struct Args {
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  cargo run -p app -- ui   [--db <sqlite_url>] [--deck-id <id>]");
-    eprintln!("  cargo run -p app -- seed [--db <sqlite_url>] [--deck-id <id>]  # placeholder");
+    eprintln!("  cargo run -p app -- ui [--db <sqlite_url>] [--deck-id <id>]");
+    eprintln!("  cargo run -p app -- seed [--db <sqlite_url>] [--deck-id <id>]");
     eprintln!();
     eprintln!("Defaults for ui:");
-    eprintln!("  --db sqlite:dev.sqlite3");
+    eprintln!("  --db sqlite://dev.sqlite3");
     eprintln!("  --deck-id 1");
     eprintln!();
     eprintln!("Environment:");
@@ -99,7 +99,7 @@ impl Args {
     fn parse_ui(args: &mut impl Iterator<Item = String>) -> Result<Self, ArgsError> {
         let mut db_url = std::env::var("LEARN_DB_URL")
             .ok()
-            .map_or_else(|| "sqlite://dev.sqlite3".into(), normalize_sqlite_url);
+            .map_or_else(|| "sqlite://dev.sqlite3".into(), |value| normalize_sqlite_url(&value));
         let mut deck_id = std::env::var("LEARN_DECK_ID")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -112,7 +112,7 @@ impl Args {
                     if value.trim().is_empty() {
                         return Err(ArgsError::InvalidDbUrl { raw: value });
                     }
-                    db_url = normalize_sqlite_url(value);
+                    db_url = normalize_sqlite_url(&value);
                 }
                 "--deck-id" => {
                     let value = require_value(args, "--deck-id")?;
@@ -139,17 +139,28 @@ impl Args {
     }
 }
 
-fn normalize_sqlite_url(raw: String) -> String {
-    if raw == "sqlite::memory:" || raw.starts_with("sqlite://") {
-        return raw;
+fn normalize_sqlite_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    // Preserve in-memory.
+    if trimmed == "sqlite::memory:" {
+        return trimmed.to_string();
     }
 
-    let trimmed = raw.trim().to_string();
-    let path_str = trimmed
-        .strip_prefix("sqlite:")
-        .unwrap_or(trimmed.as_str())
-        .to_string();
-    let path = std::path::Path::new(&path_str);
+    // Already a full sqlite URL.
+    if trimmed.starts_with("sqlite://") {
+        return trimmed.to_string();
+    }
+
+    // Accept `sqlite:relative/path.db` and plain paths.
+    let path_str = trimmed.strip_prefix("sqlite:").unwrap_or(trimmed);
+
+    // Handle accidental empty input early.
+    if path_str.trim().is_empty() {
+        return trimmed.to_string();
+    }
+
+    let path = std::path::Path::new(path_str);
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -157,6 +168,7 @@ fn normalize_sqlite_url(raw: String) -> String {
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join(path)
     };
+
     format!("sqlite://{}", absolute.display())
 }
 
@@ -223,14 +235,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 open_editor_on_launch,
             };
 
-            let context = build_app_context(Arc::new(app));
+            let app: Arc<dyn UiApp> = Arc::new(app);
+            let context = build_app_context(&app);
 
             // On macOS, Dioxus/tao can default to an always-on-top window in some dev setups.
             // Explicitly disable it so the app doesn't behave like a modal window.
             let desktop_cfg = DesktopConfig::new().with_window(
                 WindowBuilder::new()
                     .with_title("Learn")
-                    .with_always_on_top(false),
+                    .with_always_on_top(false)
+                    .with_min_inner_size(LogicalSize::new(980.0, 720.0)),
             );
 
             LaunchBuilder::desktop()
@@ -259,7 +273,7 @@ async fn ensure_default_deck(
     preferred_id: DeckId,
 ) -> Result<(DeckId, bool), Box<dyn std::error::Error>> {
     // If the preferred deck exists, use it.
-    if let Some(_) = decks.get_deck(preferred_id).await? {
+    if decks.get_deck(preferred_id).await?.is_some() {
         return Ok((preferred_id, false));
     }
 
@@ -289,6 +303,7 @@ fn prepare_sqlite_file(db_url: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let path = db_url
         .strip_prefix("sqlite://")
+        .or_else(|| db_url.strip_prefix("sqlite:"))
         .ok_or_else(|| ArgsError::InvalidDbUrl {
             raw: db_url.to_string(),
         })?;

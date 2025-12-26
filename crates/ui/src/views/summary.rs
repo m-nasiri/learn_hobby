@@ -36,7 +36,11 @@ pub fn SummaryView(summary_id: i64) -> Element {
 
     rsx! {
         div { class: "page",
-            h2 { "Session Summary" }
+            header { class: "view-header",
+                h2 { class: "view-title", "Session Summary" }
+                p { class: "view-subtitle", "Details for this completed session." }
+            }
+            div { class: "view-divider" }
 
             match state {
                 ViewState::Idle => rsx! {
@@ -50,6 +54,15 @@ pub fn SummaryView(summary_id: i64) -> Element {
                 },
                 ViewState::Error(err) => rsx! {
                     p { "{err.message()}" }
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let mut resource = resource;
+                            resource.restart();
+                        },
+                        "Retry"
+                    }
                 },
             }
         }

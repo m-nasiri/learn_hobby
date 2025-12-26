@@ -151,10 +151,38 @@ Good candidates:
 - Predictable focus order; visible focus ring.
 - Minimum target size 44×44 (prepares for mobile).
 
+
 ### Calm UX defaults
 - Reduce surprise: avoid sudden navigation; use gentle transitions.
 - Avoid modal spam: at most one modal at a time; prefer inline toasts.
 - Respect “quiet hours” for nudges.
+
+### Window & Navigation Rules (Desktop-first)
+
+- The application uses a **single primary window**.
+- Navigation happens **inside the main content pane**, not via multiple OS windows.
+- Each route/view renders its own **inline header/title** inside the right pane.
+
+#### Title behavior (ChatGPT-style)
+- The OS window title remains stable (e.g. "Learn").
+- Each view shows its title **inside the content pane**, aligned top-left.
+- Titles are visually lightweight but persistent:
+  - Large text (section headline)
+  - Subtle divider below
+  - Optional contextual subtitle (e.g. deck name)
+
+#### Modal & overlay rules
+- Avoid OS-level modal windows for core flows (editor, history, practice).
+- Prefer:
+  - Inline panels
+  - Sheet-style overlays
+  - Soft dimming of background content
+- At most **one overlay at a time**.
+
+#### UX rationale
+- Prevents focus-stealing and window management friction.
+- Matches modern macOS desktop patterns (ChatGPT, Notes, Settings).
+- Reduces cognitive load for ADHD users by keeping spatial context stable.
 
 ---
 

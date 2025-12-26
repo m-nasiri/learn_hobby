@@ -44,7 +44,11 @@ pub fn HomeView() -> Element {
 
     rsx! {
         div { class: "page",
-            h2 { "Home" }
+            header { class: "view-header",
+                h2 { class: "view-title", "Home" }
+                p { class: "view-subtitle", "Quick launch and recent activity." }
+            }
+            div { class: "view-divider" }
 
             match state {
                 ViewState::Idle => rsx! {
@@ -60,6 +64,15 @@ pub fn HomeView() -> Element {
                 },
                 ViewState::Error(err) => rsx! {
                     p { "{err.message()}" }
+                    button {
+                        class: "btn btn-secondary",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let mut resource = resource;
+                            resource.restart();
+                        },
+                        "Retry"
+                    }
                 },
             }
         }
