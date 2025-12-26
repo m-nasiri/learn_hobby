@@ -97,7 +97,7 @@ impl ReviewPersistence for SqliteRepository {
                 stability, difficulty
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-            ON CONFLICT(id, deck_id) DO UPDATE SET
+            ON CONFLICT(id) DO UPDATE SET
                 -- keep created_at from the original insert; only update mutable fields
                 prompt = excluded.prompt,
                 prompt_media_id = excluded.prompt_media_id,

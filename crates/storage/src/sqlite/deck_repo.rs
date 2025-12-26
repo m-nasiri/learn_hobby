@@ -1,9 +1,10 @@
-use learn_core::model::Deck;
+use learn_core::model::{Deck, DeckId};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
+use super::mapping::deck_id_from_i64;
 use super::SqliteRepository;
-use crate::repository::{DeckRepository, StorageError};
+use crate::repository::{DeckRepository, NewDeckRecord, StorageError};
 
 fn ser<E: core::fmt::Display>(e: E) -> StorageError {
     StorageError::Serialization(e.to_string())
@@ -11,6 +12,32 @@ fn ser<E: core::fmt::Display>(e: E) -> StorageError {
 
 #[async_trait::async_trait]
 impl DeckRepository for SqliteRepository {
+    async fn insert_new_deck(&self, deck: NewDeckRecord) -> Result<DeckId, StorageError> {
+        let description = deck.description;
+        let created_at = deck.created_at;
+        let new_cards = i64::from(deck.new_cards_per_day);
+        let review_limit = i64::from(deck.review_limit_per_day);
+        let micro = i64::from(deck.micro_session_size);
+
+        let res = sqlx::query(
+            r"
+            INSERT INTO decks (name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ",
+        )
+        .bind(deck.name)
+        .bind(description)
+        .bind(created_at)
+        .bind(new_cards)
+        .bind(review_limit)
+        .bind(micro)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        deck_id_from_i64(res.last_insert_rowid())
+    }
+
     async fn upsert_deck(&self, deck: &Deck) -> Result<(), StorageError> {
         let id = deck.id().value();
         let name = deck.name().to_string();

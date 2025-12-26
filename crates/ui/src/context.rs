@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use learn_core::model::DeckId;
-use services::{SessionLoopService, SessionSummaryService};
+use services::{CardService, DeckService, SessionLoopService, SessionSummaryService};
 
 pub trait UiApp: Send + Sync {
     fn current_deck_id(&self) -> DeckId;
@@ -12,6 +12,8 @@ pub trait UiApp: Send + Sync {
 
     fn session_summaries(&self) -> Arc<SessionSummaryService>;
     fn session_loop(&self) -> Arc<SessionLoopService>;
+    fn card_service(&self) -> Arc<CardService>;
+    fn deck_service(&self) -> Arc<DeckService>;
 }
 
 #[derive(Clone)]
@@ -22,6 +24,8 @@ pub struct AppContext {
 
     session_summaries: Arc<SessionSummaryService>,
     session_loop: Arc<SessionLoopService>,
+    card_service: Arc<CardService>,
+    deck_service: Arc<DeckService>,
 }
 
 impl AppContext {
@@ -32,6 +36,8 @@ impl AppContext {
 
         let session_summaries = app.session_summaries();
         let session_loop = app.session_loop();
+        let card_service = app.card_service();
+        let deck_service = app.deck_service();
 
         Self {
             current_deck_id,
@@ -39,6 +45,8 @@ impl AppContext {
             open_editor_on_launch_once: Arc::new(AtomicBool::new(open_editor_on_launch_configured)),
             session_summaries,
             session_loop,
+            card_service,
+            deck_service,
         }
     }
 
@@ -67,6 +75,16 @@ impl AppContext {
     #[must_use]
     pub fn session_loop(&self) -> Arc<SessionLoopService> {
         Arc::clone(&self.session_loop)
+    }
+
+    #[must_use]
+    pub fn card_service(&self) -> Arc<CardService> {
+        Arc::clone(&self.card_service)
+    }
+
+    #[must_use]
+    pub fn deck_service(&self) -> Arc<DeckService> {
+        Arc::clone(&self.deck_service)
     }
 }
 

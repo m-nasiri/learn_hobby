@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use learn_core::model::{
-    Card, CardError, CardId, CardPhase, Deck, DeckId, MediaId, ReviewGrade, ReviewLog,
-    ReviewOutcome, SessionSummary, content::Content,
+    Card, CardError, CardId, CardPhase, Deck, DeckId, DeckSettings, MediaId, ReviewGrade,
+    ReviewLog, ReviewOutcome, SessionSummary, content::Content,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,48 @@ pub struct CardRecord {
     pub review_count: u32,
     pub stability: Option<f64>,
     pub difficulty: Option<f64>,
+}
+
+/// Persisted shape for inserting a brand-new card (no ID yet).
+#[derive(Debug, Clone)]
+pub struct NewCardRecord {
+    pub deck_id: DeckId,
+    pub prompt_text: String,
+    pub prompt_media_id: Option<u64>,
+    pub answer_text: String,
+    pub answer_media_id: Option<u64>,
+    pub phase: CardPhase,
+    pub created_at: DateTime<Utc>,
+    pub next_review_at: DateTime<Utc>,
+    pub last_review_at: Option<DateTime<Utc>>,
+    pub review_count: u32,
+    pub stability: Option<f64>,
+    pub difficulty: Option<f64>,
+}
+
+/// Persisted shape for inserting a brand-new deck (no ID yet).
+#[derive(Debug, Clone)]
+pub struct NewDeckRecord {
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub new_cards_per_day: u32,
+    pub review_limit_per_day: u32,
+    pub micro_session_size: u32,
+}
+
+impl NewDeckRecord {
+    #[must_use]
+    pub fn from_deck(deck: &Deck) -> Self {
+        Self {
+            name: deck.name().to_owned(),
+            description: deck.description().map(ToString::to_string),
+            created_at: deck.created_at(),
+            new_cards_per_day: deck.settings().new_cards_per_day(),
+            review_limit_per_day: deck.settings().review_limit_per_day(),
+            micro_session_size: deck.settings().micro_session_size(),
+        }
+    }
 }
 
 impl CardRecord {
@@ -155,6 +197,13 @@ impl ReviewLogRecord {
 /// Repository contract for decks and cards.
 #[async_trait]
 pub trait DeckRepository: Send + Sync {
+    /// Insert a brand-new deck and return its assigned ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` if the deck cannot be stored.
+    async fn insert_new_deck(&self, deck: NewDeckRecord) -> Result<DeckId, StorageError>;
+
     /// Persist or update a deck.
     ///
     /// # Errors
@@ -181,6 +230,13 @@ pub trait DeckRepository: Send + Sync {
 
 #[async_trait]
 pub trait CardRepository: Send + Sync {
+    /// Insert a brand-new card and return its assigned ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` if persistence fails.
+    async fn insert_new_card(&self, card: NewCardRecord) -> Result<CardId, StorageError>;
+
     /// Persist or update a card with phase information.
     ///
     /// # Errors
@@ -313,9 +369,11 @@ pub trait SessionSummaryRepository: Send + Sync {
 #[derive(Default)]
 struct InMemState {
     decks: HashMap<DeckId, Deck>,
-    cards: HashMap<(DeckId, CardId), Card>,
+    cards: HashMap<CardId, Card>,
     logs: Vec<ReviewLogRecord>,
     summaries: HashMap<i64, SessionSummary>,
+    next_deck_id: u64,
+    next_card_id: u64,
     next_log_id: i64,
     next_summary_id: i64,
 }
@@ -331,6 +389,8 @@ impl InMemoryRepository {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(InMemState {
+                next_deck_id: 1,
+                next_card_id: 1,
                 next_log_id: 1,
                 next_summary_id: 1,
                 ..InMemState::default()
@@ -345,11 +405,48 @@ fn limit_usize(limit: u32) -> usize {
 
 #[async_trait]
 impl DeckRepository for InMemoryRepository {
+    async fn insert_new_deck(&self, deck: NewDeckRecord) -> Result<DeckId, StorageError> {
+        let settings = DeckSettings::new(
+            deck.new_cards_per_day,
+            deck.review_limit_per_day,
+            deck.micro_session_size,
+        )
+        .map_err(|e| StorageError::Serialization(e.to_string()))?;
+
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let id = guard.next_deck_id;
+        guard.next_deck_id = id
+            .checked_add(1)
+            .ok_or_else(|| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let deck = Deck::new(
+            DeckId::new(id),
+            deck.name,
+            deck.description,
+            settings,
+            deck.created_at,
+        )
+        .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        let deck_id = deck.id();
+        guard.decks.insert(deck_id, deck);
+        Ok(deck_id)
+    }
+
     async fn upsert_deck(&self, deck: &Deck) -> Result<(), StorageError> {
         let mut guard = self
             .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
+        if deck.id().value() >= guard.next_deck_id {
+            guard.next_deck_id = deck
+                .id()
+                .value()
+                .checked_add(1)
+                .ok_or_else(|| StorageError::Serialization("deck_id overflow".into()))?;
+        }
         guard.decks.insert(deck.id(), deck.clone());
         Ok(())
     }
@@ -376,14 +473,51 @@ impl DeckRepository for InMemoryRepository {
 
 #[async_trait]
 impl CardRepository for InMemoryRepository {
+    async fn insert_new_card(&self, card: NewCardRecord) -> Result<CardId, StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let id = guard.next_card_id;
+        guard.next_card_id = id
+            .checked_add(1)
+            .ok_or_else(|| StorageError::Serialization("card_id overflow".into()))?;
+        let record = CardRecord {
+            id: CardId::new(id),
+            deck_id: card.deck_id,
+            prompt_text: card.prompt_text,
+            prompt_media_id: card.prompt_media_id,
+            answer_text: card.answer_text,
+            answer_media_id: card.answer_media_id,
+            phase: card.phase,
+            created_at: card.created_at,
+            next_review_at: card.next_review_at,
+            last_review_at: card.last_review_at,
+            review_count: card.review_count,
+            stability: card.stability,
+            difficulty: card.difficulty,
+        };
+        let card = record
+            .into_card()
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        let id = card.id();
+        guard.cards.insert(id, card);
+        Ok(id)
+    }
+
     async fn upsert_card(&self, card: &Card) -> Result<(), StorageError> {
         let mut guard = self
             .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard
-            .cards
-            .insert((card.deck_id(), card.id()), card.clone());
+        if card.id().value() >= guard.next_card_id {
+            guard.next_card_id = card
+                .id()
+                .value()
+                .checked_add(1)
+                .ok_or_else(|| StorageError::Serialization("card_id overflow".into()))?;
+        }
+        guard.cards.insert(card.id(), card.clone());
         Ok(())
     }
 
@@ -394,9 +528,9 @@ impl CardRepository for InMemoryRepository {
             .map_err(|e| StorageError::Connection(e.to_string()))?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
-            match guard.cards.get(&(deck_id, *id)) {
-                Some(card) => found.push(card.clone()),
-                None => return Err(StorageError::NotFound),
+            match guard.cards.get(id) {
+                Some(card) if card.deck_id() == deck_id => found.push(card.clone()),
+                _ => return Err(StorageError::NotFound),
             }
         }
         Ok(found)
@@ -493,9 +627,7 @@ impl ReviewPersistence for InMemoryRepository {
             .state
             .lock()
             .map_err(|e| StorageError::Connection(e.to_string()))?;
-        guard
-            .cards
-            .insert((card.deck_id(), card.id()), card.clone());
+        guard.cards.insert(card.id(), card.clone());
         let id = guard.next_log_id;
         guard.next_log_id = id.saturating_add(1);
         log.id = Some(id);

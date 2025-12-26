@@ -4,12 +4,56 @@ use learn_core::model::{Card, CardId, DeckId};
 
 use super::{
     SqliteRepository,
-    mapping::{map_card_row, media_id_to_i64},
+    mapping::{card_id_from_i64, map_card_row, media_id_to_i64},
 };
-use crate::repository::{CardRepository, StorageError};
+use crate::repository::{CardRepository, NewCardRecord, StorageError};
 
 #[async_trait::async_trait]
 impl CardRepository for SqliteRepository {
+    async fn insert_new_card(&self, card: NewCardRecord) -> Result<CardId, StorageError> {
+        let deck_id = i64::try_from(card.deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let prompt_media_id = card
+            .prompt_media_id
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| StorageError::Serialization("prompt_media_id overflow".into()))?;
+        let answer_media_id = card
+            .answer_media_id
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| StorageError::Serialization("answer_media_id overflow".into()))?;
+
+        let result = sqlx::query(
+            r"
+            INSERT INTO cards (
+                deck_id, prompt, prompt_media_id, answer, answer_media_id,
+                phase, created_at, next_review_at, last_review_at, review_count,
+                stability, difficulty
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ",
+        )
+        .bind(deck_id)
+        .bind(card.prompt_text)
+        .bind(prompt_media_id)
+        .bind(card.answer_text)
+        .bind(answer_media_id)
+        .bind(card.phase.as_str())
+        .bind(card.created_at)
+        .bind(card.next_review_at)
+        .bind(card.last_review_at)
+        .bind(i64::from(card.review_count))
+        .bind(card.stability)
+        .bind(card.difficulty)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let id = result.last_insert_rowid();
+        card_id_from_i64(id)
+    }
+
     async fn upsert_card(&self, card: &Card) -> Result<(), StorageError> {
         sqlx::query(
             r"
@@ -19,7 +63,7 @@ impl CardRepository for SqliteRepository {
                 stability, difficulty
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-            ON CONFLICT(id, deck_id) DO UPDATE SET
+            ON CONFLICT(id) DO UPDATE SET
                 -- keep created_at from the original insert; only update mutable fields
                 prompt = excluded.prompt,
                 prompt_media_id = excluded.prompt_media_id,

@@ -23,10 +23,10 @@ pub struct SessionAnswerResult {
 #[derive(Clone)]
 pub struct SessionLoopService {
     clock: Clock,
-    decks: Arc<dyn DeckRepository + Send + Sync>,
-    cards: Arc<dyn CardRepository + Send + Sync>,
-    reviews: Arc<dyn ReviewPersistence + Send + Sync>,
-    summaries: Arc<dyn SessionSummaryRepository + Send + Sync>,
+    decks: Arc<dyn DeckRepository>,
+    cards: Arc<dyn CardRepository>,
+    reviews: Arc<dyn ReviewPersistence>,
+    summaries: Arc<dyn SessionSummaryRepository>,
     shuffle_new: bool,
 }
 
@@ -34,10 +34,10 @@ impl SessionLoopService {
     #[must_use]
     pub fn new(
         clock: Clock,
-        decks: Arc<dyn DeckRepository + Send + Sync>,
-        cards: Arc<dyn CardRepository + Send + Sync>,
-        reviews: Arc<dyn ReviewPersistence + Send + Sync>,
-        summaries: Arc<dyn SessionSummaryRepository + Send + Sync>,
+        decks: Arc<dyn DeckRepository>,
+        cards: Arc<dyn CardRepository>,
+        reviews: Arc<dyn ReviewPersistence>,
+        summaries: Arc<dyn SessionSummaryRepository>,
     ) -> Self {
         Self {
             clock,

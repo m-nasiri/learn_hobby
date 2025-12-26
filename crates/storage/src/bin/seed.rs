@@ -2,7 +2,7 @@ use std::fmt;
 
 use chrono::{DateTime, Duration, Utc};
 use learn_core::model::{Card, CardId, ContentDraft, Deck, DeckId, DeckSettings, SessionSummary};
-use storage::repository::Storage;
+use storage::repository::{NewDeckRecord, Storage};
 
 #[derive(Debug, Clone)]
 struct Args {
@@ -165,14 +165,32 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Storage::sqlite(&args.db_url).await?;
     let now = args.now.unwrap_or_else(Utc::now);
 
-    let deck = Deck::new(
-        args.deck_id,
-        args.deck_name,
-        args.deck_desc,
-        DeckSettings::default_for_adhd(),
-        now,
-    )?;
-    storage.decks.upsert_deck(&deck).await?;
+    let deck_id = match storage.decks.get_deck(args.deck_id).await? {
+        Some(deck) => {
+            let updated = Deck::new(
+                deck.id(),
+                args.deck_name.clone(),
+                args.deck_desc.clone(),
+                DeckSettings::default_for_adhd(),
+                now,
+            )?;
+            storage.decks.upsert_deck(&updated).await?;
+            deck.id()
+        }
+        None => {
+            let draft = Deck::new(
+                DeckId::new(1),
+                args.deck_name.clone(),
+                args.deck_desc.clone(),
+                DeckSettings::default_for_adhd(),
+                now,
+            )?;
+            storage
+                .decks
+                .insert_new_deck(NewDeckRecord::from_deck(&draft))
+                .await?
+        }
+    };
 
     let samples = [
         ("Hallo", "Hello"),
@@ -190,7 +208,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .validate(now, None, None)?;
         let card = Card::new(
             CardId::new(u64::from(i + 1)),
-            args.deck_id,
+            deck_id,
             prompt,
             answer,
             now,
@@ -205,14 +223,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let completed_at = started_at + Duration::minutes(5);
 
         let summary =
-            SessionSummary::from_persisted(args.deck_id, started_at, completed_at, 5, 1, 1, 2, 1)?;
+            SessionSummary::from_persisted(deck_id, started_at, completed_at, 5, 1, 1, 2, 1)?;
 
         let _ = storage.session_summaries.append_summary(&summary).await?;
     }
 
     println!(
         "Seeded deck {} with {} cards and {} session summaries into {}",
-        args.deck_id.value(),
+        deck_id.value(),
         args.cards,
         args.summaries,
         args.db_url

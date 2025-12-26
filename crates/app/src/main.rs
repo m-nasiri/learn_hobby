@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use dioxus::desktop::{Config as DesktopConfig, LogicalSize, WindowBuilder};
 use dioxus::LaunchBuilder;
-use learn_core::model::{Deck, DeckId, DeckSettings};
-use services::{Clock, SessionLoopService, SessionSummaryService};
-use storage::repository::{DeckRepository, Storage};
+use learn_core::model::DeckId;
+use services::{
+    AppServices, CardService, Clock, DeckService, SessionLoopService, SessionSummaryService,
+};
 use ui::{App, UiApp, build_app_context};
 
 #[derive(Debug)]
@@ -40,6 +41,8 @@ struct DesktopApp {
     deck_id: DeckId,
     session_summaries: Arc<SessionSummaryService>,
     session_loop: Arc<SessionLoopService>,
+    card_service: Arc<CardService>,
+    deck_service: Arc<DeckService>,
     open_editor_on_launch: bool,
 }
 
@@ -54,6 +57,14 @@ impl UiApp for DesktopApp {
 
     fn session_loop(&self) -> Arc<SessionLoopService> {
         Arc::clone(&self.session_loop)
+    }
+
+    fn card_service(&self) -> Arc<CardService> {
+        Arc::clone(&self.card_service)
+    }
+
+    fn deck_service(&self) -> Arc<DeckService> {
+        Arc::clone(&self.deck_service)
     }
 
     fn open_editor_on_launch(&self) -> bool {
@@ -208,31 +219,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Open + migrate SQLite at startup. Keep this in the binary glue so core/services stay pure.
     prepare_sqlite_file(&parsed.db_url)?;
-    let storage = Storage::sqlite(&parsed.db_url).await?;
 
     match cmd {
         Command::Ui => {
             let clock = Clock::default_clock();
-            let decks = Arc::clone(&storage.decks);
-            let cards = Arc::clone(&storage.cards);
-            let reviews = Arc::clone(&storage.reviews);
-            let summaries_repo = storage.session_summaries.clone();
-            let summaries = Arc::new(SessionSummaryService::new(clock, summaries_repo.clone()));
-            let (deck_id, open_editor_on_launch) =
-                ensure_default_deck(decks.as_ref(), &clock, parsed.deck_id).await?;
-            let session_loop = Arc::new(SessionLoopService::new(
-                clock,
-                decks,
-                cards,
-                reviews,
-                summaries_repo,
-            ));
+            let services =
+                AppServices::new_sqlite(&parsed.db_url, clock, parsed.deck_id).await?;
 
             let app = DesktopApp {
-                deck_id,
-                session_summaries: summaries,
-                session_loop,
-                open_editor_on_launch,
+                deck_id: services.deck_id(),
+                session_summaries: services.session_summaries(),
+                session_loop: services.session_loop(),
+                card_service: services.card_service(),
+                deck_service: services.deck_service(),
+                open_editor_on_launch: services.open_editor_on_launch(),
             };
 
             let app: Arc<dyn UiApp> = Arc::new(app);
@@ -261,39 +261,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "seed: not implemented yet (db={}, deck_id={}).",
                 parsed.db_url, parsed.deck_id
             );
-            drop(storage);
             Ok(())
         }
     }
-}
-
-async fn ensure_default_deck(
-    decks: &dyn DeckRepository,
-    clock: &Clock,
-    preferred_id: DeckId,
-) -> Result<(DeckId, bool), Box<dyn std::error::Error>> {
-    // If the preferred deck exists, use it.
-    if decks.get_deck(preferred_id).await?.is_some() {
-        return Ok((preferred_id, false));
-    }
-
-    let existing = decks.list_decks(128).await?;
-    if let Some(first) = existing.first() {
-        return Ok((first.id(), false));
-    }
-
-    // No decks exist: create the default deck using the preferred id.
-    let now = clock.now();
-    let deck = Deck::new(
-        preferred_id,
-        "Default Deck",
-        None,
-        DeckSettings::default_for_adhd(),
-        now,
-    )?;
-    decks.upsert_deck(&deck).await?;
-
-    Ok((deck.id(), true))
 }
 
 fn prepare_sqlite_file(db_url: &str) -> Result<(), Box<dyn std::error::Error>> {

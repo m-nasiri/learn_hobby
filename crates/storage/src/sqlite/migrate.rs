@@ -50,7 +50,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         sqlx::query(
             r"
                 CREATE TABLE IF NOT EXISTS cards (
-                    id INTEGER NOT NULL,
+                    id INTEGER PRIMARY KEY,
                     deck_id INTEGER NOT NULL,
                     prompt TEXT NOT NULL,
                     prompt_media_id INTEGER,
@@ -63,7 +63,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
                     review_count INTEGER NOT NULL CHECK (review_count >= 0),
                     stability REAL,
                     difficulty REAL,
-                    PRIMARY KEY (id, deck_id),
                     FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE
                 );
             ",
@@ -85,7 +84,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
                     difficulty REAL NOT NULL,
                     next_review_at TEXT NOT NULL,
                     FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE,
-                    FOREIGN KEY (card_id, deck_id) REFERENCES cards(id, deck_id) ON DELETE CASCADE
+                    FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE
                 );
             ",
         )
