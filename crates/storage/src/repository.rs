@@ -269,6 +269,15 @@ pub trait CardRepository: Send + Sync {
     ///
     /// Returns `StorageError` on connection or serialization failure.
     async fn new_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
+
+    /// List cards for a deck up to the given limit.
+    ///
+    /// Results are ordered by created_at descending, then id descending.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
 }
 
 #[async_trait]
@@ -573,6 +582,28 @@ impl CardRepository for InMemoryRepository {
         new_cards.sort_by_key(|c| (c.created_at(), c.id().value()));
         new_cards.truncate(limit_usize(limit));
         Ok(new_cards)
+    }
+
+    async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut cards: Vec<Card> = guard
+            .cards
+            .values()
+            .filter(|c| c.deck_id() == deck_id)
+            .cloned()
+            .collect();
+        // Match SQLite ordering: created_at DESC, id DESC
+        cards.sort_by(|a, b| {
+            b.created_at()
+                .cmp(&a.created_at())
+                .then_with(|| b.id().value().cmp(&a.id().value()))
+        });
+        cards.truncate(limit_usize(limit));
+        Ok(cards)
     }
 }
 

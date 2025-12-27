@@ -228,4 +228,33 @@ impl CardRepository for SqliteRepository {
         }
         Ok(cards)
     }
+
+    async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let lim = i64::from(limit);
+
+        let rows = sqlx::query(
+            r"
+            SELECT
+                id, deck_id, prompt, prompt_media_id, answer, answer_media_id, phase, created_at,
+                next_review_at, last_review_at, review_count, stability, difficulty
+            FROM cards
+            WHERE deck_id = ?1
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?2
+            ",
+        )
+        .bind(deck)
+        .bind(lim)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut cards = Vec::with_capacity(rows.len());
+        for row in rows {
+            cards.push(map_card_row(&row)?);
+        }
+        Ok(cards)
+    }
 }
