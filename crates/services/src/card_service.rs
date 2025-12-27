@@ -134,4 +134,18 @@ impl CardService {
         self.cards.upsert_card(&updated).await?;
         Ok(())
     }
+
+    /// Delete a card and any associated persisted history.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if persistence fails.
+    pub async fn delete_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<(), CardServiceError> {
+        self.cards.delete_card(deck_id, card_id).await?;
+        Ok(())
+    }
 }

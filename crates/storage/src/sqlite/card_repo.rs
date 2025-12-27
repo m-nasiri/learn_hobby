@@ -103,6 +103,31 @@ impl CardRepository for SqliteRepository {
         Ok(())
     }
 
+    async fn delete_card(&self, deck_id: DeckId, card_id: CardId) -> Result<(), StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let card = i64::try_from(card_id.value())
+            .map_err(|_| StorageError::Serialization("card_id overflow".into()))?;
+
+        let result = sqlx::query(
+            r"
+            DELETE FROM cards
+            WHERE id = ?1 AND deck_id = ?2
+            ",
+        )
+        .bind(card)
+        .bind(deck)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
+
     async fn get_cards(&self, deck_id: DeckId, ids: &[CardId]) -> Result<Vec<Card>, StorageError> {
         if ids.is_empty() {
             return Ok(Vec::new());

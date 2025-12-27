@@ -17,6 +17,14 @@ enum SaveState {
     Error(ViewError),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeleteState {
+    Idle,
+    Deleting,
+    Success,
+    Error(ViewError),
+}
+
 #[component]
 pub fn EditorView() -> Element {
     let ctx = use_context::<AppContext>();
@@ -28,8 +36,12 @@ pub fn EditorView() -> Element {
     let deck_service_for_rename = deck_service.clone();
     let card_service = ctx.card_service();
     let card_service_for_list = card_service.clone();
+    let card_service_for_save = card_service.clone();
+    let card_service_for_delete = card_service.clone();
     let mut selected_deck = use_signal(|| deck_id);
     let mut save_state = use_signal(|| SaveState::Idle);
+    let mut delete_state = use_signal(|| DeleteState::Idle);
+    let mut show_delete_modal = use_signal(|| false);
     let mut show_new_deck = use_signal(|| false);
     let mut new_deck_name = use_signal(String::new);
     let mut new_deck_state = use_signal(|| SaveState::Idle);
@@ -88,9 +100,11 @@ pub fn EditorView() -> Element {
         can_edit && !p.trim().is_empty() && !a.trim().is_empty()
     };
     let save_action = use_callback(move |practice: bool| {
-        let card_service = card_service.clone();
-        let navigator = navigator.clone();
+        let card_service = card_service_for_save.clone();
+        let navigator = navigator;
         let mut save_state = save_state;
+        let mut delete_state = delete_state;
+        let mut show_delete_modal = show_delete_modal;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
         let mut cards_resource = cards_resource;
@@ -117,6 +131,8 @@ pub fn EditorView() -> Element {
 
         spawn(async move {
             save_state.set(SaveState::Saving);
+            delete_state.set(DeleteState::Idle);
+            show_delete_modal.set(false);
             let result = match editing_id {
                 Some(card_id) => {
                     card_service
@@ -127,7 +143,7 @@ pub fn EditorView() -> Element {
                             ContentDraft::text_only(answer.clone()),
                         )
                         .await
-                        .map(|_| Some(card_id))
+                        .map(|()| Some(card_id))
                 }
                 None => card_service
                     .create_card(
@@ -136,12 +152,14 @@ pub fn EditorView() -> Element {
                         ContentDraft::text_only(answer.clone()),
                     )
                     .await
-                    .map(|id| Some(id)),
+                    .map(Some),
             };
 
             match result {
                 Ok(card_id) => {
                     save_state.set(SaveState::Success);
+                    delete_state.set(DeleteState::Idle);
+                    show_delete_modal.set(false);
                     cards_resource.restart();
                     match (is_create_mode(), practice) {
                         (true, true) => {
@@ -186,6 +204,8 @@ pub fn EditorView() -> Element {
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
+        let mut delete_state = delete_state;
+        let mut show_delete_modal = show_delete_modal;
 
         let name = new_deck_name.read().trim().to_owned();
         if name.is_empty() || new_deck_state() == SaveState::Saving {
@@ -207,6 +227,8 @@ pub fn EditorView() -> Element {
                     is_renaming_deck.set(false);
                     rename_deck_state.set(SaveState::Idle);
                     rename_deck_error.set(None);
+                    delete_state.set(DeleteState::Idle);
+                    show_delete_modal.set(false);
                     new_deck_state.set(SaveState::Success);
                     decks_resource.restart();
                     cards_resource.restart();
@@ -253,24 +275,21 @@ pub fn EditorView() -> Element {
             rename_deck_state.set(SaveState::Saving);
             rename_deck_error.set(None);
 
-            match deck_service.rename_deck(deck_id, name).await {
-                Ok(()) => {
-                    rename_deck_state.set(SaveState::Success);
-                    is_renaming_deck.set(false);
-                    decks_resource.restart();
-                }
-                Err(_) => {
-                    rename_deck_state.set(SaveState::Error(ViewError::Unknown));
-                    let message = "Rename failed. Please try again.".to_string();
-                    rename_deck_error.set(Some(message.clone()));
-                    let mut rename_deck_error = rename_deck_error;
-                    spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        if rename_deck_error.read().as_ref() == Some(&message) {
-                            rename_deck_error.set(None);
-                        }
-                    });
-                }
+            if deck_service.rename_deck(deck_id, name).await.is_ok() {
+                rename_deck_state.set(SaveState::Success);
+                is_renaming_deck.set(false);
+                decks_resource.restart();
+            } else {
+                rename_deck_state.set(SaveState::Error(ViewError::Unknown));
+                let message = "Rename failed. Please try again.".to_string();
+                rename_deck_error.set(Some(message.clone()));
+                let mut rename_deck_error = rename_deck_error;
+                spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if rename_deck_error.read().as_ref() == Some(&message) {
+                        rename_deck_error.set(None);
+                    }
+                });
             }
         });
     });
@@ -306,6 +325,7 @@ pub fn EditorView() -> Element {
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
+        let mut delete_state = delete_state;
 
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
@@ -313,6 +333,8 @@ pub fn EditorView() -> Element {
         prompt_text.set(item.prompt);
         answer_text.set(item.answer);
         save_state.set(SaveState::Idle);
+        delete_state.set(DeleteState::Idle);
+        show_delete_modal.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         show_deck_menu.set(false);
@@ -334,12 +356,15 @@ pub fn EditorView() -> Element {
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
+        let mut delete_state = delete_state;
 
         selected_card_id.set(None);
         is_create_mode.set(true);
         prompt_text.set(String::new());
         answer_text.set(String::new());
         save_state.set(SaveState::Idle);
+        delete_state.set(DeleteState::Idle);
+        show_delete_modal.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         new_deck_name.set(String::new());
@@ -347,6 +372,76 @@ pub fn EditorView() -> Element {
         is_renaming_deck.set(false);
         rename_deck_state.set(SaveState::Idle);
         rename_deck_error.set(None);
+    });
+
+    let open_delete_modal_action = use_callback(move |()| {
+        let mut show_delete_modal = show_delete_modal;
+        let mut show_deck_menu = show_deck_menu;
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
+        let selected_card_id = selected_card_id();
+        if selected_card_id.is_some() {
+            show_deck_menu.set(false);
+            is_renaming_deck.set(false);
+            rename_deck_state.set(SaveState::Idle);
+            rename_deck_error.set(None);
+            show_delete_modal.set(true);
+        }
+    });
+
+    let close_delete_modal_action = use_callback(move |()| {
+        let mut show_delete_modal = show_delete_modal;
+        show_delete_modal.set(false);
+    });
+
+    let delete_action = use_callback(move |()| {
+        let card_service = card_service_for_delete.clone();
+        let mut delete_state = delete_state;
+        let mut save_state = save_state;
+        let mut cards_resource = cards_resource;
+        let mut selected_card_id = selected_card_id;
+        let mut last_selected_card = last_selected_card;
+        let mut is_create_mode = is_create_mode;
+        let mut prompt_text = prompt_text;
+        let mut answer_text = answer_text;
+        let mut show_delete_modal = show_delete_modal;
+        let deck_id = *selected_deck.read();
+        let Some(card_id) = selected_card_id() else {
+            return;
+        };
+
+        if delete_state() == DeleteState::Deleting {
+            return;
+        }
+
+        spawn(async move {
+            delete_state.set(DeleteState::Deleting);
+            save_state.set(SaveState::Idle);
+            show_delete_modal.set(false);
+            let result = card_service.delete_card(deck_id, card_id).await;
+            match result {
+                Ok(()) => {
+                    delete_state.set(DeleteState::Success);
+                    selected_card_id.set(None);
+                    last_selected_card.set(None);
+                    is_create_mode.set(false);
+                    prompt_text.set(String::new());
+                    answer_text.set(String::new());
+                    cards_resource.restart();
+                    let mut delete_state = delete_state;
+                    spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        if delete_state() == DeleteState::Success {
+                            delete_state.set(DeleteState::Idle);
+                        }
+                    });
+                }
+                Err(_) => {
+                    delete_state.set(DeleteState::Error(ViewError::Unknown));
+                }
+            }
+        });
     });
 
     let cancel_new_action = use_callback(move |()| {
@@ -357,59 +452,60 @@ pub fn EditorView() -> Element {
         let mut answer_text = answer_text;
         let mut save_state = save_state;
         let mut show_deck_menu = show_deck_menu;
+        let mut delete_state = delete_state;
+        let mut show_delete_modal = show_delete_modal;
 
         if !is_create_mode() {
             return;
         }
 
-        match last_selected_card() {
-            Some(card) => {
-                selected_card_id.set(Some(card.id));
-                prompt_text.set(card.prompt.clone());
-                answer_text.set(card.answer.clone());
-                is_create_mode.set(false);
-            }
-            None => {
-                selected_card_id.set(None);
-                prompt_text.set(String::new());
-                answer_text.set(String::new());
-                is_create_mode.set(true);
-            }
+        if let Some(card) = last_selected_card() {
+            selected_card_id.set(Some(card.id));
+            prompt_text.set(card.prompt.clone());
+            answer_text.set(card.answer.clone());
+            is_create_mode.set(false);
+        } else {
+            selected_card_id.set(None);
+            prompt_text.set(String::new());
+            answer_text.set(String::new());
+            is_create_mode.set(true);
         }
 
         save_state.set(SaveState::Idle);
+        delete_state.set(DeleteState::Idle);
+        show_delete_modal.set(false);
         show_deck_menu.set(false);
     });
 
-    let auto_select_action = select_card_action.clone();
-    let mut selected_card_id_for_effect = selected_card_id.clone();
-    let mut last_selected_card_for_effect = last_selected_card.clone();
-    let mut is_create_mode_for_effect = is_create_mode.clone();
-    let mut prompt_text_for_effect = prompt_text.clone();
-    let mut answer_text_for_effect = answer_text.clone();
-    let mut save_state_for_effect = save_state.clone();
+    let auto_select_action = select_card_action;
+    let mut selected_card_id_for_effect = selected_card_id;
+    let mut last_selected_card_for_effect = last_selected_card;
+    let mut is_create_mode_for_effect = is_create_mode;
+    let mut prompt_text_for_effect = prompt_text;
+    let mut answer_text_for_effect = answer_text;
+    let mut save_state_for_effect = save_state;
+    let mut delete_state_for_effect = delete_state;
+    let mut show_delete_modal_for_effect = show_delete_modal;
     use_effect(move || {
         let cards_state_effect = view_state_from_resource(&cards_resource);
-        match &cards_state_effect {
-            ViewState::Ready(items) => {
-                if items.is_empty() {
-                    if !is_create_mode_for_effect() {
-                        selected_card_id_for_effect.set(None);
-                        last_selected_card_for_effect.set(None);
-                        is_create_mode_for_effect.set(true);
-                        prompt_text_for_effect.set(String::new());
-                        answer_text_for_effect.set(String::new());
-                        save_state_for_effect.set(SaveState::Idle);
-                    }
-                } else if selected_card_id_for_effect().is_none()
-                    && !is_create_mode_for_effect()
-                {
-                    if let Some(first) = items.first() {
-                        auto_select_action.call(first.clone());
-                    }
+        if let ViewState::Ready(items) = &cards_state_effect {
+            if items.is_empty() {
+                if !is_create_mode_for_effect() {
+                    selected_card_id_for_effect.set(None);
+                    last_selected_card_for_effect.set(None);
+                    is_create_mode_for_effect.set(true);
+                    prompt_text_for_effect.set(String::new());
+                    answer_text_for_effect.set(String::new());
+                    save_state_for_effect.set(SaveState::Idle);
+                    delete_state_for_effect.set(DeleteState::Idle);
+                    show_delete_modal_for_effect.set(false);
                 }
+            } else if selected_card_id_for_effect().is_none()
+                && !is_create_mode_for_effect()
+                && let Some(first) = items.first()
+            {
+                auto_select_action.call(first.clone());
             }
-            _ => {}
         }
     });
 
@@ -417,8 +513,9 @@ pub fn EditorView() -> Element {
         ViewState::Ready(options) => options
             .iter()
             .find(|opt| opt.id == *selected_deck.read())
-            .map(|opt| opt.label.clone())
-            .unwrap_or_else(|| format!("{}", selected_deck.read().value())),
+            .map_or_else(|| format!("{}", selected_deck.read().value()), |opt| {
+                opt.label.clone()
+            }),
         _ => "--".to_string(),
     };
 
@@ -439,15 +536,15 @@ pub fn EditorView() -> Element {
             if !evt.data.modifiers().contains(Modifiers::META) {
                 return;
             }
-            if let Key::Character(value) = evt.data.key() {
-                if value.eq_ignore_ascii_case("r") {
-                    evt.prevent_default();
-                    rename_deck_name.set(deck_label.clone());
-                    rename_deck_state.set(SaveState::Idle);
-                    rename_deck_error.set(None);
-                    show_deck_menu.set(false);
-                    is_renaming_deck.set(true);
-                }
+            if let Key::Character(value) = evt.data.key()
+                && value.eq_ignore_ascii_case("r")
+            {
+                evt.prevent_default();
+                rename_deck_name.set(deck_label.clone());
+                rename_deck_state.set(SaveState::Idle);
+                rename_deck_error.set(None);
+                show_deck_menu.set(false);
+                is_renaming_deck.set(true);
             }
         })
     };
@@ -461,6 +558,35 @@ pub fn EditorView() -> Element {
                         show_deck_menu.set(false);
                         if is_renaming_deck() {
                             cancel_rename_action.call(());
+                        }
+                    }
+                }
+            }
+            if show_delete_modal() {
+                div {
+                    class: "editor-modal-overlay",
+                    onclick: move |_| close_delete_modal_action.call(()),
+                    div {
+                        class: "editor-modal",
+                        onclick: move |evt| evt.stop_propagation(),
+                        h3 { class: "editor-modal-title", "Delete card?" }
+                        p { class: "editor-modal-body",
+                            "This will remove the card and its review history."
+                        }
+                        div { class: "editor-modal-actions",
+                            button {
+                                class: "btn editor-modal-cancel",
+                                r#type: "button",
+                                onclick: move |_| close_delete_modal_action.call(()),
+                                "Cancel"
+                            }
+                            button {
+                                class: "btn editor-modal-confirm",
+                                r#type: "button",
+                                disabled: delete_state() == DeleteState::Deleting,
+                                onclick: move |_| delete_action.call(()),
+                                "Delete"
+                            }
                         }
                     }
                 }
@@ -517,7 +643,7 @@ pub fn EditorView() -> Element {
                                                 class: "editor-deck-label",
                                                 r#type: "button",
                                                 ondoubleclick: move |_| {
-                                                    begin_rename_action.call(deck_label_for_double.clone())
+                                                    begin_rename_action.call(deck_label_for_double.clone());
                                                 },
                                                 oncontextmenu: move |evt| {
                                                     evt.prevent_default();
@@ -560,17 +686,19 @@ pub fn EditorView() -> Element {
                                                         selected_deck.set(opt.id);
                                                         show_new_deck.set(false);
                                                         new_deck_state.set(SaveState::Idle);
-                                                        selected_card_id.set(None);
-                                                        last_selected_card.set(None);
-                                                        is_create_mode.set(false);
-                                                        prompt_text.set(String::new());
-                                                        answer_text.set(String::new());
-                                                        save_state.set(SaveState::Idle);
-                                                        show_deck_menu.set(false);
-                                                        new_deck_name.set(String::new());
-                                                        is_renaming_deck.set(false);
-                                                        rename_deck_state.set(SaveState::Idle);
-                                                        rename_deck_error.set(None);
+                                                    selected_card_id.set(None);
+                                                    last_selected_card.set(None);
+                                                    is_create_mode.set(false);
+                                                    prompt_text.set(String::new());
+                                                    answer_text.set(String::new());
+                                                    save_state.set(SaveState::Idle);
+                                                    delete_state.set(DeleteState::Idle);
+                                                    show_delete_modal.set(false);
+                                                    show_deck_menu.set(false);
+                                                    new_deck_name.set(String::new());
+                                                    is_renaming_deck.set(false);
+                                                    rename_deck_state.set(SaveState::Idle);
+                                                    rename_deck_error.set(None);
                                                     },
                                                     "{opt.label}"
                                                 }
@@ -585,6 +713,8 @@ pub fn EditorView() -> Element {
                                                     is_renaming_deck.set(false);
                                                     rename_deck_state.set(SaveState::Idle);
                                                     rename_deck_error.set(None);
+                                                    delete_state.set(DeleteState::Idle);
+                                                    show_delete_modal.set(false);
                                                 },
                                                 "+ New deck..."
                                             }
@@ -744,11 +874,16 @@ pub fn EditorView() -> Element {
 
                         footer { class: "editor-footer",
                             div { class: "editor-status",
-                                match save_state() {
-                                    SaveState::Idle => rsx! {},
-                                    SaveState::Saving => rsx! { span { "Saving..." } },
-                                    SaveState::Success => rsx! { span { "Saved." } },
-                                    SaveState::Error(err) => rsx! { span { "{err.message()}" } },
+                                match delete_state() {
+                                    DeleteState::Idle => match save_state() {
+                                        SaveState::Idle => rsx! {},
+                                        SaveState::Saving => rsx! { span { "Saving..." } },
+                                        SaveState::Success => rsx! { span { "Saved." } },
+                                        SaveState::Error(err) => rsx! { span { "{err.message()}" } },
+                                    },
+                                    DeleteState::Deleting => rsx! { span { "Deleting..." } },
+                                    DeleteState::Success => rsx! { span { "Deleted." } },
+                                    DeleteState::Error(err) => rsx! { span { "{err.message()}" } },
                                 }
                             }
                             div { class: "editor-actions",
@@ -763,7 +898,9 @@ pub fn EditorView() -> Element {
                                     button {
                                         class: "btn editor-delete",
                                         r#type: "button",
-                                        disabled: true,
+                                        disabled: delete_state() == DeleteState::Deleting
+                                            || save_state() == SaveState::Saving,
+                                        onclick: move |_| open_delete_modal_action.call(()),
                                         "Delete"
                                     }
                                 }

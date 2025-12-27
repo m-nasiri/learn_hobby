@@ -165,31 +165,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Storage::sqlite(&args.db_url).await?;
     let now = args.now.unwrap_or_else(Utc::now);
 
-    let deck_id = match storage.decks.get_deck(args.deck_id).await? {
-        Some(deck) => {
-            let updated = Deck::new(
-                deck.id(),
-                args.deck_name.clone(),
-                args.deck_desc.clone(),
-                DeckSettings::default_for_adhd(),
-                now,
-            )?;
-            storage.decks.upsert_deck(&updated).await?;
-            deck.id()
-        }
-        None => {
-            let draft = Deck::new(
-                DeckId::new(1),
-                args.deck_name.clone(),
-                args.deck_desc.clone(),
-                DeckSettings::default_for_adhd(),
-                now,
-            )?;
-            storage
-                .decks
-                .insert_new_deck(NewDeckRecord::from_deck(&draft))
-                .await?
-        }
+    let deck_id = if let Some(deck) = storage.decks.get_deck(args.deck_id).await? {
+        let updated = Deck::new(
+            deck.id(),
+            args.deck_name.clone(),
+            args.deck_desc.clone(),
+            DeckSettings::default_for_adhd(),
+            now,
+        )?;
+        storage.decks.upsert_deck(&updated).await?;
+        deck.id()
+    } else {
+        let draft = Deck::new(
+            DeckId::new(1),
+            args.deck_name.clone(),
+            args.deck_desc.clone(),
+            DeckSettings::default_for_adhd(),
+            now,
+        )?;
+        storage
+            .decks
+            .insert_new_deck(NewDeckRecord::from_deck(&draft))
+            .await?
     };
 
     let samples = [

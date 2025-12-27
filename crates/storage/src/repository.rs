@@ -244,6 +244,14 @@ pub trait CardRepository: Send + Sync {
     /// Returns `StorageError` if the card cannot be stored.
     async fn upsert_card(&self, card: &Card) -> Result<(), StorageError>;
 
+    /// Delete a card by ID within a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError::NotFound` if the card is missing.
+    /// Returns `StorageError` on storage failures.
+    async fn delete_card(&self, deck_id: DeckId, card_id: CardId) -> Result<(), StorageError>;
+
     /// Fetch cards for a deck by IDs.
     ///
     /// # Errors
@@ -272,7 +280,7 @@ pub trait CardRepository: Send + Sync {
 
     /// List cards for a deck up to the given limit.
     ///
-    /// Results are ordered by created_at descending, then id descending.
+    /// Results are ordered by `created_at` descending, then `id` descending.
     ///
     /// # Errors
     ///
@@ -528,6 +536,23 @@ impl CardRepository for InMemoryRepository {
         }
         guard.cards.insert(card.id(), card.clone());
         Ok(())
+    }
+
+    async fn delete_card(&self, deck_id: DeckId, card_id: CardId) -> Result<(), StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        match guard.cards.get(&card_id) {
+            Some(card) if card.deck_id() == deck_id => {
+                guard.cards.remove(&card_id);
+                guard
+                    .logs
+                    .retain(|log| !(log.deck_id == deck_id && log.card_id == card_id));
+                Ok(())
+            }
+            _ => Err(StorageError::NotFound),
+        }
     }
 
     async fn get_cards(&self, deck_id: DeckId, ids: &[CardId]) -> Result<Vec<Card>, StorageError> {

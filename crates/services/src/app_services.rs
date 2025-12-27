@@ -21,7 +21,7 @@ pub struct AppServices {
 }
 
 impl AppServices {
-    /// Build services backed by SQLite storage.
+    /// Build services backed by `SQLite` storage.
     ///
     /// # Errors
     ///
