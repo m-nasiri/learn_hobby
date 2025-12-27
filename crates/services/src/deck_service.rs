@@ -49,4 +49,33 @@ impl DeckService {
         let decks = self.decks.list_decks(limit).await?;
         Ok(decks)
     }
+
+    /// Rename a deck while preserving existing settings and metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeckServiceError::Deck` if validation fails.
+    /// Returns `DeckServiceError::Storage` if repository access fails.
+    pub async fn rename_deck(
+        &self,
+        deck_id: DeckId,
+        name: String,
+    ) -> Result<(), DeckServiceError> {
+        let deck = self
+            .decks
+            .get_deck(deck_id)
+            .await?
+            .ok_or(storage::repository::StorageError::NotFound)?;
+
+        let updated = Deck::new(
+            deck.id(),
+            name,
+            deck.description().map(str::to_owned),
+            deck.settings().clone(),
+            deck.created_at(),
+        )?;
+
+        self.decks.upsert_deck(&updated).await?;
+        Ok(())
+    }
 }

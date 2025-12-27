@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use learn_core::model::{CardId, ContentDraft, DeckSettings};
@@ -22,6 +24,8 @@ pub fn EditorView() -> Element {
     let deck_id = ctx.current_deck_id();
     let deck_service = ctx.deck_service();
     let deck_service_for_resource = deck_service.clone();
+    let deck_service_for_create = deck_service.clone();
+    let deck_service_for_rename = deck_service.clone();
     let card_service = ctx.card_service();
     let card_service_for_list = card_service.clone();
     let mut selected_deck = use_signal(|| deck_id);
@@ -30,6 +34,10 @@ pub fn EditorView() -> Element {
     let mut new_deck_name = use_signal(String::new);
     let mut new_deck_state = use_signal(|| SaveState::Idle);
     let mut show_deck_menu = use_signal(|| false);
+    let mut is_renaming_deck = use_signal(|| false);
+    let mut rename_deck_name = use_signal(String::new);
+    let mut rename_deck_state = use_signal(|| SaveState::Idle);
+    let mut rename_deck_error = use_signal(|| None::<String>);
     let mut selected_card_id = use_signal(|| None::<CardId>);
     let mut last_selected_card = use_signal(|| None::<CardListItemVm>);
     let mut is_create_mode = use_signal(|| false);
@@ -162,7 +170,7 @@ pub fn EditorView() -> Element {
     });
 
     let create_deck_action = use_callback(move |()| {
-        let deck_service = deck_service.clone();
+        let deck_service = deck_service_for_create.clone();
         let mut show_new_deck = show_new_deck;
         let mut new_deck_state = new_deck_state;
         let mut new_deck_name = new_deck_name;
@@ -175,6 +183,9 @@ pub fn EditorView() -> Element {
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
         let mut show_deck_menu = show_deck_menu;
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
 
         let name = new_deck_name.read().trim().to_owned();
         if name.is_empty() || new_deck_state() == SaveState::Saving {
@@ -193,6 +204,9 @@ pub fn EditorView() -> Element {
                     new_deck_name.set(String::new());
                     show_new_deck.set(false);
                     show_deck_menu.set(false);
+                    is_renaming_deck.set(false);
+                    rename_deck_state.set(SaveState::Idle);
+                    rename_deck_error.set(None);
                     new_deck_state.set(SaveState::Success);
                     decks_resource.restart();
                     cards_resource.restart();
@@ -209,6 +223,76 @@ pub fn EditorView() -> Element {
         });
     });
 
+    let cancel_rename_action = use_callback(move |()| {
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
+        let mut rename_deck_name = rename_deck_name;
+
+        is_renaming_deck.set(false);
+        rename_deck_state.set(SaveState::Idle);
+        rename_deck_error.set(None);
+        rename_deck_name.set(String::new());
+    });
+
+    let commit_rename_action = use_callback(move |()| {
+        let deck_service = deck_service_for_rename.clone();
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut decks_resource = decks_resource;
+        let deck_id = *selected_deck.read();
+        let name = rename_deck_name.read().trim().to_owned();
+
+        if name.is_empty() || rename_deck_state() == SaveState::Saving {
+            rename_deck_error.set(Some("Name cannot be empty.".to_string()));
+            return;
+        }
+
+        spawn(async move {
+            rename_deck_state.set(SaveState::Saving);
+            rename_deck_error.set(None);
+
+            match deck_service.rename_deck(deck_id, name).await {
+                Ok(()) => {
+                    rename_deck_state.set(SaveState::Success);
+                    is_renaming_deck.set(false);
+                    decks_resource.restart();
+                }
+                Err(_) => {
+                    rename_deck_state.set(SaveState::Error(ViewError::Unknown));
+                    let message = "Rename failed. Please try again.".to_string();
+                    rename_deck_error.set(Some(message.clone()));
+                    let mut rename_deck_error = rename_deck_error;
+                    spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        if rename_deck_error.read().as_ref() == Some(&message) {
+                            rename_deck_error.set(None);
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    let begin_rename_action = use_callback(move |label: String| {
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_name = rename_deck_name;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
+        let mut show_deck_menu = show_deck_menu;
+        let mut show_new_deck = show_new_deck;
+        let mut new_deck_state = new_deck_state;
+
+        rename_deck_name.set(label);
+        rename_deck_state.set(SaveState::Idle);
+        rename_deck_error.set(None);
+        show_deck_menu.set(false);
+        show_new_deck.set(false);
+        new_deck_state.set(SaveState::Idle);
+        is_renaming_deck.set(true);
+    });
+
     let select_card_action = use_callback(move |item: CardListItemVm| {
         let mut selected_card_id = selected_card_id;
         let mut last_selected_card = last_selected_card;
@@ -219,6 +303,9 @@ pub fn EditorView() -> Element {
         let mut show_new_deck = show_new_deck;
         let mut new_deck_state = new_deck_state;
         let mut show_deck_menu = show_deck_menu;
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
 
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
@@ -229,6 +316,9 @@ pub fn EditorView() -> Element {
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         show_deck_menu.set(false);
+        is_renaming_deck.set(false);
+        rename_deck_state.set(SaveState::Idle);
+        rename_deck_error.set(None);
     });
 
     let new_card_action = use_callback(move |()| {
@@ -241,6 +331,9 @@ pub fn EditorView() -> Element {
         let mut new_deck_state = new_deck_state;
         let mut show_deck_menu = show_deck_menu;
         let mut new_deck_name = new_deck_name;
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
 
         selected_card_id.set(None);
         is_create_mode.set(true);
@@ -251,6 +344,9 @@ pub fn EditorView() -> Element {
         new_deck_state.set(SaveState::Idle);
         new_deck_name.set(String::new());
         show_deck_menu.set(false);
+        is_renaming_deck.set(false);
+        rename_deck_state.set(SaveState::Idle);
+        rename_deck_error.set(None);
     });
 
     let cancel_new_action = use_callback(move |()| {
@@ -328,68 +424,170 @@ pub fn EditorView() -> Element {
 
     let can_cancel = is_create_mode() && last_selected_card().is_some();
 
+    let on_key = {
+        let deck_label = deck_label.clone();
+        let decks_state = decks_state.clone();
+        let mut is_renaming_deck = is_renaming_deck;
+        let mut rename_deck_name = rename_deck_name;
+        let mut rename_deck_state = rename_deck_state;
+        let mut rename_deck_error = rename_deck_error;
+        let mut show_deck_menu = show_deck_menu;
+        use_callback(move |evt: KeyboardEvent| {
+            if !matches!(decks_state, ViewState::Ready(_)) || is_renaming_deck() {
+                return;
+            }
+            if !evt.data.modifiers().contains(Modifiers::META) {
+                return;
+            }
+            if let Key::Character(value) = evt.data.key() {
+                if value.eq_ignore_ascii_case("r") {
+                    evt.prevent_default();
+                    rename_deck_name.set(deck_label.clone());
+                    rename_deck_state.set(SaveState::Idle);
+                    rename_deck_error.set(None);
+                    show_deck_menu.set(false);
+                    is_renaming_deck.set(true);
+                }
+            }
+        })
+    };
+
     rsx! {
-        div { class: "page page--editor",
-            if show_deck_menu() {
-                div { class: "editor-deck-overlay", onclick: move |_| show_deck_menu.set(false) }
+        div { class: "page page--editor", tabindex: "0", onkeydown: on_key,
+            if show_deck_menu() || is_renaming_deck() {
+                div {
+                    class: "editor-deck-overlay",
+                    onclick: move |_| {
+                        show_deck_menu.set(false);
+                        if is_renaming_deck() {
+                            cancel_rename_action.call(());
+                        }
+                    }
+                }
             }
             section { class: "editor-shell",
                 header { class: "editor-toolbar",
                     div { class: "editor-toolbar-left editor-deck-menu",
                         match decks_state {
                             ViewState::Idle | ViewState::Loading => rsx! {
-                                button { class: "editor-deck-trigger", disabled: true,
+                                div { class: "editor-deck-trigger editor-deck-trigger--disabled",
                                     span { "Loading decks..." }
                                 }
                             },
                             ViewState::Error(_err) => rsx! {
-                                button { class: "editor-deck-trigger", disabled: true,
+                                div { class: "editor-deck-trigger editor-deck-trigger--disabled",
                                     span { "Decks unavailable" }
                                 }
                             },
-                            ViewState::Ready(options) => rsx! {
-                                button {
-                                    class: "editor-deck-trigger",
-                                    r#type: "button",
-                                    onclick: move |_| show_deck_menu.set(!show_deck_menu()),
-                                    span { class: "editor-deck-trigger-label", "{deck_label}" }
-                                    span { class: "editor-deck-caret" }
-                                }
-                                if show_deck_menu() {
-                                    div { class: "editor-deck-popover",
-                                        for opt in options {
+                            ViewState::Ready(options) => {
+                                let deck_label_for_double = deck_label.clone();
+                                let deck_label_for_context = deck_label.clone();
+                                rsx! {
+                                    div { class: "editor-deck-trigger",
+                                        if is_renaming_deck() {
+                                            input {
+                                                class: "editor-deck-rename-input",
+                                                r#type: "text",
+                                                value: "{rename_deck_name.read()}",
+                                                oninput: move |evt| {
+                                                    rename_deck_name.set(evt.value());
+                                                    rename_deck_state.set(SaveState::Idle);
+                                                    rename_deck_error.set(None);
+                                                },
+                                                onkeydown: move |evt| match evt.data.key() {
+                                                    Key::Enter => {
+                                                        evt.prevent_default();
+                                                        commit_rename_action.call(());
+                                                    }
+                                                    Key::Escape => {
+                                                        evt.prevent_default();
+                                                        cancel_rename_action.call(());
+                                                    }
+                                                    _ => {}
+                                                },
+                                                onblur: move |_| {
+                                                    if rename_deck_state() != SaveState::Saving {
+                                                        cancel_rename_action.call(());
+                                                    }
+                                                },
+                                                autofocus: true,
+                                            }
+                                        } else {
                                             button {
-                                                class: if opt.id == *selected_deck.read() {
-                                                    "editor-deck-item editor-deck-item--active"
-                                                } else {
-                                                    "editor-deck-item"
-                                                },
+                                                class: "editor-deck-label",
                                                 r#type: "button",
-                                                onclick: move |_| {
-                                                    selected_deck.set(opt.id);
-                                                    show_new_deck.set(false);
-                                                    new_deck_state.set(SaveState::Idle);
-                                                    selected_card_id.set(None);
-                                                    last_selected_card.set(None);
-                                                    is_create_mode.set(false);
-                                                    prompt_text.set(String::new());
-                                                    answer_text.set(String::new());
-                                                    save_state.set(SaveState::Idle);
-                                                    show_deck_menu.set(false);
-                                                    new_deck_name.set(String::new());
+                                                ondoubleclick: move |_| {
+                                                    begin_rename_action.call(deck_label_for_double.clone())
                                                 },
-                                                "{opt.label}"
+                                                oncontextmenu: move |evt| {
+                                                    evt.prevent_default();
+                                                    begin_rename_action.call(deck_label_for_context.clone());
+                                                },
+                                                "{deck_label}"
                                             }
                                         }
                                         button {
-                                            class: "editor-deck-item editor-deck-item--new",
+                                            class: "editor-deck-caret-button",
                                             r#type: "button",
                                             onclick: move |_| {
-                                                show_new_deck.set(true);
-                                                new_deck_state.set(SaveState::Idle);
-                                                show_deck_menu.set(false);
+                                                show_deck_menu.set(!show_deck_menu());
+                                                is_renaming_deck.set(false);
+                                                rename_deck_state.set(SaveState::Idle);
+                                                rename_deck_error.set(None);
                                             },
-                                            "+ New deck..."
+                                            span { class: "editor-deck-caret" }
+                                        }
+                                    }
+                                    if let Some(error) = rename_deck_error() {
+                                        span { class: "editor-deck-toast editor-deck-toast--error", "{error}" }
+                                    } else if rename_deck_state() == SaveState::Saving {
+                                        span { class: "editor-deck-toast", "Saving..." }
+                                    }
+                                    if is_renaming_deck() {
+                                        span { class: "editor-deck-hint", "Enter to save · Esc to cancel" }
+                                    }
+                                    if show_deck_menu() {
+                                        div { class: "editor-deck-popover",
+                                            for opt in options {
+                                                button {
+                                                    class: if opt.id == *selected_deck.read() {
+                                                        "editor-deck-item editor-deck-item--active"
+                                                    } else {
+                                                        "editor-deck-item"
+                                                    },
+                                                    r#type: "button",
+                                                    onclick: move |_| {
+                                                        selected_deck.set(opt.id);
+                                                        show_new_deck.set(false);
+                                                        new_deck_state.set(SaveState::Idle);
+                                                        selected_card_id.set(None);
+                                                        last_selected_card.set(None);
+                                                        is_create_mode.set(false);
+                                                        prompt_text.set(String::new());
+                                                        answer_text.set(String::new());
+                                                        save_state.set(SaveState::Idle);
+                                                        show_deck_menu.set(false);
+                                                        new_deck_name.set(String::new());
+                                                        is_renaming_deck.set(false);
+                                                        rename_deck_state.set(SaveState::Idle);
+                                                        rename_deck_error.set(None);
+                                                    },
+                                                    "{opt.label}"
+                                                }
+                                            }
+                                            button {
+                                                class: "editor-deck-item editor-deck-item--new",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    show_new_deck.set(true);
+                                                    new_deck_state.set(SaveState::Idle);
+                                                    show_deck_menu.set(false);
+                                                    is_renaming_deck.set(false);
+                                                    rename_deck_state.set(SaveState::Idle);
+                                                    rename_deck_error.set(None);
+                                                },
+                                                "+ New deck..."
+                                            }
                                         }
                                     }
                                 }

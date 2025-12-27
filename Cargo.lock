@@ -6830,6 +6830,7 @@ dependencies = [
  "dioxus-router",
  "learn-core",
  "services",
+ "tokio",
 ]
 
 [[package]]
