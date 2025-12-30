@@ -546,22 +546,60 @@ pub fn EditorView() -> Element {
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
         let mut show_deck_menu = show_deck_menu;
+        let mut show_delete_modal = show_delete_modal;
+        let is_create_mode = is_create_mode;
+        let selected_card_id = selected_card_id;
+        let delete_state = delete_state;
+        let save_action = save_action;
+        let cancel_new_action = cancel_new_action;
+        let open_delete_modal_action = open_delete_modal_action;
+        let close_delete_modal_action = close_delete_modal_action;
         use_callback(move |evt: KeyboardEvent| {
-            if !matches!(decks_state, ViewState::Ready(_)) || is_renaming_deck() {
-                return;
-            }
-            if !evt.data.modifiers().contains(Modifiers::META) {
-                return;
-            }
-            if let Key::Character(value) = evt.data.key()
-                && value.eq_ignore_ascii_case("r")
-            {
+            if show_delete_modal() && evt.data.key() == Key::Escape {
                 evt.prevent_default();
-                rename_deck_name.set(deck_label.clone());
-                rename_deck_state.set(SaveState::Idle);
-                rename_deck_error.set(None);
-                show_deck_menu.set(false);
-                is_renaming_deck.set(true);
+                close_delete_modal_action.call(());
+                return;
+            }
+
+            if is_renaming_deck() {
+                return;
+            }
+
+            if evt.data.modifiers().contains(Modifiers::META) {
+                if evt.data.key() == Key::Enter {
+                    evt.prevent_default();
+                    save_action.call(false);
+                    return;
+                }
+
+                if evt.data.key() == Key::Backspace
+                    && selected_card_id().is_some()
+                    && !is_create_mode()
+                    && delete_state() != DeleteState::Deleting
+                {
+                    evt.prevent_default();
+                    open_delete_modal_action.call(());
+                    return;
+                }
+
+                if matches!(decks_state, ViewState::Ready(_))
+                    && let Key::Character(value) = evt.data.key()
+                    && value.eq_ignore_ascii_case("r")
+                {
+                    evt.prevent_default();
+                    rename_deck_name.set(deck_label.clone());
+                    rename_deck_state.set(SaveState::Idle);
+                    rename_deck_error.set(None);
+                    show_deck_menu.set(false);
+                    show_delete_modal.set(false);
+                    is_renaming_deck.set(true);
+                    return;
+                }
+            }
+
+            if evt.data.key() == Key::Escape && is_create_mode() {
+                evt.prevent_default();
+                cancel_new_action.call(());
             }
         })
     };
