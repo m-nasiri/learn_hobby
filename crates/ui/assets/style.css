@@ -506,6 +506,83 @@ a {
   margin-top: 6px;
 }
 
+.editor-save-wrapper {
+  position: relative;
+  z-index: 41;
+}
+
+.editor-save-split {
+  padding: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
+.editor-save-label {
+  padding: 10px 16px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.editor-save-caret {
+  padding: 10px 12px;
+  display: inline-flex;
+  align-items: center;
+  border-left: 1px solid rgba(255, 255, 255, 0.32);
+  background: transparent;
+}
+
+.editor-save-caret:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.editor-save-caret-icon {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+}
+
+.editor-save-menu {
+  min-width: 150px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 28px rgba(31, 36, 40, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 42;
+}
+
+.editor-save-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  color: var(--ink-1);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.editor-save-item:hover {
+  background: rgba(91, 127, 82, 0.12);
+}
+
+.editor-save-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 40;
+}
+
 .editor-modal-confirm {
   border-color: rgba(179, 58, 58, 0.35);
   background: rgba(179, 58, 58, 0.16);
@@ -909,6 +986,20 @@ a {
   border-radius: 10px;
   padding: 8px 16px;
   min-width: 96px;
+}
+
+.editor-actions .editor-save-split {
+  padding: 0;
+  min-width: auto;
+  gap: 0;
+}
+
+.editor-actions .editor-save-split .editor-save-label {
+  padding: 8px 16px;
+}
+
+.editor-actions .editor-save-split .editor-save-caret {
+  padding: 8px 12px;
 }
 
 .editor-cancel {

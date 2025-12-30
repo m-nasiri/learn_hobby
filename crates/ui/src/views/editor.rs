@@ -27,6 +27,12 @@ enum DeleteState {
     Error(ViewError),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SaveMenuState {
+    Closed,
+    Open,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum PendingAction {
     SelectCard(CardListItemVm),
@@ -55,6 +61,7 @@ pub fn EditorView() -> Element {
     let mut focus_prompt = use_signal(|| false);
     let show_unsaved_modal = use_signal(|| false);
     let pending_action = use_signal(|| None::<PendingAction>);
+    let mut save_menu_state = use_signal(|| SaveMenuState::Closed);
     let mut show_new_deck = use_signal(|| false);
     let mut new_deck_name = use_signal(String::new);
     let mut new_deck_state = use_signal(|| SaveState::Idle);
@@ -138,6 +145,7 @@ pub fn EditorView() -> Element {
         let mut show_validation = show_validation;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut save_menu_state = save_menu_state;
         let mut focus_prompt = focus_prompt;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
@@ -175,6 +183,7 @@ pub fn EditorView() -> Element {
             show_validation.set(false);
             show_unsaved_modal.set(false);
             pending_action.set(None);
+            save_menu_state.set(SaveMenuState::Closed);
             let result = match editing_id {
                 Some(card_id) => {
                     card_service
@@ -205,6 +214,7 @@ pub fn EditorView() -> Element {
                     show_validation.set(false);
                     show_unsaved_modal.set(false);
                     pending_action.set(None);
+                    save_menu_state.set(SaveMenuState::Closed);
                     cards_resource.restart();
                     match (is_create_mode(), practice) {
                         (true, true) => {
@@ -256,6 +266,7 @@ pub fn EditorView() -> Element {
         let mut show_delete_modal = show_delete_modal;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut save_menu_state = save_menu_state;
         let mut focus_prompt = focus_prompt;
 
         let name = new_deck_name.read().trim().to_owned();
@@ -284,6 +295,7 @@ pub fn EditorView() -> Element {
                     show_unsaved_modal.set(false);
                     pending_action.set(None);
                     focus_prompt.set(false);
+                    save_menu_state.set(SaveMenuState::Closed);
                     new_deck_state.set(SaveState::Success);
                     decks_resource.restart();
                     cards_resource.restart();
@@ -507,6 +519,7 @@ pub fn EditorView() -> Element {
         show_delete_modal.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        save_menu_state.set(SaveMenuState::Closed);
         focus_prompt.set(true);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
@@ -523,10 +536,12 @@ pub fn EditorView() -> Element {
             let mut pending_action = pending_action;
             let mut show_unsaved_modal = show_unsaved_modal;
             let mut show_deck_menu = show_deck_menu;
+            let mut save_menu_state = save_menu_state;
             if has_unsaved_changes() {
                 pending_action.set(Some(PendingAction::NewCard));
                 show_unsaved_modal.set(true);
                 show_deck_menu.set(false);
+                save_menu_state.set(SaveMenuState::Closed);
                 return;
             }
             new_card_action.call(());
@@ -536,6 +551,7 @@ pub fn EditorView() -> Element {
     let confirm_discard_action = use_callback(move |()| {
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut save_menu_state = save_menu_state;
         if let Some(action) = pending_action() {
             match action {
                 PendingAction::SelectCard(item) => {
@@ -551,13 +567,16 @@ pub fn EditorView() -> Element {
         }
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        save_menu_state.set(SaveMenuState::Closed);
     });
 
     let cancel_discard_action = use_callback(move |()| {
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut save_menu_state = save_menu_state;
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        save_menu_state.set(SaveMenuState::Closed);
     });
 
     let open_delete_modal_action = use_callback(move |()| {
@@ -568,6 +587,7 @@ pub fn EditorView() -> Element {
         let mut rename_deck_error = rename_deck_error;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut save_menu_state = save_menu_state;
         let selected_card_id = selected_card_id();
         if selected_card_id.is_some() {
             show_deck_menu.set(false);
@@ -576,8 +596,27 @@ pub fn EditorView() -> Element {
             rename_deck_error.set(None);
             show_unsaved_modal.set(false);
             pending_action.set(None);
+            save_menu_state.set(SaveMenuState::Closed);
             show_delete_modal.set(true);
         }
+    });
+
+    let toggle_save_menu_action = use_callback(move |()| {
+        let mut save_menu_state = save_menu_state;
+        let mut show_delete_modal = show_delete_modal;
+        let mut show_unsaved_modal = show_unsaved_modal;
+        if save_menu_state() == SaveMenuState::Open {
+            save_menu_state.set(SaveMenuState::Closed);
+        } else {
+            show_delete_modal.set(false);
+            show_unsaved_modal.set(false);
+            save_menu_state.set(SaveMenuState::Open);
+        }
+    });
+
+    let close_save_menu_action = use_callback(move |()| {
+        let mut save_menu_state = save_menu_state;
+        save_menu_state.set(SaveMenuState::Closed);
     });
 
     let close_delete_modal_action = use_callback(move |()| {
@@ -596,6 +635,7 @@ pub fn EditorView() -> Element {
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
         let mut show_delete_modal = show_delete_modal;
+        let mut save_menu_state = save_menu_state;
         let deck_id = *selected_deck.read();
         let Some(card_id) = selected_card_id() else {
             return;
@@ -609,6 +649,7 @@ pub fn EditorView() -> Element {
             delete_state.set(DeleteState::Deleting);
             save_state.set(SaveState::Idle);
             show_delete_modal.set(false);
+            save_menu_state.set(SaveMenuState::Closed);
             let result = card_service.delete_card(deck_id, card_id).await;
             match result {
                 Ok(()) => {
@@ -842,6 +883,12 @@ pub fn EditorView() -> Element {
                             }
                         }
                     }
+                }
+            }
+            if save_menu_state() == SaveMenuState::Open {
+                div {
+                    class: "editor-save-overlay",
+                    onclick: move |_| close_save_menu_action.call(()),
                 }
             }
             if show_unsaved_modal() {
@@ -1190,20 +1237,54 @@ pub fn EditorView() -> Element {
                                         "Delete"
                                     }
                                 }
-                                button {
-                                    class: "btn btn-primary editor-save",
-                                    r#type: "button",
-                                    disabled: !can_submit,
-                                    onclick: move |_| save_action.call(false),
-                                    "Save"
-                                }
-                                if is_create_mode() {
-                                    button {
-                                        class: "btn editor-practice",
-                                        r#type: "button",
-                                        disabled: !can_submit,
-                                        onclick: move |_| save_action.call(true),
-                                        "Save & Practice"
+                                div { class: "editor-save-wrapper",
+                                    if is_create_mode() {
+                                        button {
+                                            class: "btn editor-save editor-save-split",
+                                            r#type: "button",
+                                            disabled: !can_submit,
+                                            onclick: move |_| save_action.call(false),
+                                            span { class: "editor-save-label", "Save" }
+                                            span {
+                                                class: "editor-save-caret",
+                                                onclick: move |evt| {
+                                                    evt.stop_propagation();
+                                                    toggle_save_menu_action.call(());
+                                                },
+                                                svg {
+                                                    class: "editor-save-caret-icon",
+                                                    view_box: "0 0 12 12",
+                                                    path {
+                                                        d: "M2.5 4.5l3.5 3.5 3.5-3.5",
+                                                        stroke_linecap: "round",
+                                                        stroke_linejoin: "round",
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        button {
+                                            class: "btn btn-primary editor-save",
+                                            r#type: "button",
+                                            disabled: !can_submit,
+                                            onclick: move |_| save_action.call(false),
+                                            "Save"
+                                        }
+                                    }
+                                    if save_menu_state() == SaveMenuState::Open {
+                                        div {
+                                            class: "editor-save-menu",
+                                            onclick: move |evt| evt.stop_propagation(),
+                                            button {
+                                                class: "editor-save-item",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    close_save_menu_action.call(());
+                                                    save_action.call(true);
+                                                },
+                                                "Save & Practice"
+                                            }
+                                        }
                                     }
                                 }
                             }
