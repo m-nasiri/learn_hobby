@@ -48,6 +48,24 @@ pub fn build_card_list_item(id: CardId, prompt: &str, answer: &str) -> CardListI
     CardListItemVm::new(id, prompt, answer, prompt_preview, answer_preview)
 }
 
+/// Filter list items by a search query (case-insensitive).
+#[must_use]
+pub fn filter_card_list_items(items: &[CardListItemVm], query: &str) -> Vec<CardListItemVm> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return items.to_vec();
+    }
+
+    items
+        .iter()
+        .filter(|item| {
+            item.prompt.to_lowercase().contains(&needle)
+                || item.answer.to_lowercase().contains(&needle)
+        })
+        .cloned()
+        .collect()
+}
+
 fn truncate_preview(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {

@@ -8,7 +8,10 @@ use learn_core::model::{CardId, ContentDraft, DeckId, DeckSettings};
 
 use crate::context::AppContext;
 use crate::routes::Route;
-use crate::vm::{CardListItemVm, build_card_list_item, map_card_list_items, map_deck_options};
+use crate::vm::{
+    CardListItemVm, build_card_list_item, filter_card_list_items, map_card_list_items,
+    map_deck_options,
+};
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +76,7 @@ pub fn EditorView() -> Element {
     let selected_card_id = use_signal(|| None::<CardId>);
     let last_selected_card = use_signal(|| None::<CardListItemVm>);
     let is_create_mode = use_signal(|| false);
+    let mut search_query = use_signal(String::new);
 
     let decks_resource = use_resource(move || {
         let deck_service = deck_service_for_resource.clone();
@@ -1090,6 +1094,48 @@ pub fn EditorView() -> Element {
                     aside { class: "editor-list-pane",
                         div { class: "editor-list-header",
                             h3 { class: "editor-list-title", "Cards" }
+                            div { class: "editor-list-search",
+                                span { class: "editor-list-search-icon",
+                                    svg {
+                                        view_box: "0 0 16 16",
+                                        path {
+                                            d: "M7 2.5a4.5 4.5 0 1 1-3.2 7.7l-2.1 2.1",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                        }
+                                    }
+                                }
+                                input {
+                                    class: "editor-list-search-input",
+                                    r#type: "text",
+                                    placeholder: "Search",
+                                    value: "{search_query.read()}",
+                                    oninput: move |evt| search_query.set(evt.value()),
+                                    onkeydown: move |evt| {
+                                        if matches!(evt.data.key(), Key::Escape) {
+                                            evt.prevent_default();
+                                            search_query.set(String::new());
+                                        }
+                                    },
+                                }
+                                if !search_query.read().trim().is_empty() {
+                                    button {
+                                        class: "editor-list-search-clear",
+                                        aria_label: "Clear search",
+                                        r#type: "button",
+                                        onclick: move |_| search_query.set(String::new()),
+                                        svg {
+                                            class: "editor-list-search-clear-icon",
+                                            view_box: "0 0 12 12",
+                                            path {
+                                                d: "M3 3l6 6M9 3l-6 6",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         match cards_state {
                             ViewState::Idle => rsx! {
@@ -1114,9 +1160,16 @@ pub fn EditorView() -> Element {
                                         }
                                     }
                                 } else {
+                                    let filtered_items =
+                                        filter_card_list_items(&items, search_query.read().as_str());
+                                    if filtered_items.is_empty() {
+                                        rsx! {
+                                            p { class: "editor-list-empty", "No matches." }
+                                        }
+                                    } else {
                                     rsx! {
                                         ul { class: "editor-list-items",
-                                            for item in items {
+                                            for item in filtered_items {
                                                 li {
                                                     class: if Some(item.id) == active_id {
                                                         "editor-list-item editor-list-item--active"
@@ -1130,6 +1183,7 @@ pub fn EditorView() -> Element {
                                                 }
                                             }
                                         }
+                                    }
                                     }
                                 }
                             }
