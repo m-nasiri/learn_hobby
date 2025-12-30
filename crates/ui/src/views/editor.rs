@@ -5,6 +5,7 @@ use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use learn_core::model::{CardId, ContentDraft, DeckId, DeckSettings};
+use services::{CardListFilter, CardListSort};
 
 use crate::context::AppContext;
 use crate::routes::Route;
@@ -36,11 +37,40 @@ enum SaveMenuState {
     Open,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DuplicateCheckState {
+    Idle,
+    Checking,
+    Error(ViewError),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum PendingAction {
     SelectCard(CardListItemVm),
     SelectDeck(DeckId),
     NewCard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SaveRequest {
+    practice: bool,
+    skip_duplicate_check: bool,
+}
+
+impl SaveRequest {
+    const fn new(practice: bool) -> Self {
+        Self {
+            practice,
+            skip_duplicate_check: false,
+        }
+    }
+
+    const fn force(practice: bool) -> Self {
+        Self {
+            practice,
+            skip_duplicate_check: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,6 +172,23 @@ fn render_highlighted(text: &str, query: &str) -> Vec<Element> {
         .collect()
 }
 
+fn sort_value(sort: CardListSort) -> &'static str {
+    match sort {
+        CardListSort::Recent => "recent",
+        CardListSort::Created => "created",
+        CardListSort::Alpha => "alpha",
+        _ => "recent",
+    }
+}
+
+fn sort_from_value(value: &str) -> CardListSort {
+    match value {
+        "created" => CardListSort::Created,
+        "alpha" => CardListSort::Alpha,
+        _ => CardListSort::Recent,
+    }
+}
+
 #[component]
 pub fn EditorView() -> Element {
     let ctx = use_context::<AppContext>();
@@ -176,6 +223,10 @@ pub fn EditorView() -> Element {
     let last_selected_card = use_signal(|| None::<CardListItemVm>);
     let is_create_mode = use_signal(|| false);
     let mut search_query = use_signal(String::new);
+    let mut sort_mode = use_signal(|| CardListSort::Recent);
+    let mut duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
+    let mut show_duplicate_modal = use_signal(|| false);
+    let mut pending_duplicate_practice = use_signal(|| false);
 
     let decks_resource = use_resource(move || {
         let deck_service = deck_service_for_resource.clone();
@@ -192,9 +243,11 @@ pub fn EditorView() -> Element {
     let cards_resource = use_resource(move || {
         let card_service = card_service_for_list.clone();
         let deck_id = *selected_deck.read();
+        let sort = sort_mode();
+        let filter = CardListFilter::All;
         async move {
             let cards = card_service
-                .list_cards(deck_id, 100)
+                .list_cards_filtered(deck_id, 100, sort, filter)
                 .await
                 .map_err(|_| ViewError::Unknown)?;
             Ok::<_, ViewError>(map_card_list_items(&cards))
@@ -202,11 +255,11 @@ pub fn EditorView() -> Element {
     });
     let cards_state = view_state_from_resource(&cards_resource);
 
-    let mut last_deck_for_cards = use_signal(|| deck_id);
+    let mut last_cards_query = use_signal(|| (deck_id, CardListSort::Recent));
     use_effect(move || {
-        let current = *selected_deck.read();
-        if last_deck_for_cards() != current {
-            last_deck_for_cards.set(current);
+        let current = (*selected_deck.read(), sort_mode());
+        if last_cards_query() != current {
+            last_cards_query.set(current);
             let mut cards_resource = cards_resource;
             cards_resource.restart();
         }
@@ -239,9 +292,10 @@ pub fn EditorView() -> Element {
     let can_submit = can_edit
         && save_state() != SaveState::Saving
         && delete_state() != DeleteState::Deleting
+        && duplicate_check_state() != DuplicateCheckState::Checking
         && has_unsaved_changes();
     let has_unsaved_changes_for_save = Rc::clone(&has_unsaved_changes);
-    let save_action = use_callback(move |practice: bool| {
+    let save_action = use_callback(move |request: SaveRequest| {
         let card_service = card_service_for_save.clone();
         let navigator = navigator;
         let mut save_state = save_state;
@@ -250,6 +304,9 @@ pub fn EditorView() -> Element {
         let mut show_validation = show_validation;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut duplicate_check_state = duplicate_check_state;
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
         let mut save_menu_state = save_menu_state;
         let mut focus_prompt = focus_prompt;
         let mut prompt_text = prompt_text;
@@ -263,8 +320,12 @@ pub fn EditorView() -> Element {
 
         let prompt = prompt_text.read().trim().to_owned();
         let answer = answer_text.read().trim().to_owned();
+        let practice = request.practice;
+        let skip_duplicate_check = request.skip_duplicate_check;
 
-        if save_state() == SaveState::Saving {
+        if save_state() == SaveState::Saving
+            || duplicate_check_state() == DuplicateCheckState::Checking
+        {
             return;
         }
 
@@ -287,13 +348,41 @@ pub fn EditorView() -> Element {
         }
 
         spawn(async move {
+            duplicate_check_state.set(DuplicateCheckState::Idle);
+            show_duplicate_modal.set(false);
+            pending_duplicate_practice.set(false);
+            show_unsaved_modal.set(false);
+            pending_action.set(None);
+            save_menu_state.set(SaveMenuState::Closed);
+
+            if !skip_duplicate_check {
+                duplicate_check_state.set(DuplicateCheckState::Checking);
+                let duplicate = card_service
+                    .prompt_exists(deck_id, &prompt, editing_id)
+                    .await;
+                match duplicate {
+                    Ok(true) => {
+                        duplicate_check_state.set(DuplicateCheckState::Idle);
+                        save_state.set(SaveState::Idle);
+                        show_duplicate_modal.set(true);
+                        pending_duplicate_practice.set(practice);
+                        return;
+                    }
+                    Ok(false) => {
+                        duplicate_check_state.set(DuplicateCheckState::Idle);
+                    }
+                    Err(_) => {
+                        save_state.set(SaveState::Idle);
+                        duplicate_check_state.set(DuplicateCheckState::Error(ViewError::Unknown));
+                        return;
+                    }
+                }
+            }
+
             save_state.set(SaveState::Saving);
             delete_state.set(DeleteState::Idle);
             show_delete_modal.set(false);
             show_validation.set(false);
-            show_unsaved_modal.set(false);
-            pending_action.set(None);
-            save_menu_state.set(SaveMenuState::Closed);
             let result = match editing_id {
                 Some(card_id) => {
                     card_service
@@ -322,8 +411,6 @@ pub fn EditorView() -> Element {
                     delete_state.set(DeleteState::Idle);
                     show_delete_modal.set(false);
                     show_validation.set(false);
-                    show_unsaved_modal.set(false);
-                    pending_action.set(None);
                     save_menu_state.set(SaveMenuState::Closed);
                     cards_resource.restart();
                     match (is_create_mode(), practice) {
@@ -510,6 +597,9 @@ pub fn EditorView() -> Element {
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
+        let mut duplicate_check_state = duplicate_check_state;
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
 
         selected_deck.set(deck_id);
         show_new_deck.set(false);
@@ -525,6 +615,9 @@ pub fn EditorView() -> Element {
         show_validation.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        duplicate_check_state.set(DuplicateCheckState::Idle);
+        show_duplicate_modal.set(false);
+        pending_duplicate_practice.set(false);
         focus_prompt.set(false);
         show_deck_menu.set(false);
         new_deck_name.set(String::new());
@@ -549,6 +642,9 @@ pub fn EditorView() -> Element {
         let mut delete_state = delete_state;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut duplicate_check_state = duplicate_check_state;
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
 
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
@@ -561,6 +657,9 @@ pub fn EditorView() -> Element {
         show_delete_modal.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        duplicate_check_state.set(DuplicateCheckState::Idle);
+        show_duplicate_modal.set(false);
+        pending_duplicate_practice.set(false);
         focus_prompt.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
@@ -629,6 +728,9 @@ pub fn EditorView() -> Element {
         show_delete_modal.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        duplicate_check_state.set(DuplicateCheckState::Idle);
+        show_duplicate_modal.set(false);
+        pending_duplicate_practice.set(false);
         save_menu_state.set(SaveMenuState::Closed);
         focus_prompt.set(true);
         show_new_deck.set(false);
@@ -698,6 +800,9 @@ pub fn EditorView() -> Element {
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
         let mut save_menu_state = save_menu_state;
+        let mut duplicate_check_state = duplicate_check_state;
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
         let selected_card_id = selected_card_id();
         if selected_card_id.is_some() {
             show_deck_menu.set(false);
@@ -707,6 +812,9 @@ pub fn EditorView() -> Element {
             show_unsaved_modal.set(false);
             pending_action.set(None);
             save_menu_state.set(SaveMenuState::Closed);
+            duplicate_check_state.set(DuplicateCheckState::Idle);
+            show_duplicate_modal.set(false);
+            pending_duplicate_practice.set(false);
             show_delete_modal.set(true);
         }
     });
@@ -732,6 +840,26 @@ pub fn EditorView() -> Element {
     let close_delete_modal_action = use_callback(move |()| {
         let mut show_delete_modal = show_delete_modal;
         show_delete_modal.set(false);
+    });
+
+    let close_duplicate_modal_action = use_callback(move |()| {
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
+        let mut duplicate_check_state = duplicate_check_state;
+        show_duplicate_modal.set(false);
+        pending_duplicate_practice.set(false);
+        duplicate_check_state.set(DuplicateCheckState::Idle);
+    });
+
+    let confirm_duplicate_action = use_callback(move |()| {
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
+        let mut duplicate_check_state = duplicate_check_state;
+        let practice = pending_duplicate_practice();
+        show_duplicate_modal.set(false);
+        pending_duplicate_practice.set(false);
+        duplicate_check_state.set(DuplicateCheckState::Idle);
+        save_action.call(SaveRequest::force(practice));
     });
 
     let delete_action = use_callback(move |()| {
@@ -821,6 +949,9 @@ pub fn EditorView() -> Element {
         show_validation.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
+        duplicate_check_state.set(DuplicateCheckState::Idle);
+        show_duplicate_modal.set(false);
+        pending_duplicate_practice.set(false);
         show_deck_menu.set(false);
     });
 
@@ -903,15 +1034,25 @@ pub fn EditorView() -> Element {
         let mut rename_deck_error = rename_deck_error;
         let mut show_deck_menu = show_deck_menu;
         let mut show_delete_modal = show_delete_modal;
+        let show_duplicate_modal = show_duplicate_modal;
+        let close_duplicate_modal_action = close_duplicate_modal_action;
         use_callback(move |evt: KeyboardEvent| {
             if show_delete_modal() && evt.data.key() == Key::Escape {
                 evt.prevent_default();
                 close_delete_modal_action.call(());
                 return;
             }
+            if show_duplicate_modal() && evt.data.key() == Key::Escape {
+                evt.prevent_default();
+                close_duplicate_modal_action.call(());
+                return;
+            }
             if show_unsaved_modal() && evt.data.key() == Key::Escape {
                 evt.prevent_default();
                 cancel_discard_action.call(());
+                return;
+            }
+            if show_duplicate_modal() {
                 return;
             }
             if show_unsaved_modal() {
@@ -925,7 +1066,7 @@ pub fn EditorView() -> Element {
             if evt.data.modifiers().contains(Modifiers::META) {
                 if evt.data.key() == Key::Enter {
                     evt.prevent_default();
-                    save_action.call(false);
+                    save_action.call(SaveRequest::new(false));
                     return;
                 }
 
@@ -1049,6 +1190,34 @@ pub fn EditorView() -> Element {
                                 disabled: delete_state() == DeleteState::Deleting,
                                 onclick: move |_| delete_action.call(()),
                                 "Delete"
+                            }
+                        }
+                    }
+                }
+            }
+            if show_duplicate_modal() {
+                div {
+                    class: "editor-modal-overlay",
+                    onclick: move |_| close_duplicate_modal_action.call(()),
+                    div {
+                        class: "editor-modal",
+                        onclick: move |evt| evt.stop_propagation(),
+                        h3 { class: "editor-modal-title", "Duplicate front?" }
+                        p { class: "editor-modal-body",
+                            "A card with the same front already exists in this deck."
+                        }
+                        div { class: "editor-modal-actions",
+                            button {
+                                class: "btn editor-modal-cancel",
+                                r#type: "button",
+                                onclick: move |_| close_duplicate_modal_action.call(()),
+                                "Keep Editing"
+                            }
+                            button {
+                                class: "btn btn-primary",
+                                r#type: "button",
+                                onclick: move |_| confirm_duplicate_action.call(()),
+                                "Save Anyway"
                             }
                         }
                     }
@@ -1262,7 +1431,18 @@ pub fn EditorView() -> Element {
                         aria_label: "Card list",
                         onkeydown: list_on_key,
                         div { class: "editor-list-header",
-                            h3 { class: "editor-list-title", "Cards" }
+                            div { class: "editor-list-title-row",
+                                h3 { class: "editor-list-title", "Cards" }
+                                if let Some(count) = match_count {
+                                    span { class: "editor-list-count",
+                                        if count == 1 {
+                                            "1 result"
+                                        } else {
+                                            "{count} results"
+                                        }
+                                    }
+                                }
+                            }
                             div { class: "editor-list-search",
                                 span { class: "editor-list-search-icon",
                                     svg {
@@ -1305,13 +1485,17 @@ pub fn EditorView() -> Element {
                                     }
                                 }
                             }
-                            if let Some(count) = match_count {
-                                span { class: "editor-list-count",
-                                    if count == 1 {
-                                        "1 result"
-                                    } else {
-                                        "{count} results"
-                                    }
+                            div { class: "editor-list-controls",
+                                span { class: "editor-list-control-label", "Sort by" }
+                                select {
+                                    class: "editor-list-select",
+                                    value: "{sort_value(sort_mode())}",
+                                    onchange: move |evt| {
+                                        sort_mode.set(sort_from_value(&evt.value()));
+                                    },
+                                    option { value: "recent", "Recent" }
+                                    option { value: "created", "Created" }
+                                    option { value: "alpha", "A–Z" }
                                 }
                             }
                         }
@@ -1457,17 +1641,23 @@ pub fn EditorView() -> Element {
                         footer { class: "editor-footer",
                             div { class: "editor-status",
                                 match delete_state() {
-                                    DeleteState::Idle => match save_state() {
-                                        SaveState::Idle => {
-                                            if can_edit && !has_unsaved_changes() {
-                                                rsx! { span { "No changes." } }
-                                            } else {
-                                                rsx! {}
-                                            }
+                                    DeleteState::Idle => match duplicate_check_state() {
+                                        DuplicateCheckState::Checking => rsx! { span { "Checking..." } },
+                                        DuplicateCheckState::Error(err) => {
+                                            rsx! { span { "{err.message()}" } }
                                         }
-                                        SaveState::Saving => rsx! { span { "Saving..." } },
-                                        SaveState::Success => rsx! { span { "Saved." } },
-                                        SaveState::Error(err) => rsx! { span { "{err.message()}" } },
+                                        DuplicateCheckState::Idle => match save_state() {
+                                            SaveState::Idle => {
+                                                if can_edit && !has_unsaved_changes() {
+                                                    rsx! { span { "No changes." } }
+                                                } else {
+                                                    rsx! {}
+                                                }
+                                            }
+                                            SaveState::Saving => rsx! { span { "Saving..." } },
+                                            SaveState::Success => rsx! { span { "Saved." } },
+                                            SaveState::Error(err) => rsx! { span { "{err.message()}" } },
+                                        },
                                     },
                                     DeleteState::Deleting => rsx! { span { "Deleting..." } },
                                     DeleteState::Success => rsx! { span { "Deleted." } },
@@ -1498,7 +1688,7 @@ pub fn EditorView() -> Element {
                                             class: "btn editor-save editor-save-split",
                                             r#type: "button",
                                             disabled: !can_submit,
-                                            onclick: move |_| save_action.call(false),
+                                            onclick: move |_| save_action.call(SaveRequest::new(false)),
                                             span { class: "editor-save-label", "Save" }
                                             span {
                                                 class: "editor-save-caret",
@@ -1522,7 +1712,7 @@ pub fn EditorView() -> Element {
                                             class: "btn btn-primary editor-save",
                                             r#type: "button",
                                             disabled: !can_submit,
-                                            onclick: move |_| save_action.call(false),
+                                            onclick: move |_| save_action.call(SaveRequest::new(false)),
                                             "Save"
                                         }
                                     }
@@ -1535,7 +1725,7 @@ pub fn EditorView() -> Element {
                                                 r#type: "button",
                                                 onclick: move |_| {
                                                     close_save_menu_action.call(());
-                                                    save_action.call(true);
+                                                    save_action.call(SaveRequest::new(true));
                                                 },
                                                 "Save & Practice"
                                             }

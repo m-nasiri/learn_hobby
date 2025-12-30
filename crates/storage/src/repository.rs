@@ -286,6 +286,20 @@ pub trait CardRepository: Send + Sync {
     ///
     /// Returns `StorageError` on connection or serialization failure.
     async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
+
+    /// Returns true if a card with the given prompt exists in the deck.
+    ///
+    /// Comparison is normalized (trimmed, case-insensitive).
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn prompt_exists(
+        &self,
+        deck_id: DeckId,
+        prompt_text: &str,
+        exclude: Option<CardId>,
+    ) -> Result<bool, StorageError>;
 }
 
 #[async_trait]
@@ -418,6 +432,10 @@ impl InMemoryRepository {
 
 fn limit_usize(limit: u32) -> usize {
     usize::try_from(limit).unwrap_or(usize::MAX)
+}
+
+fn normalize_prompt(text: &str) -> String {
+    text.trim().to_lowercase()
 }
 
 #[async_trait]
@@ -629,6 +647,30 @@ impl CardRepository for InMemoryRepository {
         });
         cards.truncate(limit_usize(limit));
         Ok(cards)
+    }
+
+    async fn prompt_exists(
+        &self,
+        deck_id: DeckId,
+        prompt_text: &str,
+        exclude: Option<CardId>,
+    ) -> Result<bool, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let needle = normalize_prompt(prompt_text);
+        if needle.is_empty() {
+            return Ok(false);
+        }
+
+        let exists = guard.cards.values().any(|card| {
+            card.deck_id() == deck_id
+                && Some(card.id()) != exclude
+                && normalize_prompt(card.prompt().text()) == needle
+        });
+
+        Ok(exists)
     }
 }
 

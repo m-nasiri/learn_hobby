@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::Duration;
 use learn_core::model::{Card, CardError, CardId, CardPhase, ContentDraft, DeckId};
 use storage::repository::{CardRepository, NewCardRecord};
 
@@ -11,6 +12,26 @@ use crate::Clock;
 pub struct CardService {
     clock: Clock,
     cards: Arc<dyn CardRepository>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CardListSort {
+    /// Newest first (created_at DESC).
+    Recent,
+    /// Oldest first (created_at ASC).
+    Created,
+    /// Alphabetical by prompt text.
+    Alpha,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CardListFilter {
+    /// No filtering.
+    All,
+    /// Cards due within the next 24 hours (reviewed cards only).
+    DueSoon,
 }
 
 impl CardService {
@@ -80,6 +101,69 @@ impl CardService {
     ) -> Result<Vec<Card>, CardServiceError> {
         let cards = self.cards.list_cards(deck_id, limit).await?;
         Ok(cards)
+    }
+
+    /// List cards for a deck with sorting and filtering.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn list_cards_filtered(
+        &self,
+        deck_id: DeckId,
+        limit: u32,
+        sort: CardListSort,
+        filter: CardListFilter,
+    ) -> Result<Vec<Card>, CardServiceError> {
+        let mut cards = self.cards.list_cards(deck_id, limit).await?;
+
+        if matches!(filter, CardListFilter::DueSoon) {
+            let now = self.clock.now();
+            let cutoff = now + Duration::hours(24);
+            cards.retain(|card| card.review_count() > 0 && card.next_review_at() <= cutoff);
+        }
+
+        match sort {
+            CardListSort::Recent => {}
+            CardListSort::Created => {
+                cards.sort_by_key(|card| (card.created_at(), card.id().value()));
+            }
+            CardListSort::Alpha => {
+                cards.sort_by(|left, right| {
+                    let left_key = left.prompt().text().to_lowercase();
+                    let right_key = right.prompt().text().to_lowercase();
+                    left_key
+                        .cmp(&right_key)
+                        .then_with(|| left.id().value().cmp(&right.id().value()))
+                });
+            }
+        }
+
+        Ok(cards)
+    }
+
+    /// Returns true if a card with the given prompt exists in the deck.
+    ///
+    /// Comparison is normalized (trimmed, case-insensitive).
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn prompt_exists(
+        &self,
+        deck_id: DeckId,
+        prompt_text: &str,
+        exclude: Option<CardId>,
+    ) -> Result<bool, CardServiceError> {
+        if prompt_text.trim().is_empty() {
+            return Ok(false);
+        }
+
+        let exists = self
+            .cards
+            .prompt_exists(deck_id, prompt_text, exclude)
+            .await?;
+        Ok(exists)
     }
 
     /// Update a card's prompt/answer content while preserving scheduling state.

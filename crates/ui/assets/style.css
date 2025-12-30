@@ -743,8 +743,15 @@ a {
 
 .editor-list-header {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 10px;
+}
+
+.editor-list-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .editor-list-title {
@@ -757,7 +764,38 @@ a {
 .editor-list-count {
   color: rgba(0, 0, 0, 0.5);
   font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
+
+.editor-list-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.editor-list-control-label {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.editor-list-select {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.95);
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--ink-1);
+  outline: none;
+  width: 100%;
+}
+
+.editor-list-select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 
 .editor-list-search {
   display: flex;
@@ -767,6 +805,11 @@ a {
   border-radius: 10px;
   border: 1px solid var(--border-subtle);
   background: rgba(255, 255, 255, 0.9);
+}
+
+.editor-list-search:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .editor-list-search-icon {
@@ -1176,6 +1219,7 @@ a {
 }
 
 @media (max-width: 640px) {
+
   .app,
   .app-shell {
     grid-template-columns: 1fr;

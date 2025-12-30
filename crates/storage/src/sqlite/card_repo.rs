@@ -282,4 +282,54 @@ impl CardRepository for SqliteRepository {
         }
         Ok(cards)
     }
+
+    async fn prompt_exists(
+        &self,
+        deck_id: DeckId,
+        prompt_text: &str,
+        exclude: Option<CardId>,
+    ) -> Result<bool, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let exists = if let Some(card_id) = exclude {
+            let exclude_id = i64::try_from(card_id.value())
+                .map_err(|_| StorageError::Serialization("card_id overflow".into()))?;
+            sqlx::query_scalar::<_, i64>(
+                r"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM cards
+                    WHERE deck_id = ?1
+                      AND LOWER(TRIM(prompt)) = LOWER(TRIM(?2))
+                      AND id != ?3
+                )
+                ",
+            )
+            .bind(deck)
+            .bind(prompt_text)
+            .bind(exclude_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                r"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM cards
+                    WHERE deck_id = ?1
+                      AND LOWER(TRIM(prompt)) = LOWER(TRIM(?2))
+                )
+                ",
+            )
+            .bind(deck)
+            .bind(prompt_text)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?
+        };
+
+        Ok(exists != 0)
+    }
 }
