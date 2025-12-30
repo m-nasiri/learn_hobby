@@ -117,10 +117,6 @@ pub fn EditorView() -> Element {
     let mut prompt_text = use_signal(String::new);
     let mut answer_text = use_signal(String::new);
 
-    let can_edit = is_create_mode() || selected_card_id().is_some();
-    let can_submit = can_edit
-        && save_state() != SaveState::Saving
-        && delete_state() != DeleteState::Deleting;
     let has_unsaved_changes = {
         let prompt_text = prompt_text;
         let answer_text = answer_text;
@@ -140,6 +136,12 @@ pub fn EditorView() -> Element {
             }
         })
     };
+    let can_edit = is_create_mode() || selected_card_id().is_some();
+    let can_submit = can_edit
+        && save_state() != SaveState::Saving
+        && delete_state() != DeleteState::Deleting
+        && has_unsaved_changes();
+    let has_unsaved_changes_for_save = Rc::clone(&has_unsaved_changes);
     let save_action = use_callback(move |practice: bool| {
         let card_service = card_service_for_save.clone();
         let navigator = navigator;
@@ -158,11 +160,16 @@ pub fn EditorView() -> Element {
         let mut last_selected_card = last_selected_card;
         let is_create_mode = is_create_mode;
         let deck_id = *selected_deck.read();
+        let has_unsaved_changes = Rc::clone(&has_unsaved_changes_for_save);
 
         let prompt = prompt_text.read().trim().to_owned();
         let answer = answer_text.read().trim().to_owned();
 
         if save_state() == SaveState::Saving {
+            return;
+        }
+
+        if !has_unsaved_changes() {
             return;
         }
 
@@ -1200,6 +1207,9 @@ pub fn EditorView() -> Element {
                                 } else {
                                     "Select a Card"
                                 }
+                                if can_edit && has_unsaved_changes() {
+                                    span { class: "editor-detail-dirty", "• Unsaved" }
+                                }
                             }
                         }
 
@@ -1263,7 +1273,13 @@ pub fn EditorView() -> Element {
                             div { class: "editor-status",
                                 match delete_state() {
                                     DeleteState::Idle => match save_state() {
-                                        SaveState::Idle => rsx! {},
+                                        SaveState::Idle => {
+                                            if can_edit && !has_unsaved_changes() {
+                                                rsx! { span { "No changes." } }
+                                            } else {
+                                                rsx! {}
+                                            }
+                                        }
                                         SaveState::Saving => rsx! { span { "Saving..." } },
                                         SaveState::Success => rsx! { span { "Saved." } },
                                         SaveState::Error(err) => rsx! { span { "{err.message()}" } },

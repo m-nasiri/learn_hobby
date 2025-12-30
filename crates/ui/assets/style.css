@@ -905,6 +905,16 @@ a {
   font-family: var(--font-serif);
   font-weight: 700;
   font-size: 1.15rem;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.editor-detail-dirty {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: rgba(0, 0, 0, 0.5);
 }
 
 .editor-detail-subtitle {
