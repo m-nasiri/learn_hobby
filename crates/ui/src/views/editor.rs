@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use learn_core::model::{CardId, ContentDraft, DeckSettings};
@@ -43,6 +44,7 @@ pub fn EditorView() -> Element {
     let mut delete_state = use_signal(|| DeleteState::Idle);
     let mut show_delete_modal = use_signal(|| false);
     let mut show_validation = use_signal(|| false);
+    let mut focus_prompt = use_signal(|| false);
     let mut show_new_deck = use_signal(|| false);
     let mut new_deck_name = use_signal(String::new);
     let mut new_deck_state = use_signal(|| SaveState::Idle);
@@ -105,6 +107,7 @@ pub fn EditorView() -> Element {
         let mut delete_state = delete_state;
         let mut show_delete_modal = show_delete_modal;
         let mut show_validation = show_validation;
+        let mut focus_prompt = focus_prompt;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
         let mut cards_resource = cards_resource;
@@ -177,12 +180,14 @@ pub fn EditorView() -> Element {
                         (true, false) => {
                             prompt_text.set(String::new());
                             answer_text.set(String::new());
+                            focus_prompt.set(true);
                         }
                         (false, _) => {
                             if let Some(card_id) = card_id {
                                 selected_card_id.set(Some(card_id));
                                 last_selected_card
                                     .set(Some(build_card_list_item(card_id, &prompt, &answer)));
+                                focus_prompt.set(true);
                             }
                         }
                     }
@@ -214,6 +219,7 @@ pub fn EditorView() -> Element {
         let mut delete_state = delete_state;
         let mut show_validation = show_validation;
         let mut show_delete_modal = show_delete_modal;
+        let mut focus_prompt = focus_prompt;
 
         let name = new_deck_name.read().trim().to_owned();
         if name.is_empty() || new_deck_state() == SaveState::Saving {
@@ -238,6 +244,7 @@ pub fn EditorView() -> Element {
                     delete_state.set(DeleteState::Idle);
                     show_delete_modal.set(false);
                     show_validation.set(false);
+                    focus_prompt.set(false);
                     new_deck_state.set(SaveState::Success);
                     decks_resource.restart();
                     cards_resource.restart();
@@ -345,7 +352,7 @@ pub fn EditorView() -> Element {
         delete_state.set(DeleteState::Idle);
         show_validation.set(false);
         show_delete_modal.set(false);
-        show_validation.set(false);
+        focus_prompt.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         show_deck_menu.set(false);
@@ -375,7 +382,9 @@ pub fn EditorView() -> Element {
         answer_text.set(String::new());
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
+        show_validation.set(false);
         show_delete_modal.set(false);
+        focus_prompt.set(true);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         new_deck_name.set(String::new());
@@ -500,6 +509,7 @@ pub fn EditorView() -> Element {
     let mut delete_state_for_effect = delete_state;
     let mut show_delete_modal_for_effect = show_delete_modal;
     let mut show_validation_for_effect = show_validation;
+    let mut focus_prompt_for_effect = focus_prompt;
     use_effect(move || {
         let cards_state_effect = view_state_from_resource(&cards_resource);
         if let ViewState::Ready(items) = &cards_state_effect {
@@ -514,6 +524,7 @@ pub fn EditorView() -> Element {
                     delete_state_for_effect.set(DeleteState::Idle);
                     show_delete_modal_for_effect.set(false);
                     show_validation_for_effect.set(false);
+                    focus_prompt_for_effect.set(true);
                 }
             } else if selected_card_id_for_effect().is_none()
                 && !is_create_mode_for_effect()
@@ -537,6 +548,14 @@ pub fn EditorView() -> Element {
     let can_cancel = is_create_mode() && last_selected_card().is_some();
     let prompt_invalid = show_validation() && prompt_text.read().trim().is_empty();
     let answer_invalid = show_validation() && answer_text.read().trim().is_empty();
+
+    use_effect(move || {
+        if !focus_prompt() {
+            return;
+        }
+        focus_prompt.set(false);
+        let _ = eval("document.getElementById('prompt')?.focus();");
+    });
 
     let on_key = {
         let deck_label = deck_label.clone();
