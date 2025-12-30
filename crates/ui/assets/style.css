@@ -733,6 +733,14 @@ a {
   overflow: auto;
 }
 
+.editor-list-pane:focus {
+  outline: none;
+}
+
+.editor-list-pane:focus-visible {
+  box-shadow: var(--shadow-soft), 0 0 0 3px var(--focus-ring);
+}
+
 .editor-list-header {
   display: grid;
   gap: 8px;

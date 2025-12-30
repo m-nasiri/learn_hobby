@@ -822,6 +822,13 @@ pub fn EditorView() -> Element {
                     return;
                 }
 
+                if matches!(evt.data.key(), Key::Character(value) if value.eq_ignore_ascii_case("n"))
+                {
+                    evt.prevent_default();
+                    request_new_card_action.call(());
+                    return;
+                }
+
                 if evt.data.key() == Key::Backspace
                     && selected_card_id().is_some()
                     && !is_create_mode()
@@ -850,6 +857,50 @@ pub fn EditorView() -> Element {
             if evt.data.key() == Key::Escape && is_create_mode() {
                 evt.prevent_default();
                 cancel_new_action.call(());
+            }
+        })
+    };
+
+    let list_on_key = {
+        let cards_state = cards_state.clone();
+        use_callback(move |evt: KeyboardEvent| {
+            if !evt.data.modifiers().is_empty() {
+                return;
+            }
+
+            let key = evt.data.key();
+            if !matches!(key, Key::ArrowDown | Key::ArrowUp | Key::Enter) {
+                return;
+            }
+
+            let ViewState::Ready(items) = &cards_state else {
+                return;
+            };
+            let filtered = filter_card_list_items(items, search_query.read().as_str());
+            if filtered.is_empty() {
+                return;
+            }
+
+            let current_id = selected_card_id();
+            let current_index = current_id
+                .and_then(|id| filtered.iter().position(|item| item.id == id));
+
+            let next_index = match key {
+                Key::ArrowDown => match current_index {
+                    Some(idx) => (idx + 1).min(filtered.len() - 1),
+                    None => 0,
+                },
+                Key::ArrowUp => match current_index {
+                    Some(idx) => idx.saturating_sub(1),
+                    None => filtered.len().saturating_sub(1),
+                },
+                Key::Enter => current_index.unwrap_or(0),
+                _ => return,
+            };
+
+            if let Some(item) = filtered.get(next_index).cloned() {
+                evt.prevent_default();
+                request_select_card_action.call(item);
             }
         })
     };
@@ -1098,7 +1149,11 @@ pub fn EditorView() -> Element {
                 }
 
                 div { class: "editor-split",
-                    aside { class: "editor-list-pane",
+                    aside {
+                        class: "editor-list-pane",
+                        tabindex: "0",
+                        aria_label: "Card list",
+                        onkeydown: list_on_key,
                         div { class: "editor-list-header",
                             h3 { class: "editor-list-title", "Cards" }
                             div { class: "editor-list-search",
