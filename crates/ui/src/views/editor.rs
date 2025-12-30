@@ -810,7 +810,15 @@ pub fn EditorView() -> Element {
                             ViewState::Ready(items) => {
                                 let active_id = selected_card_id();
                                 if items.is_empty() {
-                                    rsx! { p { class: "editor-list-empty", "No cards yet." } }
+                                    rsx! {
+                                        p { class: "editor-list-empty", "No cards yet." }
+                                        button {
+                                            class: "btn editor-list-cta",
+                                            r#type: "button",
+                                            onclick: move |_| new_card_action.call(()),
+                                            "Create your first card"
+                                        }
+                                    }
                                 } else {
                                     rsx! {
                                         ul { class: "editor-list-items",
