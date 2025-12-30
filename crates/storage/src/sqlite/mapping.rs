@@ -1,4 +1,6 @@
-use learn_core::model::{Card, CardId, CardPhase, DeckId, ReviewGrade, content::Content};
+use learn_core::model::{
+    Card, CardId, CardPhase, DeckId, ReviewGrade, Tag, TagId, TagName, content::Content,
+};
 use sqlx::Row;
 
 use crate::repository::StorageError;
@@ -21,6 +23,10 @@ pub(crate) fn card_id_from_i64(v: i64) -> Result<CardId, StorageError> {
 
 pub(crate) fn media_id_from_i64(v: i64) -> Result<learn_core::model::MediaId, StorageError> {
     Ok(learn_core::model::MediaId::new(i64_to_u64("media_id", v)?))
+}
+
+pub(crate) fn tag_id_from_i64(v: i64) -> Result<TagId, StorageError> {
+    Ok(TagId::new(i64_to_u64("tag_id", v)?))
 }
 
 pub(crate) fn media_id_to_i64(
@@ -102,6 +108,16 @@ pub(crate) fn map_card_row(row: &sqlx::sqlite::SqliteRow) -> Result<Card, Storag
         difficulty,
     )
     .map_err(ser)
+}
+
+pub(crate) fn map_tag_row(row: &sqlx::sqlite::SqliteRow) -> Result<Tag, StorageError> {
+    let name: String = row.try_get("name").map_err(ser)?;
+    let name = TagName::new(name).map_err(ser)?;
+    Ok(Tag::new(
+        tag_id_from_i64(row.try_get::<i64, _>("id").map_err(ser)?)?,
+        deck_id_from_i64(row.try_get::<i64, _>("deck_id").map_err(ser)?)?,
+        name,
+    ))
 }
 
 /// Converts a `ReviewGrade` to its storage representation.

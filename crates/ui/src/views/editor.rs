@@ -4,7 +4,7 @@ use std::time::Duration;
 use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
-use learn_core::model::{CardId, ContentDraft, DeckId, DeckSettings};
+use learn_core::model::{CardId, ContentDraft, DeckId, DeckSettings, TagName};
 use services::{CardListFilter, CardListSort};
 
 use crate::context::AppContext;
@@ -174,7 +174,6 @@ fn render_highlighted(text: &str, query: &str) -> Vec<Element> {
 
 fn sort_value(sort: CardListSort) -> &'static str {
     match sort {
-        CardListSort::Recent => "recent",
         CardListSort::Created => "created",
         CardListSort::Alpha => "alpha",
         _ => "recent",
@@ -189,6 +188,38 @@ fn sort_from_value(value: &str) -> CardListSort {
     }
 }
 
+fn tag_filter_key(tags: &[String]) -> String {
+    let mut items = tags.to_vec();
+    items.sort();
+    items.join("|")
+}
+
+fn tag_names_from_strings(tags: &[String]) -> Vec<TagName> {
+    tags.iter().filter_map(|tag| TagName::new(tag.clone()).ok()).collect()
+}
+
+fn tags_equal(left: &[String], right: &[String]) -> bool {
+    let mut left_sorted = left.to_vec();
+    let mut right_sorted = right.to_vec();
+    left_sorted.sort();
+    right_sorted.sort();
+    left_sorted == right_sorted
+}
+
+fn build_tag_suggestions(deck_tags: &[String], current: &[String], query: &str) -> Vec<String> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    deck_tags
+        .iter()
+        .filter(|tag| !current.contains(tag))
+        .filter(|tag| tag.contains(needle))
+        .take(6)
+        .cloned()
+        .collect()
+}
+
 #[component]
 pub fn EditorView() -> Element {
     let ctx = use_context::<AppContext>();
@@ -200,6 +231,8 @@ pub fn EditorView() -> Element {
     let deck_service_for_rename = deck_service.clone();
     let card_service = ctx.card_service();
     let card_service_for_list = card_service.clone();
+    let card_service_for_deck_tags = card_service.clone();
+    let card_service_for_card_tags = card_service.clone();
     let card_service_for_save = card_service.clone();
     let card_service_for_delete = card_service.clone();
     let selected_deck = use_signal(|| deck_id);
@@ -224,6 +257,10 @@ pub fn EditorView() -> Element {
     let is_create_mode = use_signal(|| false);
     let mut search_query = use_signal(String::new);
     let mut sort_mode = use_signal(|| CardListSort::Recent);
+    let selected_tag_filters = use_signal(Vec::new);
+    let mut card_tags = use_signal(Vec::new);
+    let last_selected_tags = use_signal(Vec::new);
+    let mut tag_input = use_signal(String::new);
     let mut duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
     let mut show_duplicate_modal = use_signal(|| false);
     let mut pending_duplicate_practice = use_signal(|| false);
@@ -245,9 +282,11 @@ pub fn EditorView() -> Element {
         let deck_id = *selected_deck.read();
         let sort = sort_mode();
         let filter = CardListFilter::All;
+        let tag_filters = selected_tag_filters();
+        let tag_names = tag_names_from_strings(&tag_filters);
         async move {
             let cards = card_service
-                .list_cards_filtered(deck_id, 100, sort, filter)
+                .list_cards_filtered(deck_id, 100, sort, filter, &tag_names)
                 .await
                 .map_err(|_| ViewError::Unknown)?;
             Ok::<_, ViewError>(map_card_list_items(&cards))
@@ -255,13 +294,102 @@ pub fn EditorView() -> Element {
     });
     let cards_state = view_state_from_resource(&cards_resource);
 
-    let mut last_cards_query = use_signal(|| (deck_id, CardListSort::Recent));
+    let mut last_cards_query = use_signal(|| (deck_id, CardListSort::Recent, String::new()));
     use_effect(move || {
-        let current = (*selected_deck.read(), sort_mode());
+        let current = (
+            *selected_deck.read(),
+            sort_mode(),
+            tag_filter_key(&selected_tag_filters()),
+        );
         if last_cards_query() != current {
             last_cards_query.set(current);
             let mut cards_resource = cards_resource;
             cards_resource.restart();
+        }
+    });
+
+    let deck_tags_resource = use_resource(move || {
+        let card_service = card_service_for_deck_tags.clone();
+        let deck_id = *selected_deck.read();
+        async move {
+            let tags = card_service
+                .list_tags_for_deck(deck_id)
+                .await
+                .map_err(|_| ViewError::Unknown)?;
+            let tags: Vec<String> = tags
+                .into_iter()
+                .map(|tag| tag.name().as_str().to_string())
+                .collect();
+            Ok::<Vec<String>, ViewError>(tags)
+        }
+    });
+    let deck_tags_state = view_state_from_resource(&deck_tags_resource);
+
+    let card_tags_resource = use_resource(move || {
+        let card_service = card_service_for_card_tags.clone();
+        let deck_id = *selected_deck.read();
+        let card_id = selected_card_id();
+        async move {
+            let tags = if let Some(card_id) = card_id {
+                card_service
+                    .list_tags_for_card(deck_id, card_id)
+                    .await
+                    .map_err(|_| ViewError::Unknown)?
+                    .into_iter()
+                    .map(|tag| tag.name().as_str().to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Ok::<_, ViewError>((card_id, tags))
+        }
+    });
+
+    let mut last_deck_for_tags = use_signal(|| deck_id);
+    use_effect(move || {
+        let current = *selected_deck.read();
+        if last_deck_for_tags() != current {
+            last_deck_for_tags.set(current);
+            let mut deck_tags_resource = deck_tags_resource;
+            deck_tags_resource.restart();
+        }
+    });
+
+    let mut last_card_tags_key = use_signal(|| (deck_id, None::<CardId>));
+    use_effect(move || {
+        let current = (*selected_deck.read(), selected_card_id());
+        if last_card_tags_key() != current {
+            last_card_tags_key.set(current);
+            let mut card_tags_resource = card_tags_resource;
+            card_tags_resource.restart();
+        }
+    });
+
+    let mut selected_tag_filters_for_effect = selected_tag_filters;
+    use_effect(move || {
+        let state = view_state_from_resource(&deck_tags_resource);
+        if let ViewState::Ready(tags) = &state {
+            let current = selected_tag_filters_for_effect();
+            let filtered: Vec<String> =
+                current.iter().filter(|tag| tags.contains(tag)).cloned().collect();
+            if filtered.len() != current.len() {
+                selected_tag_filters_for_effect.set(filtered);
+            }
+        }
+    });
+
+    let mut card_tags_for_effect = card_tags;
+    let mut last_selected_tags_for_effect = last_selected_tags;
+    let mut tag_input_for_effect = tag_input;
+    use_effect(move || {
+        let state = view_state_from_resource(&card_tags_resource);
+        if let ViewState::Ready((card_id, tags)) = &state
+            && *card_id == selected_card_id()
+            && !is_create_mode()
+        {
+            card_tags_for_effect.set(tags.clone());
+            last_selected_tags_for_effect.set(tags.clone());
+            tag_input_for_effect.set(String::new());
         }
     });
 
@@ -272,19 +400,23 @@ pub fn EditorView() -> Element {
     let has_unsaved_changes = {
         let prompt_text = prompt_text;
         let answer_text = answer_text;
+        let card_tags = card_tags;
         Rc::new(move || {
             if !(is_create_mode() || selected_card_id().is_some()) {
                 return false;
             }
             let prompt = prompt_text.read().trim().to_string();
             let answer = answer_text.read().trim().to_string();
+            let tags = card_tags.read().clone();
             if is_create_mode() {
-                return !prompt.is_empty() || !answer.is_empty();
+                return !prompt.is_empty() || !answer.is_empty() || !tags.is_empty();
             }
             if let Some(original) = last_selected_card() {
-                prompt != original.prompt.trim() || answer != original.answer.trim()
+                prompt != original.prompt.trim()
+                    || answer != original.answer.trim()
+                    || !tags_equal(&tags, &last_selected_tags())
             } else {
-                !prompt.is_empty() || !answer.is_empty()
+                !prompt.is_empty() || !answer.is_empty() || !tags.is_empty()
             }
         })
     };
@@ -311,7 +443,12 @@ pub fn EditorView() -> Element {
         let mut focus_prompt = focus_prompt;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut card_tags = card_tags;
+        let mut last_selected_tags = last_selected_tags;
+        let mut tag_input = tag_input;
         let mut cards_resource = cards_resource;
+        let mut deck_tags_resource = deck_tags_resource;
+        let mut card_tags_resource = card_tags_resource;
         let mut selected_card_id = selected_card_id;
         let mut last_selected_card = last_selected_card;
         let is_create_mode = is_create_mode;
@@ -320,6 +457,7 @@ pub fn EditorView() -> Element {
 
         let prompt = prompt_text.read().trim().to_owned();
         let answer = answer_text.read().trim().to_owned();
+        let tag_names = tag_names_from_strings(&card_tags.read());
         let practice = request.practice;
         let skip_duplicate_check = request.skip_duplicate_check;
 
@@ -386,20 +524,22 @@ pub fn EditorView() -> Element {
             let result = match editing_id {
                 Some(card_id) => {
                     card_service
-                        .update_card_content(
+                        .update_card_content_with_tags(
                             deck_id,
                             card_id,
                             ContentDraft::text_only(prompt.clone()),
                             ContentDraft::text_only(answer.clone()),
+                            &tag_names,
                         )
                         .await
                         .map(|()| Some(card_id))
                 }
                 None => card_service
-                    .create_card(
+                    .create_card_with_tags(
                         deck_id,
                         ContentDraft::text_only(prompt.clone()),
                         ContentDraft::text_only(answer.clone()),
+                        &tag_names,
                     )
                     .await
                     .map(Some),
@@ -412,7 +552,10 @@ pub fn EditorView() -> Element {
                     show_delete_modal.set(false);
                     show_validation.set(false);
                     save_menu_state.set(SaveMenuState::Closed);
+                    tag_input.set(String::new());
                     cards_resource.restart();
+                    deck_tags_resource.restart();
+                    card_tags_resource.restart();
                     match (is_create_mode(), practice) {
                         (true, true) => {
                             navigator.push(Route::Session {
@@ -422,6 +565,7 @@ pub fn EditorView() -> Element {
                         (true, false) => {
                             prompt_text.set(String::new());
                             answer_text.set(String::new());
+                            card_tags.set(Vec::new());
                             focus_prompt.set(true);
                         }
                         (false, _) => {
@@ -429,6 +573,7 @@ pub fn EditorView() -> Element {
                                 selected_card_id.set(Some(card_id));
                                 last_selected_card
                                     .set(Some(build_card_list_item(card_id, &prompt, &answer)));
+                                last_selected_tags.set(card_tags.read().clone());
                                 focus_prompt.set(true);
                             }
                         }
@@ -585,6 +730,10 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut card_tags = card_tags;
+        let mut last_selected_tags = last_selected_tags;
+        let mut tag_input = tag_input;
+        let mut selected_tag_filters = selected_tag_filters;
         let mut save_state = save_state;
         let mut delete_state = delete_state;
         let mut show_delete_modal = show_delete_modal;
@@ -609,6 +758,10 @@ pub fn EditorView() -> Element {
         is_create_mode.set(false);
         prompt_text.set(String::new());
         answer_text.set(String::new());
+        card_tags.set(Vec::new());
+        last_selected_tags.set(Vec::new());
+        tag_input.set(String::new());
+        selected_tag_filters.set(Vec::new());
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
         show_delete_modal.set(false);
@@ -632,6 +785,9 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut card_tags = card_tags;
+        let mut last_selected_tags = last_selected_tags;
+        let mut tag_input = tag_input;
         let mut save_state = save_state;
         let mut show_new_deck = show_new_deck;
         let mut new_deck_state = new_deck_state;
@@ -651,6 +807,9 @@ pub fn EditorView() -> Element {
         is_create_mode.set(false);
         prompt_text.set(item.prompt);
         answer_text.set(item.answer);
+        card_tags.set(Vec::new());
+        last_selected_tags.set(Vec::new());
+        tag_input.set(String::new());
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
         show_validation.set(false);
@@ -706,6 +865,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut card_tags = card_tags;
+        let mut tag_input = tag_input;
         let mut save_state = save_state;
         let mut show_new_deck = show_new_deck;
         let mut new_deck_state = new_deck_state;
@@ -722,6 +883,8 @@ pub fn EditorView() -> Element {
         is_create_mode.set(true);
         prompt_text.set(String::new());
         answer_text.set(String::new());
+        card_tags.set(Vec::new());
+        tag_input.set(String::new());
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
         show_validation.set(false);
@@ -759,6 +922,44 @@ pub fn EditorView() -> Element {
             new_card_action.call(());
         })
     };
+
+    let add_tag_action = use_callback(move |tag: String| {
+        let mut card_tags = card_tags;
+        let mut tag_input = tag_input;
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return;
+        }
+        let mut tags = card_tags();
+        if tags.iter().any(|existing| existing == tag) {
+            tag_input.set(String::new());
+            return;
+        }
+        tags.push(tag.to_string());
+        card_tags.set(tags);
+        tag_input.set(String::new());
+    });
+
+    let remove_tag_action = use_callback(move |tag: String| {
+        let mut card_tags = card_tags;
+        let mut tags = card_tags();
+        tags.retain(|existing| existing != &tag);
+        card_tags.set(tags);
+    });
+
+    let clear_tag_filters_action = use_callback(move |()| {
+        let mut selected_tag_filters = selected_tag_filters;
+        selected_tag_filters.set(Vec::new());
+    });
+
+    let set_tag_filter_action = use_callback(move |tag: Option<String>| {
+        let mut selected_tag_filters = selected_tag_filters;
+        if let Some(tag) = tag {
+            selected_tag_filters.set(vec![tag]);
+        } else {
+            selected_tag_filters.set(Vec::new());
+        }
+    });
 
     let confirm_discard_action = use_callback(move |()| {
         let mut show_unsaved_modal = show_unsaved_modal;
@@ -872,6 +1073,9 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut card_tags = card_tags;
+        let mut last_selected_tags = last_selected_tags;
+        let mut tag_input = tag_input;
         let mut show_delete_modal = show_delete_modal;
         let mut save_menu_state = save_menu_state;
         let deck_id = *selected_deck.read();
@@ -897,6 +1101,9 @@ pub fn EditorView() -> Element {
                     is_create_mode.set(false);
                     prompt_text.set(String::new());
                     answer_text.set(String::new());
+                    card_tags.set(Vec::new());
+                    last_selected_tags.set(Vec::new());
+                    tag_input.set(String::new());
                     cards_resource.restart();
                     let mut delete_state = delete_state;
                     spawn(async move {
@@ -919,6 +1126,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut card_tags = card_tags;
+        let mut tag_input = tag_input;
         let mut save_state = save_state;
         let mut show_deck_menu = show_deck_menu;
         let mut delete_state = delete_state;
@@ -935,14 +1144,17 @@ pub fn EditorView() -> Element {
             selected_card_id.set(Some(card.id));
             prompt_text.set(card.prompt.clone());
             answer_text.set(card.answer.clone());
+            card_tags.set(last_selected_tags());
             is_create_mode.set(false);
         } else {
             selected_card_id.set(None);
             prompt_text.set(String::new());
             answer_text.set(String::new());
+            card_tags.set(Vec::new());
             is_create_mode.set(true);
         }
 
+        tag_input.set(String::new());
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
         show_delete_modal.set(false);
@@ -1016,6 +1228,19 @@ pub fn EditorView() -> Element {
         }
         _ => None,
     };
+    let deck_tags = match &deck_tags_state {
+        ViewState::Ready(tags) => tags.clone(),
+        _ => Vec::new(),
+    };
+    let deck_tags_loading = matches!(deck_tags_state, ViewState::Loading);
+    let deck_tags_error = matches!(deck_tags_state, ViewState::Error(_));
+    let selected_filters = selected_tag_filters();
+    let tag_input_value = tag_input.read().to_string();
+    let tag_suggestions = build_tag_suggestions(
+        &deck_tags,
+        &card_tags.read(),
+        &tag_input_value,
+    );
 
     use_effect(move || {
         if !focus_prompt() {
@@ -1035,7 +1260,6 @@ pub fn EditorView() -> Element {
         let mut show_deck_menu = show_deck_menu;
         let mut show_delete_modal = show_delete_modal;
         let show_duplicate_modal = show_duplicate_modal;
-        let close_duplicate_modal_action = close_duplicate_modal_action;
         use_callback(move |evt: KeyboardEvent| {
             if show_delete_modal() && evt.data.key() == Key::Escape {
                 evt.prevent_default();
@@ -1498,6 +1722,34 @@ pub fn EditorView() -> Element {
                                     option { value: "alpha", "A–Z" }
                                 }
                             }
+                            div { class: "editor-list-controls",
+                                span { class: "editor-list-control-label", "Filter tags" }
+                                select {
+                                    class: "editor-list-select",
+                                    disabled: deck_tags_loading || deck_tags_error || deck_tags.is_empty(),
+                                    value: "{selected_filters.first().cloned().unwrap_or_default()}",
+                                    onchange: move |evt| {
+                                        let value = evt.value();
+                                        if value.is_empty() {
+                                            clear_tag_filters_action.call(());
+                                        } else {
+                                            set_tag_filter_action.call(Some(value));
+                                        }
+                                    },
+                                    if deck_tags_loading {
+                                        option { value: "", "Loading tags..." }
+                                    } else if deck_tags_error {
+                                        option { value: "", "Tags unavailable" }
+                                    } else if deck_tags.is_empty() {
+                                        option { value: "", "No tags yet" }
+                                    } else {
+                                        option { value: "", "All tags" }
+                                        for tag in deck_tags.clone() {
+                                            option { value: "{tag}", "{tag}" }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         match cards_state {
                             ViewState::Idle => rsx! {
@@ -1629,6 +1881,75 @@ pub fn EditorView() -> Element {
                                 }
                                 if answer_invalid {
                                     p { class: "editor-error", "Back is required." }
+                                }
+                            }
+
+                            div { class: "editor-group",
+                                label { class: "editor-label", "Tags" }
+                                div { class: "editor-tag-input",
+                                    for tag in card_tags() {
+                                        span { class: "editor-tag-chip",
+                                            "{tag}"
+                                            if can_edit {
+                                                button {
+                                                    class: "editor-tag-remove",
+                                                    r#type: "button",
+                                                    aria_label: "Remove tag",
+                                                    onclick: move |_| remove_tag_action.call(tag.clone()),
+                                                    "×"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    input {
+                                        class: "editor-tag-field",
+                                        r#type: "text",
+                                        placeholder: "Add tag",
+                                        value: "{tag_input_value}",
+                                        disabled: !can_edit,
+                                        oninput: move |evt| tag_input.set(evt.value()),
+                                        onkeydown: move |evt| {
+                                            match evt.data.key() {
+                                                Key::Enter => {
+                                                    evt.prevent_default();
+                                                    let value = tag_input.read().clone();
+                                                    add_tag_action.call(value);
+                                                }
+                                                Key::Character(value) if value == "," => {
+                                                    evt.prevent_default();
+                                                    let value = tag_input.read().clone();
+                                                    add_tag_action.call(value);
+                                                }
+                                                Key::Backspace => {
+                                                    if tag_input.read().trim().is_empty() {
+                                                        let mut tags = card_tags();
+                                                        if tags.pop().is_some() {
+                                                            card_tags.set(tags);
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        },
+                                        onblur: move |_| {
+                                            let value = tag_input.read().trim().to_string();
+                                            if !value.is_empty() {
+                                                add_tag_action.call(value);
+                                            }
+                                        },
+                                    }
+                                }
+                                if can_edit && !tag_suggestions.is_empty() {
+                                    div { class: "editor-tag-suggestions",
+                                        for suggestion in tag_suggestions {
+                                            button {
+                                                class: "editor-tag-suggestion",
+                                                r#type: "button",
+                                                onclick: move |_| add_tag_action.call(suggestion.clone()),
+                                                "{suggestion}"
+                                            }
+                                        }
+                                    }
                                 }
                             }
 

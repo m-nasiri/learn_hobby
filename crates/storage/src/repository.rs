@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use learn_core::model::{
     Card, CardError, CardId, CardPhase, Deck, DeckId, DeckSettings, MediaId, ReviewGrade,
-    ReviewLog, ReviewOutcome, SessionSummary, content::Content,
+    ReviewLog, ReviewOutcome, SessionSummary, Tag, TagId, TagName, content::Content,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -287,6 +287,17 @@ pub trait CardRepository: Send + Sync {
     /// Returns `StorageError` on connection or serialization failure.
     async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
 
+    /// List cards for a deck that match any of the provided tags.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn list_cards_by_tags(
+        &self,
+        deck_id: DeckId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Card>, StorageError>;
+
     /// Returns true if a card with the given prompt exists in the deck.
     ///
     /// Comparison is normalized (trimmed, case-insensitive).
@@ -300,6 +311,36 @@ pub trait CardRepository: Send + Sync {
         prompt_text: &str,
         exclude: Option<CardId>,
     ) -> Result<bool, StorageError>;
+
+    /// List all tags available for a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on storage failures.
+    async fn list_tags_for_deck(&self, deck_id: DeckId) -> Result<Vec<Tag>, StorageError>;
+
+    /// List tags attached to a card.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on storage failures.
+    async fn list_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<Vec<Tag>, StorageError>;
+
+    /// Replace the tags for a card, creating new tags if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on storage failures.
+    async fn set_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Tag>, StorageError>;
 }
 
 #[async_trait]
@@ -401,10 +442,13 @@ pub trait SessionSummaryRepository: Send + Sync {
 struct InMemState {
     decks: HashMap<DeckId, Deck>,
     cards: HashMap<CardId, Card>,
+    tags: HashMap<TagId, Tag>,
+    card_tags: HashMap<CardId, Vec<TagId>>,
     logs: Vec<ReviewLogRecord>,
     summaries: HashMap<i64, SessionSummary>,
     next_deck_id: u64,
     next_card_id: u64,
+    next_tag_id: u64,
     next_log_id: i64,
     next_summary_id: i64,
 }
@@ -422,6 +466,7 @@ impl InMemoryRepository {
             state: Arc::new(Mutex::new(InMemState {
                 next_deck_id: 1,
                 next_card_id: 1,
+                next_tag_id: 1,
                 next_log_id: 1,
                 next_summary_id: 1,
                 ..InMemState::default()
@@ -564,6 +609,7 @@ impl CardRepository for InMemoryRepository {
         match guard.cards.get(&card_id) {
             Some(card) if card.deck_id() == deck_id => {
                 guard.cards.remove(&card_id);
+                guard.card_tags.remove(&card_id);
                 guard
                     .logs
                     .retain(|log| !(log.deck_id == deck_id && log.card_id == card_id));
@@ -649,6 +695,55 @@ impl CardRepository for InMemoryRepository {
         Ok(cards)
     }
 
+    async fn list_cards_by_tags(
+        &self,
+        deck_id: DeckId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Card>, StorageError> {
+        if tag_names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let tag_ids: Vec<TagId> = guard
+            .tags
+            .values()
+            .filter(|tag| tag.deck_id() == deck_id)
+            .filter(|tag| tag_names.iter().any(|name| name == tag.name()))
+            .map(Tag::id)
+            .collect();
+
+        if tag_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut cards: Vec<Card> = guard
+            .cards
+            .values()
+            .filter(|card| card.deck_id() == deck_id)
+            .filter(|card| {
+                guard
+                    .card_tags
+                    .get(&card.id())
+                    .is_some_and(|ids| ids.iter().any(|id| tag_ids.contains(id)))
+            })
+            .cloned()
+            .collect();
+
+        // Default ordering: created_at DESC, id DESC (matches list_cards behavior)
+        cards.sort_by(|a, b| {
+            b.created_at()
+                .cmp(&a.created_at())
+                .then_with(|| b.id().value().cmp(&a.id().value()))
+        });
+
+        Ok(cards)
+    }
+
     async fn prompt_exists(
         &self,
         deck_id: DeckId,
@@ -671,6 +766,114 @@ impl CardRepository for InMemoryRepository {
         });
 
         Ok(exists)
+    }
+
+    async fn list_tags_for_deck(&self, deck_id: DeckId) -> Result<Vec<Tag>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let mut tags: Vec<Tag> = guard
+            .tags
+            .values()
+            .filter(|tag| tag.deck_id() == deck_id)
+            .cloned()
+            .collect();
+        tags.sort_by(|a, b| {
+            a.name()
+                .as_str()
+                .cmp(b.name().as_str())
+                .then_with(|| a.id().value().cmp(&b.id().value()))
+        });
+        Ok(tags)
+    }
+
+    async fn list_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<Vec<Tag>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let Some(card) = guard.cards.get(&card_id) else {
+            return Err(StorageError::NotFound);
+        };
+        if card.deck_id() != deck_id {
+            return Err(StorageError::NotFound);
+        }
+
+        let mut tags = Vec::new();
+        if let Some(tag_ids) = guard.card_tags.get(&card_id) {
+            for tag_id in tag_ids {
+                if let Some(tag) = guard.tags.get(tag_id) {
+                    tags.push(tag.clone());
+                }
+            }
+        }
+        tags.sort_by(|a, b| {
+            a.name()
+                .as_str()
+                .cmp(b.name().as_str())
+                .then_with(|| a.id().value().cmp(&b.id().value()))
+        });
+        Ok(tags)
+    }
+
+    async fn set_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Tag>, StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let Some(card) = guard.cards.get(&card_id) else {
+            return Err(StorageError::NotFound);
+        };
+        if card.deck_id() != deck_id {
+            return Err(StorageError::NotFound);
+        }
+
+        let mut tag_ids = Vec::new();
+        for name in tag_names {
+            let existing = guard
+                .tags
+                .values()
+                .find(|tag| tag.deck_id() == deck_id && tag.name() == name)
+                .map(Tag::id);
+
+            let tag_id = if let Some(id) = existing {
+                id
+            } else {
+                let id = guard.next_tag_id;
+                guard.next_tag_id = id
+                    .checked_add(1)
+                    .ok_or_else(|| StorageError::Serialization("tag_id overflow".into()))?;
+                let tag_id = TagId::new(id);
+                let tag = Tag::new(tag_id, deck_id, name.clone());
+                guard.tags.insert(tag_id, tag);
+                tag_id
+            };
+
+            if !tag_ids.contains(&tag_id) {
+                tag_ids.push(tag_id);
+            }
+        }
+
+        guard.card_tags.insert(card_id, tag_ids);
+        let mut tags = Vec::new();
+        if let Some(tag_ids) = guard.card_tags.get(&card_id) {
+            for tag_id in tag_ids {
+                if let Some(tag) = guard.tags.get(tag_id) {
+                    tags.push(tag.clone());
+                }
+            }
+        }
+        Ok(tags)
     }
 }
 

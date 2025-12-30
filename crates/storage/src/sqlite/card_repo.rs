@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use learn_core::model::{Card, CardId, DeckId};
+use learn_core::model::{Card, CardId, DeckId, Tag, TagName};
 
 use super::{
     SqliteRepository,
-    mapping::{card_id_from_i64, map_card_row, media_id_to_i64},
+    mapping::{card_id_from_i64, map_card_row, map_tag_row, media_id_to_i64},
 };
 use crate::repository::{CardRepository, NewCardRecord, StorageError};
 
@@ -283,6 +283,58 @@ impl CardRepository for SqliteRepository {
         Ok(cards)
     }
 
+    async fn list_cards_by_tags(
+        &self,
+        deck_id: DeckId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Card>, StorageError> {
+        if tag_names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let mut sql = String::from(
+            r"
+            SELECT DISTINCT
+                cards.id, cards.deck_id, cards.prompt, cards.prompt_media_id, cards.answer,
+                cards.answer_media_id, cards.phase, cards.created_at, cards.next_review_at,
+                cards.last_review_at, cards.review_count, cards.stability, cards.difficulty
+            FROM cards
+            JOIN card_tags ON card_tags.card_id = cards.id
+            JOIN tags ON tags.id = card_tags.tag_id
+            WHERE cards.deck_id = ?1
+              AND tags.name IN (
+            ",
+        );
+
+        for i in 0..tag_names.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+            sql.push_str(&(i + 2).to_string());
+        }
+        sql.push_str(")\n");
+
+        let mut q = sqlx::query(&sql).bind(deck);
+        for name in tag_names {
+            q = q.bind(name.as_str());
+        }
+
+        let rows = q
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut cards = Vec::with_capacity(rows.len());
+        for row in rows {
+            cards.push(map_card_row(&row)?);
+        }
+        Ok(cards)
+    }
+
     async fn prompt_exists(
         &self,
         deck_id: DeckId,
@@ -331,5 +383,154 @@ impl CardRepository for SqliteRepository {
         };
 
         Ok(exists != 0)
+    }
+
+    async fn list_tags_for_deck(&self, deck_id: DeckId) -> Result<Vec<Tag>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let rows = sqlx::query(
+            r"
+            SELECT id, deck_id, name
+            FROM tags
+            WHERE deck_id = ?1
+            ORDER BY name ASC, id ASC
+            ",
+        )
+        .bind(deck)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut tags = Vec::with_capacity(rows.len());
+        for row in rows {
+            tags.push(map_tag_row(&row)?);
+        }
+        Ok(tags)
+    }
+
+    async fn list_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<Vec<Tag>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let card = i64::try_from(card_id.value())
+            .map_err(|_| StorageError::Serialization("card_id overflow".into()))?;
+
+        let rows = sqlx::query(
+            r"
+            SELECT tags.id, tags.deck_id, tags.name
+            FROM tags
+            JOIN card_tags ON card_tags.tag_id = tags.id
+            JOIN cards ON cards.id = card_tags.card_id
+            WHERE cards.deck_id = ?1
+              AND cards.id = ?2
+            ORDER BY tags.name ASC, tags.id ASC
+            ",
+        )
+        .bind(deck)
+        .bind(card)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut tags = Vec::with_capacity(rows.len());
+        for row in rows {
+            tags.push(map_tag_row(&row)?);
+        }
+        Ok(tags)
+    }
+
+    async fn set_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Tag>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let card = i64::try_from(card_id.value())
+            .map_err(|_| StorageError::Serialization("card_id overflow".into()))?;
+
+        let mut tx = self.pool.begin().await.map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        sqlx::query(
+            r"
+            DELETE FROM card_tags
+            WHERE card_id = ?1
+            ",
+        )
+        .bind(card)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        for name in tag_names {
+            sqlx::query(
+                r"
+                INSERT INTO tags (deck_id, name)
+                VALUES (?1, ?2)
+                ON CONFLICT(deck_id, name) DO NOTHING
+                ",
+            )
+            .bind(deck)
+            .bind(name.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+            let tag_id: i64 = sqlx::query_scalar(
+                r"
+                SELECT id
+                FROM tags
+                WHERE deck_id = ?1 AND name = ?2
+                ",
+            )
+            .bind(deck)
+            .bind(name.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+            sqlx::query(
+                r"
+                INSERT INTO card_tags (card_id, tag_id)
+                VALUES (?1, ?2)
+                ON CONFLICT(card_id, tag_id) DO NOTHING
+                ",
+            )
+            .bind(card)
+            .bind(tag_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        }
+
+        let rows = sqlx::query(
+            r"
+            SELECT tags.id, tags.deck_id, tags.name
+            FROM tags
+            JOIN card_tags ON card_tags.tag_id = tags.id
+            WHERE card_tags.card_id = ?1
+            ORDER BY tags.name ASC, tags.id ASC
+            ",
+        )
+        .bind(card)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut tags = Vec::with_capacity(rows.len());
+        for row in rows {
+            tags.push(map_tag_row(&row)?);
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        Ok(tags)
     }
 }

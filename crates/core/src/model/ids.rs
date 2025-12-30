@@ -56,6 +56,24 @@ impl MediaId {
     }
 }
 
+/// Unique identifier for a Tag
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TagId(u64);
+
+impl TagId {
+    /// Creates a new `TagId`
+    #[must_use]
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// Returns the underlying u64 value
+    #[must_use]
+    pub fn value(&self) -> u64 {
+        self.0
+    }
+}
+
 impl fmt::Debug for CardId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "CardId({})", self.0)
@@ -74,6 +92,12 @@ impl fmt::Debug for MediaId {
     }
 }
 
+impl fmt::Debug for TagId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TagId({})", self.0)
+    }
+}
+
 // ─── Display Implementations ───────────────────────────────────────────────────
 
 impl fmt::Display for CardId {
@@ -89,6 +113,12 @@ impl fmt::Display for DeckId {
 }
 
 impl fmt::Display for MediaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for TagId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -146,6 +176,18 @@ impl FromStr for MediaId {
     }
 }
 
+impl FromStr for TagId {
+    type Err = ParseIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<u64>()
+            .map(TagId::new)
+            .map_err(|_| ParseIdError {
+                kind: "TagId".to_string(),
+            })
+    }
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -192,6 +234,18 @@ mod tests {
     fn test_media_id_from_str() {
         let id: MediaId = "789".parse().unwrap();
         assert_eq!(id, MediaId::new(789));
+    }
+
+    #[test]
+    fn test_tag_id_display() {
+        let id = TagId::new(77);
+        assert_eq!(id.to_string(), "77");
+    }
+
+    #[test]
+    fn test_tag_id_from_str() {
+        let id: TagId = "55".parse().unwrap();
+        assert_eq!(id, TagId::new(55));
     }
 
     #[test]

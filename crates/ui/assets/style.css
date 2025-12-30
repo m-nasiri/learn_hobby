@@ -773,6 +773,7 @@ a {
   gap: 8px;
 }
 
+
 .editor-list-control-label {
   color: rgba(0, 0, 0, 0.55);
   font-size: 0.78rem;
@@ -1098,6 +1099,73 @@ a {
   background: rgba(255, 255, 255, 0.95);
   font-weight: 700;
   line-height: 1;
+}
+
+.editor-tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  min-height: 44px;
+  align-items: center;
+}
+
+.editor-tag-input:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.editor-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(120, 146, 240, 0.18);
+  color: rgba(0, 0, 0, 0.75);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.editor-tag-remove {
+  border: none;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.editor-tag-field {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink-1);
+  min-width: 120px;
+  flex: 1 1 120px;
+  outline: none;
+}
+
+.editor-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editor-tag-suggestion {
+  border: 1px dashed var(--border-subtle);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  font-size: 0.78rem;
+  color: rgba(0, 0, 0, 0.7);
+  cursor: pointer;
 }
 
 .editor-footer {

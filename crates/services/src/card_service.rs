@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::Duration;
-use learn_core::model::{Card, CardError, CardId, CardPhase, ContentDraft, DeckId};
+use learn_core::model::{Card, CardError, CardId, CardPhase, ContentDraft, DeckId, Tag, TagName};
 use storage::repository::{CardRepository, NewCardRecord};
 
 use crate::error::CardServiceError;
@@ -14,12 +15,23 @@ pub struct CardService {
     cards: Arc<dyn CardRepository>,
 }
 
+fn dedup_tags(tags: &[TagName]) -> Vec<TagName> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for tag in tags {
+        if seen.insert(tag.as_str().to_string()) {
+            out.push(tag.clone());
+        }
+    }
+    out
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CardListSort {
-    /// Newest first (created_at DESC).
+    /// Newest first (`created_at` DESC).
     Recent,
-    /// Oldest first (created_at ASC).
+    /// Oldest first (`created_at` ASC).
     Created,
     /// Alphabetical by prompt text.
     Alpha,
@@ -52,6 +64,22 @@ impl CardService {
         prompt: ContentDraft,
         answer: ContentDraft,
     ) -> Result<CardId, CardServiceError> {
+        self.create_card_with_tags(deck_id, prompt, answer, &[]).await
+    }
+
+    /// Create a new card with tags and persist it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Card` for validation failures.
+    /// Returns `CardServiceError::Storage` if persistence fails.
+    pub async fn create_card_with_tags(
+        &self,
+        deck_id: DeckId,
+        prompt: ContentDraft,
+        answer: ContentDraft,
+        tag_names: &[TagName],
+    ) -> Result<CardId, CardServiceError> {
         let now = self.clock.now();
         let prompt = prompt
             .validate(now, None, None)
@@ -76,6 +104,10 @@ impl CardService {
         };
 
         let card_id = self.cards.insert_new_card(record).await?;
+        if !tag_names.is_empty() {
+            let tags = dedup_tags(tag_names);
+            self.cards.set_tags_for_card(deck_id, card_id, &tags).await?;
+        }
         Ok(card_id)
     }
 
@@ -105,6 +137,8 @@ impl CardService {
 
     /// List cards for a deck with sorting and filtering.
     ///
+    /// If `tag_names` is non-empty, only cards with at least one of the tags are returned.
+    ///
     /// # Errors
     ///
     /// Returns `CardServiceError::Storage` if repository access fails.
@@ -114,8 +148,13 @@ impl CardService {
         limit: u32,
         sort: CardListSort,
         filter: CardListFilter,
+        tag_names: &[TagName],
     ) -> Result<Vec<Card>, CardServiceError> {
-        let mut cards = self.cards.list_cards(deck_id, limit).await?;
+        let mut cards = if tag_names.is_empty() {
+            self.cards.list_cards(deck_id, limit).await?
+        } else {
+            self.cards.list_cards_by_tags(deck_id, tag_names).await?
+        };
 
         if matches!(filter, CardListFilter::DueSoon) {
             let now = self.clock.now();
@@ -124,9 +163,19 @@ impl CardService {
         }
 
         match sort {
-            CardListSort::Recent => {}
+            CardListSort::Recent => {
+                cards.sort_by(|a, b| {
+                    b.created_at()
+                        .cmp(&a.created_at())
+                        .then_with(|| b.id().value().cmp(&a.id().value()))
+                });
+            }
             CardListSort::Created => {
-                cards.sort_by_key(|card| (card.created_at(), card.id().value()));
+                cards.sort_by(|a, b| {
+                    a.created_at()
+                        .cmp(&b.created_at())
+                        .then_with(|| a.id().value().cmp(&b.id().value()))
+                });
             }
             CardListSort::Alpha => {
                 cards.sort_by(|left, right| {
@@ -139,7 +188,48 @@ impl CardService {
             }
         }
 
+        cards.truncate(limit as usize);
         Ok(cards)
+    }
+
+    /// List tags for a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn list_tags_for_deck(&self, deck_id: DeckId) -> Result<Vec<Tag>, CardServiceError> {
+        let tags = self.cards.list_tags_for_deck(deck_id).await?;
+        Ok(tags)
+    }
+
+    /// List tags for a card.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn list_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+    ) -> Result<Vec<Tag>, CardServiceError> {
+        let tags = self.cards.list_tags_for_card(deck_id, card_id).await?;
+        Ok(tags)
+    }
+
+    /// Replace tags for a card.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn set_tags_for_card(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+        tag_names: &[TagName],
+    ) -> Result<Vec<Tag>, CardServiceError> {
+        let tags = dedup_tags(tag_names);
+        let tags = self.cards.set_tags_for_card(deck_id, card_id, &tags).await?;
+        Ok(tags)
     }
 
     /// Returns true if a card with the given prompt exists in the deck.
@@ -216,6 +306,26 @@ impl CardService {
         )?;
 
         self.cards.upsert_card(&updated).await?;
+        Ok(())
+    }
+
+    /// Update a card's prompt/answer content and tags while preserving scheduling state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Card` for validation failures.
+    /// Returns `CardServiceError::Storage` if persistence fails.
+    pub async fn update_card_content_with_tags(
+        &self,
+        deck_id: DeckId,
+        card_id: CardId,
+        prompt: ContentDraft,
+        answer: ContentDraft,
+        tag_names: &[TagName],
+    ) -> Result<(), CardServiceError> {
+        self.update_card_content(deck_id, card_id, prompt, answer)
+            .await?;
+        self.set_tags_for_card(deck_id, card_id, tag_names).await?;
         Ok(())
     }
 

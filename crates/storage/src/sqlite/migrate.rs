@@ -72,6 +72,34 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
 
         sqlx::query(
             r"
+                CREATE TABLE IF NOT EXISTS tags (
+                    id INTEGER PRIMARY KEY,
+                    deck_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE,
+                    UNIQUE(deck_id, name)
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE TABLE IF NOT EXISTS card_tags (
+                    card_id INTEGER NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    PRIMARY KEY (card_id, tag_id),
+                    FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
                 CREATE TABLE IF NOT EXISTS review_logs (
                     id INTEGER PRIMARY KEY,
                     deck_id INTEGER NOT NULL,
@@ -123,6 +151,33 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
             r"
                 CREATE INDEX IF NOT EXISTS idx_cards_deck_reviewcount_created
                     ON cards(deck_id, review_count, created_at, id);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE INDEX IF NOT EXISTS idx_tags_deck_name
+                    ON tags(deck_id, name);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE INDEX IF NOT EXISTS idx_card_tags_card
+                    ON card_tags(card_id, tag_id);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE INDEX IF NOT EXISTS idx_card_tags_tag
+                    ON card_tags(tag_id, card_id);
             ",
         )
         .execute(&mut *tx)
