@@ -1654,166 +1654,172 @@ pub fn EditorView() -> Element {
                         tabindex: "0",
                         aria_label: "Card list",
                         onkeydown: list_on_key,
-                        div { class: "editor-list-header",
-                            div { class: "editor-list-title-row",
-                                h3 { class: "editor-list-title", "Cards" }
-                                if let Some(count) = match_count {
-                                    span { class: "editor-list-count",
-                                        if count == 1 {
-                                            "1 result"
-                                        } else {
-                                            "{count} results"
+                        div { class: "editor-list-toolbar",
+                            div { class: "editor-list-header",
+                                div { class: "editor-list-title-row",
+                                    h3 { class: "editor-list-title", "Cards" }
+                                    if let Some(count) = match_count {
+                                        span { class: "editor-list-count",
+                                            if count == 1 {
+                                                "1 result"
+                                            } else {
+                                                "{count} results"
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            div { class: "editor-list-search",
-                                span { class: "editor-list-search-icon",
-                                    svg {
-                                        view_box: "0 0 16 16",
-                                        path {
-                                            d: "M7 2.5a4.5 4.5 0 1 1-3.2 7.7l-2.1 2.1",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                        }
-                                    }
-                                }
-                                input {
-                                    class: "editor-list-search-input",
-                                    r#type: "text",
-                                    placeholder: "Search",
-                                    value: "{search_value}",
-                                    oninput: move |evt| search_query.set(evt.value()),
-                                    onkeydown: move |evt| {
-                                        if matches!(evt.data.key(), Key::Escape) {
-                                            evt.prevent_default();
-                                            search_query.set(String::new());
-                                        }
-                                    },
-                                }
-                                if has_search {
-                                    button {
-                                        class: "editor-list-search-clear",
-                                        aria_label: "Clear search",
-                                        r#type: "button",
-                                        onclick: move |_| search_query.set(String::new()),
+                                div { class: "editor-list-search",
+                                    span { class: "editor-list-search-icon",
                                         svg {
-                                            class: "editor-list-search-clear-icon",
-                                            view_box: "0 0 12 12",
+                                            view_box: "0 0 16 16",
                                             path {
-                                                d: "M3 3l6 6M9 3l-6 6",
+                                                d: "M7 2.5a4.5 4.5 0 1 1-3.2 7.7l-2.1 2.1",
                                                 stroke_linecap: "round",
                                                 stroke_linejoin: "round",
                                             }
                                         }
                                     }
-                                }
-                            }
-                            div { class: "editor-list-controls",
-                                span { class: "editor-list-control-label", "Sort by" }
-                                select {
-                                    class: "editor-list-select",
-                                    value: "{sort_value(sort_mode())}",
-                                    onchange: move |evt| {
-                                        sort_mode.set(sort_from_value(&evt.value()));
-                                    },
-                                    option { value: "recent", "Recent" }
-                                    option { value: "created", "Created" }
-                                    option { value: "alpha", "A–Z" }
-                                }
-                            }
-                            div { class: "editor-list-controls",
-                                span { class: "editor-list-control-label", "Filter tags" }
-                                select {
-                                    class: "editor-list-select",
-                                    disabled: deck_tags_loading || deck_tags_error || deck_tags.is_empty(),
-                                    value: "{selected_filters.first().cloned().unwrap_or_default()}",
-                                    onchange: move |evt| {
-                                        let value = evt.value();
-                                        if value.is_empty() {
-                                            clear_tag_filters_action.call(());
-                                        } else {
-                                            set_tag_filter_action.call(Some(value));
+                                    input {
+                                        class: "editor-list-search-input",
+                                        r#type: "text",
+                                        placeholder: "Search",
+                                        value: "{search_value}",
+                                        oninput: move |evt| search_query.set(evt.value()),
+                                        onkeydown: move |evt| {
+                                            if matches!(evt.data.key(), Key::Escape) {
+                                                evt.prevent_default();
+                                                search_query.set(String::new());
+                                            }
+                                        },
+                                    }
+                                    if has_search {
+                                        button {
+                                            class: "editor-list-search-clear",
+                                            aria_label: "Clear search",
+                                            r#type: "button",
+                                            onclick: move |_| search_query.set(String::new()),
+                                            svg {
+                                                class: "editor-list-search-clear-icon",
+                                                view_box: "0 0 12 12",
+                                                path {
+                                                    d: "M3 3l6 6M9 3l-6 6",
+                                                    stroke_linecap: "round",
+                                                    stroke_linejoin: "round",
+                                                }
+                                            }
                                         }
-                                    },
-                                    if deck_tags_loading {
-                                        option { value: "", "Loading tags..." }
-                                    } else if deck_tags_error {
-                                        option { value: "", "Tags unavailable" }
-                                    } else if deck_tags.is_empty() {
-                                        option { value: "", "No tags yet" }
-                                    } else {
-                                        option { value: "", "All tags" }
-                                        for tag in deck_tags.clone() {
-                                            option { value: "{tag}", "{tag}" }
+                                    }
+                                }
+                                div { class: "editor-list-controls",
+                                    span { class: "editor-list-control-label", "Sort by" }
+                                    select {
+                                        class: "editor-list-select",
+                                        value: "{sort_value(sort_mode())}",
+                                        onchange: move |evt| {
+                                            sort_mode.set(sort_from_value(&evt.value()));
+                                        },
+                                        option { value: "recent", "Recent" }
+                                        option { value: "created", "Created" }
+                                        option { value: "alpha", "A–Z" }
+                                    }
+                                }
+                                div { class: "editor-list-controls",
+                                    span { class: "editor-list-control-label", "Filter tags" }
+                                    select {
+                                        class: "editor-list-select",
+                                        disabled: deck_tags_loading || deck_tags_error || deck_tags.is_empty(),
+                                        value: "{selected_filters.first().cloned().unwrap_or_default()}",
+                                        onchange: move |evt| {
+                                            let value = evt.value();
+                                            if value.is_empty() {
+                                                clear_tag_filters_action.call(());
+                                            } else {
+                                                set_tag_filter_action.call(Some(value));
+                                            }
+                                        },
+                                        if deck_tags_loading {
+                                            option { value: "", "Loading tags..." }
+                                        } else if deck_tags_error {
+                                            option { value: "", "Tags unavailable" }
+                                        } else if deck_tags.is_empty() {
+                                            option { value: "", "No tags yet" }
+                                        } else {
+                                            option { value: "", "All tags" }
+                                            for tag in deck_tags.clone() {
+                                                option { value: "{tag}", "{tag}" }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                        match cards_state {
-                            ViewState::Idle => rsx! {
-                                p { class: "editor-list-empty", "Idle" }
-                            },
-                            ViewState::Loading => rsx! {
-                                p { class: "editor-list-empty", "Loading cards..." }
-                            },
-                            ViewState::Error(err) => rsx! {
-                                p { class: "editor-list-empty", "{err.message()}" }
-                            },
-                            ViewState::Ready(items) => {
-                                let active_id = selected_card_id();
-                                if items.is_empty() {
-                                    rsx! {
-                                        p { class: "editor-list-empty", "No cards yet." }
-                                        button {
-                                            class: "btn editor-list-cta",
-                                            r#type: "button",
-                                            onclick: move |_| request_new_card_action.call(()),
-                                            "Create your first card"
-                                        }
-                                    }
-                                } else {
-                                    let filtered_items =
-                                        filter_card_list_items(&items, search_value.trim());
-                                    if filtered_items.is_empty() {
+                        div { class: "editor-list-surface",
+                            div { class: "editor-list-body",
+                            match cards_state {
+                                ViewState::Idle => rsx! {
+                                    p { class: "editor-list-empty", "Idle" }
+                                },
+                                ViewState::Loading => rsx! {
+                                    p { class: "editor-list-empty", "Loading cards..." }
+                                },
+                                ViewState::Error(err) => rsx! {
+                                    p { class: "editor-list-empty", "{err.message()}" }
+                                },
+                                ViewState::Ready(items) => {
+                                    let active_id = selected_card_id();
+                                    if items.is_empty() {
                                         rsx! {
-                                            p { class: "editor-list-empty", "No matches." }
+                                            p { class: "editor-list-empty", "No cards yet." }
+                                            button {
+                                                class: "btn editor-list-cta",
+                                                r#type: "button",
+                                                onclick: move |_| request_new_card_action.call(()),
+                                                "Create your first card"
+                                            }
                                         }
                                     } else {
-                                    rsx! {
-                                        ul { class: "editor-list-items",
-                                            for item in filtered_items {
-                                                li {
-                                                    class: if Some(item.id) == active_id {
-                                                        "editor-list-item editor-list-item--active"
-                                                    } else {
-                                                        "editor-list-item"
-                                                    },
-                                                    key: "{item.id.value()}",
-                                                    onclick: move |_| request_select_card_action.call(item.clone()),
-                                                    div { class: "editor-list-front",
-                                                        for node in render_highlighted(
-                                                            &item.prompt_preview,
-                                                            search_value.trim(),
-                                                        ) {
-                                                            {node}
+                                        let filtered_items =
+                                            filter_card_list_items(&items, search_value.trim());
+                                        if filtered_items.is_empty() {
+                                            rsx! {
+                                                p { class: "editor-list-empty", "No matches." }
+                                            }
+                                        } else {
+                                        rsx! {
+                                            ul { class: "editor-list-items",
+                                                for item in filtered_items {
+                                                    li {
+                                                        class: if Some(item.id) == active_id {
+                                                            "editor-list-item editor-list-item--active"
+                                                        } else {
+                                                            "editor-list-item"
+                                                        },
+                                                        key: "{item.id.value()}",
+                                                        onclick: move |_| request_select_card_action.call(item.clone()),
+                                                        div { class: "editor-list-front",
+                                                            for node in render_highlighted(
+                                                                &item.prompt_preview,
+                                                                search_value.trim(),
+                                                            ) {
+                                                                {node}
+                                                            }
                                                         }
-                                                    }
-                                                    div { class: "editor-list-back",
-                                                        for node in render_highlighted(
-                                                            &item.answer_preview,
-                                                            search_value.trim(),
-                                                        ) {
-                                                            {node}
+                                                        div { class: "editor-list-back",
+                                                            for node in render_highlighted(
+                                                                &item.answer_preview,
+                                                                search_value.trim(),
+                                                            ) {
+                                                                {node}
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
+                                        }
                                     }
                                 }
+                            }
                             }
                         }
                     }
