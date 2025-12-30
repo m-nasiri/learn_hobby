@@ -42,6 +42,7 @@ pub fn EditorView() -> Element {
     let mut save_state = use_signal(|| SaveState::Idle);
     let mut delete_state = use_signal(|| DeleteState::Idle);
     let mut show_delete_modal = use_signal(|| false);
+    let mut show_validation = use_signal(|| false);
     let mut show_new_deck = use_signal(|| false);
     let mut new_deck_name = use_signal(String::new);
     let mut new_deck_state = use_signal(|| SaveState::Idle);
@@ -94,17 +95,16 @@ pub fn EditorView() -> Element {
     let mut answer_text = use_signal(String::new);
 
     let can_edit = is_create_mode() || selected_card_id().is_some();
-    let can_save = {
-        let p = prompt_text.read();
-        let a = answer_text.read();
-        can_edit && !p.trim().is_empty() && !a.trim().is_empty()
-    };
+    let can_submit = can_edit
+        && save_state() != SaveState::Saving
+        && delete_state() != DeleteState::Deleting;
     let save_action = use_callback(move |practice: bool| {
         let card_service = card_service_for_save.clone();
         let navigator = navigator;
         let mut save_state = save_state;
         let mut delete_state = delete_state;
         let mut show_delete_modal = show_delete_modal;
+        let mut show_validation = show_validation;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
         let mut cards_resource = cards_resource;
@@ -116,7 +116,12 @@ pub fn EditorView() -> Element {
         let prompt = prompt_text.read().trim().to_owned();
         let answer = answer_text.read().trim().to_owned();
 
-        if prompt.is_empty() || answer.is_empty() || save_state() == SaveState::Saving {
+        if save_state() == SaveState::Saving {
+            return;
+        }
+
+        if prompt.is_empty() || answer.is_empty() {
+            show_validation.set(true);
             return;
         }
 
@@ -133,6 +138,7 @@ pub fn EditorView() -> Element {
             save_state.set(SaveState::Saving);
             delete_state.set(DeleteState::Idle);
             show_delete_modal.set(false);
+            show_validation.set(false);
             let result = match editing_id {
                 Some(card_id) => {
                     card_service
@@ -160,6 +166,7 @@ pub fn EditorView() -> Element {
                     save_state.set(SaveState::Success);
                     delete_state.set(DeleteState::Idle);
                     show_delete_modal.set(false);
+                    show_validation.set(false);
                     cards_resource.restart();
                     match (is_create_mode(), practice) {
                         (true, true) => {
@@ -205,6 +212,7 @@ pub fn EditorView() -> Element {
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
         let mut delete_state = delete_state;
+        let mut show_validation = show_validation;
         let mut show_delete_modal = show_delete_modal;
 
         let name = new_deck_name.read().trim().to_owned();
@@ -229,6 +237,7 @@ pub fn EditorView() -> Element {
                     rename_deck_error.set(None);
                     delete_state.set(DeleteState::Idle);
                     show_delete_modal.set(false);
+                    show_validation.set(false);
                     new_deck_state.set(SaveState::Success);
                     decks_resource.restart();
                     cards_resource.restart();
@@ -334,7 +343,9 @@ pub fn EditorView() -> Element {
         answer_text.set(item.answer);
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
+        show_validation.set(false);
         show_delete_modal.set(false);
+        show_validation.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         show_deck_menu.set(false);
@@ -454,6 +465,7 @@ pub fn EditorView() -> Element {
         let mut show_deck_menu = show_deck_menu;
         let mut delete_state = delete_state;
         let mut show_delete_modal = show_delete_modal;
+        let mut show_validation = show_validation;
 
         if !is_create_mode() {
             return;
@@ -474,6 +486,7 @@ pub fn EditorView() -> Element {
         save_state.set(SaveState::Idle);
         delete_state.set(DeleteState::Idle);
         show_delete_modal.set(false);
+        show_validation.set(false);
         show_deck_menu.set(false);
     });
 
@@ -486,6 +499,7 @@ pub fn EditorView() -> Element {
     let mut save_state_for_effect = save_state;
     let mut delete_state_for_effect = delete_state;
     let mut show_delete_modal_for_effect = show_delete_modal;
+    let mut show_validation_for_effect = show_validation;
     use_effect(move || {
         let cards_state_effect = view_state_from_resource(&cards_resource);
         if let ViewState::Ready(items) = &cards_state_effect {
@@ -499,6 +513,7 @@ pub fn EditorView() -> Element {
                     save_state_for_effect.set(SaveState::Idle);
                     delete_state_for_effect.set(DeleteState::Idle);
                     show_delete_modal_for_effect.set(false);
+                    show_validation_for_effect.set(false);
                 }
             } else if selected_card_id_for_effect().is_none()
                 && !is_create_mode_for_effect()
@@ -520,6 +535,8 @@ pub fn EditorView() -> Element {
     };
 
     let can_cancel = is_create_mode() && last_selected_card().is_some();
+    let prompt_invalid = show_validation() && prompt_text.read().trim().is_empty();
+    let answer_invalid = show_validation() && answer_text.read().trim().is_empty();
 
     let on_key = {
         let deck_label = deck_label.clone();
@@ -838,7 +855,11 @@ pub fn EditorView() -> Element {
                                 label { class: "editor-label", r#for: "prompt", "Front" }
                                 textarea {
                                     id: "prompt",
-                                    class: "editor-input editor-input--multi",
+                                    class: if prompt_invalid {
+                                        "editor-input editor-input--multi editor-input--error"
+                                    } else {
+                                        "editor-input editor-input--multi"
+                                    },
                                     rows: 6,
                                     placeholder: "Enter the prompt for the front of the card...",
                                     value: "{prompt_text.read()}",
@@ -848,13 +869,20 @@ pub fn EditorView() -> Element {
                                         save_state.set(SaveState::Idle);
                                     },
                                 }
+                                if prompt_invalid {
+                                    p { class: "editor-error", "Front is required." }
+                                }
                             }
 
                             div { class: "editor-group",
                                 label { class: "editor-label", r#for: "answer", "Back" }
                                 textarea {
                                     id: "answer",
-                                    class: "editor-input editor-input--multi",
+                                    class: if answer_invalid {
+                                        "editor-input editor-input--multi editor-input--error"
+                                    } else {
+                                        "editor-input editor-input--multi"
+                                    },
                                     rows: 6,
                                     placeholder: "Enter the answer for the back of the card...",
                                     value: "{answer_text.read()}",
@@ -863,6 +891,9 @@ pub fn EditorView() -> Element {
                                         answer_text.set(evt.value());
                                         save_state.set(SaveState::Idle);
                                     },
+                                }
+                                if answer_invalid {
+                                    p { class: "editor-error", "Back is required." }
                                 }
                             }
 
@@ -907,7 +938,7 @@ pub fn EditorView() -> Element {
                                 button {
                                     class: "btn btn-primary editor-save",
                                     r#type: "button",
-                                    disabled: !can_save || save_state() == SaveState::Saving,
+                                    disabled: !can_submit,
                                     onclick: move |_| save_action.call(false),
                                     "Save"
                                 }
@@ -915,7 +946,7 @@ pub fn EditorView() -> Element {
                                     button {
                                         class: "btn editor-practice",
                                         r#type: "button",
-                                        disabled: !can_save || save_state() == SaveState::Saving,
+                                        disabled: !can_submit,
                                         onclick: move |_| save_action.call(true),
                                         "Save & Practice"
                                     }
