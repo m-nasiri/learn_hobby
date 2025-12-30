@@ -754,6 +754,11 @@ a {
   color: rgba(0, 0, 0, 0.78);
 }
 
+.editor-list-count {
+  color: rgba(0, 0, 0, 0.5);
+  font-size: 0.78rem;
+}
+
 .editor-list-search {
   display: flex;
   align-items: center;
@@ -793,6 +798,17 @@ a {
 
 .editor-list-search-input::placeholder {
   color: rgba(0, 0, 0, 0.45);
+}
+
+.editor-list-text,
+.editor-list-highlight {
+  display: inline;
+}
+
+.editor-list-highlight {
+  background: rgba(120, 146, 240, 0.24);
+  border-radius: 4px;
+  padding: 0 2px;
 }
 
 .editor-list-search-clear {

@@ -43,6 +43,105 @@ enum PendingAction {
     NewCard,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HighlightSpan {
+    text: String,
+    is_match: bool,
+}
+
+fn highlight_spans(text: &str, query: &str) -> Vec<HighlightSpan> {
+    let needle = query.trim();
+    if needle.is_empty() || text.is_empty() {
+        return vec![HighlightSpan {
+            text: text.to_string(),
+            is_match: false,
+        }];
+    }
+
+    let mut lowered = Vec::new();
+    let mut map_start = Vec::new();
+    let mut map_end = Vec::new();
+
+    for (idx, ch) in text.char_indices() {
+        let end = idx + ch.len_utf8();
+        for lower in ch.to_lowercase() {
+            lowered.push(lower);
+            map_start.push(idx);
+            map_end.push(end);
+        }
+    }
+
+    let needle_chars: Vec<char> = needle.to_lowercase().chars().collect();
+    if needle_chars.is_empty() {
+        return vec![HighlightSpan {
+            text: text.to_string(),
+            is_match: false,
+        }];
+    }
+
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    let mut idx = 0usize;
+    while idx + needle_chars.len() <= lowered.len() {
+        if lowered[idx..idx + needle_chars.len()] == needle_chars[..] {
+            let start = map_start[idx];
+            let end = map_end[idx + needle_chars.len() - 1];
+            if start > cursor {
+                spans.push(HighlightSpan {
+                    text: text[cursor..start].to_string(),
+                    is_match: false,
+                });
+            }
+            if start < end {
+                spans.push(HighlightSpan {
+                    text: text[start..end].to_string(),
+                    is_match: true,
+                });
+            }
+            cursor = end;
+            idx += needle_chars.len();
+        } else {
+            idx += 1;
+        }
+    }
+
+    if cursor < text.len() {
+        spans.push(HighlightSpan {
+            text: text[cursor..].to_string(),
+            is_match: false,
+        });
+    }
+
+    if spans.is_empty() {
+        spans.push(HighlightSpan {
+            text: text.to_string(),
+            is_match: false,
+        });
+    }
+
+    spans
+}
+
+fn render_highlighted(text: &str, query: &str) -> Vec<Element> {
+    highlight_spans(text, query)
+        .into_iter()
+        .enumerate()
+        .map(|(idx, span)| {
+            rsx!(
+                span {
+                    key: "{idx}",
+                    class: if span.is_match {
+                        "editor-list-highlight"
+                    } else {
+                        "editor-list-text"
+                    },
+                    "{span.text}"
+                }
+            )
+        })
+        .collect()
+}
+
 #[component]
 pub fn EditorView() -> Element {
     let ctx = use_context::<AppContext>();
@@ -778,6 +877,14 @@ pub fn EditorView() -> Element {
     let can_cancel = is_create_mode() && last_selected_card().is_some();
     let prompt_invalid = show_validation() && prompt_text.read().trim().is_empty();
     let answer_invalid = show_validation() && answer_text.read().trim().is_empty();
+    let search_value = search_query.read().to_string();
+    let has_search = !search_value.trim().is_empty();
+    let match_count = match &cards_state {
+        ViewState::Ready(items) if has_search => {
+            Some(filter_card_list_items(items, search_value.trim()).len())
+        }
+        _ => None,
+    };
 
     use_effect(move || {
         if !focus_prompt() {
@@ -876,7 +983,7 @@ pub fn EditorView() -> Element {
             let ViewState::Ready(items) = &cards_state else {
                 return;
             };
-            let filtered = filter_card_list_items(items, search_query.read().as_str());
+            let filtered = filter_card_list_items(items, search_query.read().trim());
             if filtered.is_empty() {
                 return;
             }
@@ -1171,7 +1278,7 @@ pub fn EditorView() -> Element {
                                     class: "editor-list-search-input",
                                     r#type: "text",
                                     placeholder: "Search",
-                                    value: "{search_query.read()}",
+                                    value: "{search_value}",
                                     oninput: move |evt| search_query.set(evt.value()),
                                     onkeydown: move |evt| {
                                         if matches!(evt.data.key(), Key::Escape) {
@@ -1180,7 +1287,7 @@ pub fn EditorView() -> Element {
                                         }
                                     },
                                 }
-                                if !search_query.read().trim().is_empty() {
+                                if has_search {
                                     button {
                                         class: "editor-list-search-clear",
                                         aria_label: "Clear search",
@@ -1195,6 +1302,15 @@ pub fn EditorView() -> Element {
                                                 stroke_linejoin: "round",
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            if let Some(count) = match_count {
+                                span { class: "editor-list-count",
+                                    if count == 1 {
+                                        "1 result"
+                                    } else {
+                                        "{count} results"
                                     }
                                 }
                             }
@@ -1223,7 +1339,7 @@ pub fn EditorView() -> Element {
                                     }
                                 } else {
                                     let filtered_items =
-                                        filter_card_list_items(&items, search_query.read().as_str());
+                                        filter_card_list_items(&items, search_value.trim());
                                     if filtered_items.is_empty() {
                                         rsx! {
                                             p { class: "editor-list-empty", "No matches." }
@@ -1240,8 +1356,22 @@ pub fn EditorView() -> Element {
                                                     },
                                                     key: "{item.id.value()}",
                                                     onclick: move |_| request_select_card_action.call(item.clone()),
-                                                    div { class: "editor-list-front", "{item.prompt_preview}" }
-                                                    div { class: "editor-list-back", "{item.answer_preview}" }
+                                                    div { class: "editor-list-front",
+                                                        for node in render_highlighted(
+                                                            &item.prompt_preview,
+                                                            search_value.trim(),
+                                                        ) {
+                                                            {node}
+                                                        }
+                                                    }
+                                                    div { class: "editor-list-back",
+                                                        for node in render_highlighted(
+                                                            &item.answer_preview,
+                                                            search_value.trim(),
+                                                        ) {
+                                                            {node}
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
