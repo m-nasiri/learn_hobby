@@ -8,4 +8,6 @@ mod view;
 pub use view::EditorView;
 
 #[cfg(test)]
+mod test_harness;
+#[cfg(test)]
 mod intent_smoke;
