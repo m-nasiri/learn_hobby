@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -488,9 +489,9 @@ pub fn EditorView() -> Element {
     let last_selected_tags = use_signal(Vec::new);
     let mut tag_input = use_signal(String::new);
     let mut last_focus_field = use_signal(|| MarkdownField::Front);
-    let mut duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
-    let mut show_duplicate_modal = use_signal(|| false);
-    let mut pending_duplicate_practice = use_signal(|| false);
+    let duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
+    let show_duplicate_modal = use_signal(|| false);
+    let pending_duplicate_practice = use_signal(|| false);
 
     let decks_resource = use_resource(move || {
         let deck_service = deck_service_for_resource.clone();
@@ -623,8 +624,47 @@ pub fn EditorView() -> Element {
     // UI-only state for now (service wiring comes next step).
     let prompt_text = use_signal(String::new);
     let answer_text = use_signal(String::new);
-    let mut prompt_render_html = use_signal(String::new);
-    let mut answer_render_html = use_signal(String::new);
+    let prompt_render_html = use_signal(String::new);
+    let answer_render_html = use_signal(String::new);
+
+    let clear_editor_fields = {
+        let mut prompt_text = prompt_text;
+        let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
+        Rc::new(RefCell::new(move || {
+            prompt_text.set(String::new());
+            answer_text.set(String::new());
+            prompt_render_html.set(String::new());
+            answer_render_html.set(String::new());
+        }))
+    };
+
+    let set_editor_fields = {
+        let mut prompt_text = prompt_text;
+        let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
+        Rc::new(RefCell::new(move |prompt_html: String, answer_html: String| {
+            let prompt_clone = prompt_html.clone();
+            let answer_clone = answer_html.clone();
+            prompt_text.set(prompt_clone);
+            answer_text.set(answer_clone);
+            prompt_render_html.set(prompt_html);
+            answer_render_html.set(answer_html);
+        }))
+    };
+
+    let reset_duplicate_state = {
+        let mut duplicate_check_state = duplicate_check_state;
+        let mut show_duplicate_modal = show_duplicate_modal;
+        let mut pending_duplicate_practice = pending_duplicate_practice;
+        Rc::new(RefCell::new(move || {
+            duplicate_check_state.set(DuplicateCheckState::Idle);
+            show_duplicate_modal.set(false);
+            pending_duplicate_practice.set(false);
+        }))
+    };
 
     let has_unsaved_changes = {
         let card_tags = card_tags;
@@ -660,7 +700,13 @@ pub fn EditorView() -> Element {
         && duplicate_check_state() != DuplicateCheckState::Checking
         && has_unsaved_changes();
     let has_unsaved_changes_for_save = Rc::clone(&has_unsaved_changes);
+    let clear_editor_fields_for_save = Rc::clone(&clear_editor_fields);
+    let set_editor_fields_for_save = Rc::clone(&set_editor_fields);
+    let reset_duplicate_state_for_save = Rc::clone(&reset_duplicate_state);
     let save_action = use_callback(move |request: SaveRequest| {
+        let clear_editor_fields = Rc::clone(&clear_editor_fields_for_save);
+        let set_editor_fields = Rc::clone(&set_editor_fields_for_save);
+        let reset_duplicate_state = Rc::clone(&reset_duplicate_state_for_save);
         let card_service = card_service_for_save.clone();
         let navigator = navigator;
         let mut save_state = save_state;
@@ -674,10 +720,8 @@ pub fn EditorView() -> Element {
         let mut pending_duplicate_practice = pending_duplicate_practice;
         let mut save_menu_state = save_menu_state;
         let mut focus_prompt = focus_prompt;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
-        let mut prompt_render_html = prompt_render_html;
-        let mut answer_render_html = answer_render_html;
+        let prompt_text = prompt_text;
+        let answer_text = answer_text;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -725,9 +769,7 @@ pub fn EditorView() -> Element {
         }
 
         spawn(async move {
-            duplicate_check_state.set(DuplicateCheckState::Idle);
-            show_duplicate_modal.set(false);
-            pending_duplicate_practice.set(false);
+            reset_duplicate_state.borrow_mut()();
             show_unsaved_modal.set(false);
             pending_action.set(None);
             save_menu_state.set(SaveMenuState::Closed);
@@ -802,20 +844,14 @@ pub fn EditorView() -> Element {
                             });
                         }
                         (true, false) => {
-                            prompt_text.set(String::new());
-                            answer_text.set(String::new());
-                            prompt_render_html.set(String::new());
-                            answer_render_html.set(String::new());
+                            clear_editor_fields.borrow_mut()();
                             card_tags.set(Vec::new());
                             focus_prompt.set(true);
                         }
                         (false, _) => {
                             if let Some(card_id) = card_id {
                                 selected_card_id.set(Some(card_id));
-                                prompt_text.set(prompt_html.clone());
-                                answer_text.set(answer_html.clone());
-                                prompt_render_html.set(prompt_html.clone());
-                                answer_render_html.set(answer_html.clone());
+                                set_editor_fields.borrow_mut()(prompt_html.clone(), answer_html.clone());
                                 last_selected_card.set(Some(build_card_list_item(
                                     card_id,
                                     &prompt_html,
@@ -834,7 +870,9 @@ pub fn EditorView() -> Element {
         });
     });
 
+    let clear_editor_fields_for_create_deck = Rc::clone(&clear_editor_fields);
     let create_deck_action = use_callback(move |()| {
+        let clear_editor_fields = Rc::clone(&clear_editor_fields_for_create_deck);
         let deck_service = deck_service_for_create.clone();
         let mut show_new_deck = show_new_deck;
         let mut new_deck_state = new_deck_state;
@@ -845,10 +883,6 @@ pub fn EditorView() -> Element {
         let mut selected_card_id = selected_card_id;
         let mut last_selected_card = last_selected_card;
         let mut is_create_mode = is_create_mode;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
-        let mut prompt_render_html = prompt_render_html;
-        let mut answer_render_html = answer_render_html;
         let mut show_deck_menu = show_deck_menu;
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
@@ -894,10 +928,7 @@ pub fn EditorView() -> Element {
                     selected_card_id.set(None);
                     last_selected_card.set(None);
                     is_create_mode.set(true);
-                    prompt_text.set(String::new());
-                    answer_text.set(String::new());
-                    prompt_render_html.set(String::new());
-                    answer_render_html.set(String::new());
+                    clear_editor_fields.borrow_mut()();
                 }
                 Err(_) => {
                     new_deck_state.set(SaveState::Error(ViewError::Unknown));
@@ -973,17 +1004,17 @@ pub fn EditorView() -> Element {
         is_renaming_deck.set(true);
     });
 
+    let clear_editor_fields_for_select_deck = Rc::clone(&clear_editor_fields);
+    let reset_duplicate_state_for_select_deck = Rc::clone(&reset_duplicate_state);
     let apply_select_deck_action = use_callback(move |deck_id: DeckId| {
+        let clear_editor_fields = Rc::clone(&clear_editor_fields_for_select_deck);
+        let reset_duplicate_state = Rc::clone(&reset_duplicate_state_for_select_deck);
         let mut selected_deck = selected_deck;
         let mut show_new_deck = show_new_deck;
         let mut new_deck_state = new_deck_state;
         let mut selected_card_id = selected_card_id;
         let mut last_selected_card = last_selected_card;
         let mut is_create_mode = is_create_mode;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
-        let mut prompt_render_html = prompt_render_html;
-        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -1000,20 +1031,13 @@ pub fn EditorView() -> Element {
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
         let mut rename_deck_error = rename_deck_error;
-        let mut duplicate_check_state = duplicate_check_state;
-        let mut show_duplicate_modal = show_duplicate_modal;
-        let mut pending_duplicate_practice = pending_duplicate_practice;
-
         selected_deck.set(deck_id);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         selected_card_id.set(None);
         last_selected_card.set(None);
         is_create_mode.set(false);
-        prompt_text.set(String::new());
-        answer_text.set(String::new());
-        prompt_render_html.set(String::new());
-        answer_render_html.set(String::new());
+        clear_editor_fields.borrow_mut()();
         card_tags.set(Vec::new());
         last_selected_tags.set(Vec::new());
         tag_input.set(String::new());
@@ -1024,9 +1048,7 @@ pub fn EditorView() -> Element {
         show_validation.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
-        duplicate_check_state.set(DuplicateCheckState::Idle);
-        show_duplicate_modal.set(false);
-        pending_duplicate_practice.set(false);
+        reset_duplicate_state.borrow_mut()();
         focus_prompt.set(false);
         show_deck_menu.set(false);
         new_deck_name.set(String::new());
@@ -1035,14 +1057,14 @@ pub fn EditorView() -> Element {
         rename_deck_error.set(None);
     });
 
+    let set_editor_fields_for_select_card = Rc::clone(&set_editor_fields);
+    let reset_duplicate_state_for_select_card = Rc::clone(&reset_duplicate_state);
     let select_card_action = use_callback(move |item: CardListItemVm| {
+        let set_editor_fields = Rc::clone(&set_editor_fields_for_select_card);
+        let reset_duplicate_state = Rc::clone(&reset_duplicate_state_for_select_card);
         let mut selected_card_id = selected_card_id;
         let mut last_selected_card = last_selected_card;
         let mut is_create_mode = is_create_mode;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
-        let mut prompt_render_html = prompt_render_html;
-        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -1056,19 +1078,13 @@ pub fn EditorView() -> Element {
         let mut delete_state = delete_state;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
-        let mut duplicate_check_state = duplicate_check_state;
-        let mut show_duplicate_modal = show_duplicate_modal;
-        let mut pending_duplicate_practice = pending_duplicate_practice;
 
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
         is_create_mode.set(false);
         let prompt_html = item.prompt_html;
         let answer_html = item.answer_html;
-        prompt_text.set(prompt_html.clone());
-        answer_text.set(answer_html.clone());
-        prompt_render_html.set(prompt_html);
-        answer_render_html.set(answer_html);
+        set_editor_fields.borrow_mut()(prompt_html, answer_html);
         card_tags.set(Vec::new());
         last_selected_tags.set(Vec::new());
         tag_input.set(String::new());
@@ -1078,9 +1094,7 @@ pub fn EditorView() -> Element {
         show_delete_modal.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
-        duplicate_check_state.set(DuplicateCheckState::Idle);
-        show_duplicate_modal.set(false);
-        pending_duplicate_practice.set(false);
+        reset_duplicate_state.borrow_mut()();
         focus_prompt.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
@@ -1122,13 +1136,13 @@ pub fn EditorView() -> Element {
         })
     };
 
+    let clear_editor_fields_for_new_card = Rc::clone(&clear_editor_fields);
+    let reset_duplicate_state_for_new_card = Rc::clone(&reset_duplicate_state);
     let new_card_action = use_callback(move |()| {
+        let clear_editor_fields = Rc::clone(&clear_editor_fields_for_new_card);
+        let reset_duplicate_state = Rc::clone(&reset_duplicate_state_for_new_card);
         let mut selected_card_id = selected_card_id;
         let mut is_create_mode = is_create_mode;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
-        let mut prompt_render_html = prompt_render_html;
-        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut tag_input = tag_input;
         let mut save_state = save_state;
@@ -1146,10 +1160,7 @@ pub fn EditorView() -> Element {
 
         selected_card_id.set(None);
         is_create_mode.set(true);
-        prompt_text.set(String::new());
-        answer_text.set(String::new());
-        prompt_render_html.set(String::new());
-        answer_render_html.set(String::new());
+        clear_editor_fields.borrow_mut()();
         card_tags.set(Vec::new());
         tag_input.set(String::new());
         save_state.set(SaveState::Idle);
@@ -1158,9 +1169,7 @@ pub fn EditorView() -> Element {
         show_delete_modal.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
-        duplicate_check_state.set(DuplicateCheckState::Idle);
-        show_duplicate_modal.set(false);
-        pending_duplicate_practice.set(false);
+        reset_duplicate_state.borrow_mut()();
         save_menu_state.set(SaveMenuState::Closed);
         focus_prompt.set(true);
         last_focus_field.set(MarkdownField::Front);
@@ -1336,7 +1345,9 @@ pub fn EditorView() -> Element {
         save_menu_state.set(SaveMenuState::Closed);
     });
 
+    let reset_duplicate_state_for_delete_modal = Rc::clone(&reset_duplicate_state);
     let open_delete_modal_action = use_callback(move |()| {
+        let reset_duplicate_state = Rc::clone(&reset_duplicate_state_for_delete_modal);
         let mut show_delete_modal = show_delete_modal;
         let mut show_deck_menu = show_deck_menu;
         let mut is_renaming_deck = is_renaming_deck;
@@ -1345,9 +1356,6 @@ pub fn EditorView() -> Element {
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
         let mut save_menu_state = save_menu_state;
-        let mut duplicate_check_state = duplicate_check_state;
-        let mut show_duplicate_modal = show_duplicate_modal;
-        let mut pending_duplicate_practice = pending_duplicate_practice;
         let selected_card_id = selected_card_id();
         if selected_card_id.is_some() {
             show_deck_menu.set(false);
@@ -1357,9 +1365,7 @@ pub fn EditorView() -> Element {
             show_unsaved_modal.set(false);
             pending_action.set(None);
             save_menu_state.set(SaveMenuState::Closed);
-            duplicate_check_state.set(DuplicateCheckState::Idle);
-            show_duplicate_modal.set(false);
-            pending_duplicate_practice.set(false);
+            reset_duplicate_state.borrow_mut()();
             show_delete_modal.set(true);
         }
     });
@@ -1407,7 +1413,9 @@ pub fn EditorView() -> Element {
         save_action.call(SaveRequest::force(practice));
     });
 
+    let clear_editor_fields_for_delete = Rc::clone(&clear_editor_fields);
     let delete_action = use_callback(move |()| {
+        let clear_editor_fields = Rc::clone(&clear_editor_fields_for_delete);
         let card_service = card_service_for_delete.clone();
         let mut delete_state = delete_state;
         let mut save_state = save_state;
@@ -1415,8 +1423,6 @@ pub fn EditorView() -> Element {
         let mut selected_card_id = selected_card_id;
         let mut last_selected_card = last_selected_card;
         let mut is_create_mode = is_create_mode;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -1443,10 +1449,7 @@ pub fn EditorView() -> Element {
                     selected_card_id.set(None);
                     last_selected_card.set(None);
                     is_create_mode.set(false);
-                    prompt_text.set(String::new());
-                    answer_text.set(String::new());
-                    prompt_render_html.set(String::new());
-                    answer_render_html.set(String::new());
+                    clear_editor_fields.borrow_mut()();
                     card_tags.set(Vec::new());
                     last_selected_tags.set(Vec::new());
                     tag_input.set(String::new());
@@ -1466,14 +1469,16 @@ pub fn EditorView() -> Element {
         });
     });
 
+    let clear_editor_fields_for_cancel = Rc::clone(&clear_editor_fields);
+    let set_editor_fields_for_cancel = Rc::clone(&set_editor_fields);
+    let reset_duplicate_state_for_cancel = Rc::clone(&reset_duplicate_state);
     let cancel_new_action = use_callback(move |()| {
+        let clear_editor_fields = Rc::clone(&clear_editor_fields_for_cancel);
+        let set_editor_fields = Rc::clone(&set_editor_fields_for_cancel);
+        let reset_duplicate_state = Rc::clone(&reset_duplicate_state_for_cancel);
         let mut selected_card_id = selected_card_id;
         let last_selected_card = last_selected_card;
         let mut is_create_mode = is_create_mode;
-        let mut prompt_text = prompt_text;
-        let mut answer_text = answer_text;
-        let mut prompt_render_html = prompt_render_html;
-        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut tag_input = tag_input;
         let mut save_state = save_state;
@@ -1490,18 +1495,12 @@ pub fn EditorView() -> Element {
 
         if let Some(card) = last_selected_card() {
             selected_card_id.set(Some(card.id));
-            prompt_text.set(card.prompt_html.clone());
-            answer_text.set(card.answer_html.clone());
-            prompt_render_html.set(card.prompt_html.clone());
-            answer_render_html.set(card.answer_html.clone());
+            set_editor_fields.borrow_mut()(card.prompt_html.clone(), card.answer_html.clone());
             card_tags.set(last_selected_tags());
             is_create_mode.set(false);
         } else {
             selected_card_id.set(None);
-            prompt_text.set(String::new());
-            answer_text.set(String::new());
-            prompt_render_html.set(String::new());
-            answer_render_html.set(String::new());
+            clear_editor_fields.borrow_mut()();
             card_tags.set(Vec::new());
             is_create_mode.set(true);
         }
@@ -1513,20 +1512,15 @@ pub fn EditorView() -> Element {
         show_validation.set(false);
         show_unsaved_modal.set(false);
         pending_action.set(None);
-        duplicate_check_state.set(DuplicateCheckState::Idle);
-        show_duplicate_modal.set(false);
-        pending_duplicate_practice.set(false);
+        reset_duplicate_state.borrow_mut()();
         show_deck_menu.set(false);
     });
 
     let auto_select_action = select_card_action;
+    let clear_editor_fields_for_effect = Rc::clone(&clear_editor_fields);
     let mut selected_card_id_for_effect = selected_card_id;
     let mut last_selected_card_for_effect = last_selected_card;
     let mut is_create_mode_for_effect = is_create_mode;
-    let mut prompt_text_for_effect = prompt_text;
-    let mut answer_text_for_effect = answer_text;
-    let mut prompt_render_html_for_effect = prompt_render_html;
-    let mut answer_render_html_for_effect = answer_render_html;
     let mut save_state_for_effect = save_state;
     let mut delete_state_for_effect = delete_state;
     let mut show_delete_modal_for_effect = show_delete_modal;
@@ -1542,10 +1536,7 @@ pub fn EditorView() -> Element {
                     selected_card_id_for_effect.set(None);
                     last_selected_card_for_effect.set(None);
                     is_create_mode_for_effect.set(true);
-                    prompt_text_for_effect.set(String::new());
-                    answer_text_for_effect.set(String::new());
-                    prompt_render_html_for_effect.set(String::new());
-                    answer_render_html_for_effect.set(String::new());
+                    clear_editor_fields_for_effect.borrow_mut()();
                     save_state_for_effect.set(SaveState::Idle);
                     delete_state_for_effect.set(DeleteState::Idle);
                     show_delete_modal_for_effect.set(false);
@@ -1988,6 +1979,7 @@ pub fn EditorView() -> Element {
                                             button {
                                                 class: "editor-deck-label",
                                                 r#type: "button",
+                                                title: "Rename deck",
                                                 ondoubleclick: move |_| {
                                                     begin_rename_action.call(deck_label_for_double.clone());
                                                 },
@@ -2001,6 +1993,7 @@ pub fn EditorView() -> Element {
                                         button {
                                             class: "editor-deck-caret-button",
                                             r#type: "button",
+                                            title: "Select deck",
                                             onclick: move |_| {
                                                 show_deck_menu.set(!show_deck_menu());
                                                 is_renaming_deck.set(false);
@@ -2057,6 +2050,7 @@ pub fn EditorView() -> Element {
                         button {
                             class: "btn btn-primary editor-toolbar-action",
                             r#type: "button",
+                            title: "New card",
                             onclick: move |_| request_new_card_action.call(()),
                             "+ New Card"
                         }
@@ -2153,6 +2147,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-list-search-clear",
                                             aria_label: "Clear search",
                                             r#type: "button",
+                                            title: "Clear search",
                                             onclick: move |_| search_query.set(String::new()),
                                             svg {
                                                 class: "editor-list-search-clear-icon",
@@ -2170,6 +2165,7 @@ pub fn EditorView() -> Element {
                                     span { class: "editor-list-control-label", "Sort by" }
                                     select {
                                         class: "editor-list-select",
+                                        title: "Sort cards",
                                         value: "{sort_value(sort_mode())}",
                                         onchange: move |evt| {
                                             sort_mode.set(sort_from_value(&evt.value()));
@@ -2183,6 +2179,7 @@ pub fn EditorView() -> Element {
                                     span { class: "editor-list-control-label", "Filter tags" }
                                     select {
                                         class: "editor-list-select",
+                                        title: "Filter by tag",
                                         disabled: deck_tags_loading || deck_tags_error || deck_tags.is_empty(),
                                         value: "{selected_filters.first().cloned().unwrap_or_default()}",
                                         onchange: move |evt| {
@@ -2310,7 +2307,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Bold",
+                                            "data-tooltip": "Bold",
                                             aria_label: "Bold",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2324,7 +2321,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Italic",
+                                            "data-tooltip": "Italic",
                                             aria_label: "Italic",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2344,7 +2341,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Quote",
+                                            "data-tooltip": "Quote",
                                             aria_label: "Quote",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2363,7 +2360,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Bulleted list",
+                                            "data-tooltip": "Bulleted list",
                                             aria_label: "Bulleted list",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2386,7 +2383,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Numbered list",
+                                            "data-tooltip": "Numbered list",
                                             aria_label: "Numbered list",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2412,7 +2409,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Add image",
+                                            "data-tooltip": "Add image",
                                             aria_label: "Add image",
                                             svg {
                                                 class: "editor-md-toolbar-icon",
@@ -2429,7 +2426,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Link",
+                                            "data-tooltip": "Link",
                                             aria_label: "Link",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2452,7 +2449,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Inline code",
+                                            "data-tooltip": "Inline code",
                                             aria_label: "Inline code",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2471,7 +2468,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Code block",
+                                            "data-tooltip": "Code block",
                                             aria_label: "Code block",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2494,7 +2491,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Left-to-right",
+                                            "data-tooltip": "Left-to-right",
                                             aria_label: "Left-to-right",
                                             onclick: move |_| {
                                                 apply_block_dir_action
@@ -2513,7 +2510,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
-                                            title: "Right-to-left",
+                                            "data-tooltip": "Right-to-left",
                                             aria_label: "Right-to-left",
                                             onclick: move |_| {
                                                 apply_block_dir_action
@@ -2576,7 +2573,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Bold",
+                                            "data-tooltip": "Bold",
                                             aria_label: "Bold",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2590,7 +2587,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Italic",
+                                            "data-tooltip": "Italic",
                                             aria_label: "Italic",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2610,7 +2607,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Quote",
+                                            "data-tooltip": "Quote",
                                             aria_label: "Quote",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2629,7 +2626,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Bulleted list",
+                                            "data-tooltip": "Bulleted list",
                                             aria_label: "Bulleted list",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2652,7 +2649,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Numbered list",
+                                            "data-tooltip": "Numbered list",
                                             aria_label: "Numbered list",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2678,7 +2675,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Link",
+                                            "data-tooltip": "Link",
                                             aria_label: "Link",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2701,7 +2698,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Inline code",
+                                            "data-tooltip": "Inline code",
                                             aria_label: "Inline code",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2720,7 +2717,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Code block",
+                                            "data-tooltip": "Code block",
                                             aria_label: "Code block",
                                             onclick: move |_| {
                                                 apply_format_action.call((
@@ -2743,7 +2740,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Left-to-right",
+                                            "data-tooltip": "Left-to-right",
                                             aria_label: "Left-to-right",
                                             onclick: move |_| {
                                                 apply_block_dir_action
@@ -2762,7 +2759,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Right-to-left",
+                                            "data-tooltip": "Right-to-left",
                                             aria_label: "Right-to-left",
                                             onclick: move |_| {
                                                 apply_block_dir_action
@@ -2784,7 +2781,7 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: answer_toolbar_disabled,
-                                            title: "Add image",
+                                            "data-tooltip": "Add image",
                                             aria_label: "Add image",
                                             svg {
                                                 class: "editor-md-toolbar-icon",
