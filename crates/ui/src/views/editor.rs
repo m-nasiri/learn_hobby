@@ -302,6 +302,49 @@ async fn set_editable_html(element_id: &str, html: &str) {
     let _ = eval(&script).await;
 }
 
+fn set_block_dir_script(element_id: &str, dir: &str) -> String {
+    let dir_literal = js_string_literal(dir);
+    let align_literal = if dir == "rtl" {
+        "\"right\""
+    } else {
+        "\"left\""
+    };
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        el.focus();
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) {{ return; }}
+        const blockTags = new Set(["P", "DIV", "LI", "BLOCKQUOTE", "PRE"]);
+        let node = sel.anchorNode;
+        if (node && node.nodeType === Node.TEXT_NODE) {{
+            node = node.parentElement;
+        }}
+        while (node && node !== el && !blockTags.has(node.tagName)) {{
+            node = node.parentElement;
+        }}
+        if (node === el) {{
+            document.execCommand("formatBlock", false, "div");
+            node = sel.anchorNode;
+            if (node && node.nodeType === Node.TEXT_NODE) {{
+                node = node.parentElement;
+            }}
+            while (node && node !== el && !blockTags.has(node.tagName)) {{
+                node = node.parentElement;
+            }}
+        }}
+        if (node && node !== el) {{
+            node.setAttribute("dir", {dir_literal});
+            node.style.textAlign = {align_literal};
+            node.style.unicodeBidi = "plaintext";
+        }}
+        "#,
+        dir_literal = dir_literal,
+        align_literal = align_literal
+    )
+}
+
 fn insert_html_script(element_id: &str, html: &str) -> String {
     let html_literal = js_string_literal(html);
     format!(
@@ -330,78 +373,49 @@ fn insert_text_script(element_id: &str, text: &str) -> String {
 }
 
 fn wrap_selection_script(element_id: &str, tag: &str, inner_tag: Option<&str>) -> String {
-    let tag_literal = js_string_literal(tag);
-    let inner_literal = inner_tag.map(js_string_literal);
-    let fallback_html = match inner_tag {
-        Some(inner_tag) => format!("<{tag}><{inner_tag}></{inner_tag}></{tag}>"),
-        None => format!("<{tag}></{tag}>"),
+    let (before, after) = match inner_tag {
+        Some(inner_tag) => (
+            format!("<{tag}><{inner_tag}>"),
+            format!("</{inner_tag}></{tag}>"),
+        ),
+        None => (format!("<{tag}>"), format!("</{tag}>")),
     };
-    let fallback_literal = js_string_literal(&fallback_html);
-    match inner_literal {
-        Some(inner_literal) => format!(
-            r#"
-            const el = document.getElementById("{element_id}");
-            if (!el) {{ return; }}
-            el.focus();
-            const sel = window.getSelection();
-            if (!sel || sel.rangeCount === 0) {{
-                document.execCommand("insertHTML", false, {fallback_literal});
-                return;
-            }}
-            const range = sel.getRangeAt(0);
-            if (!el.contains(range.commonAncestorContainer)) {{
-                return;
-            }}
-            const wrapper = document.createElement({tag_literal});
-            const inner = document.createElement({inner_literal});
-            if (range.collapsed) {{
-                inner.appendChild(document.createTextNode(""));
-            }} else {{
-                inner.appendChild(range.extractContents());
-            }}
-            wrapper.appendChild(inner);
-            range.insertNode(wrapper);
-            sel.removeAllRanges();
+    let before_literal = js_string_literal(&before);
+    let after_literal = js_string_literal(&after);
+    let marker_literal = js_string_literal(r#"<span data-caret="true"></span>"#);
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        el.focus();
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) {{
+            document.execCommand("insertHTML", false, {before_literal} + {after_literal});
+            return;
+        }}
+        const range = sel.getRangeAt(0);
+        if (!el.contains(range.commonAncestorContainer)) {{
+            return;
+        }}
+        const container = document.createElement("div");
+        container.appendChild(range.cloneContents());
+        const selectedHtml = container.innerHTML;
+        const html = selectedHtml
+            ? {before_literal} + selectedHtml + {after_literal}
+            : {before_literal} + {marker_literal} + {after_literal};
+        document.execCommand("insertHTML", false, html);
+        const marker = el.querySelector('[data-caret="true"]');
+        if (marker) {{
             const newRange = document.createRange();
-            newRange.selectNodeContents(inner);
-            newRange.collapse(false);
-            sel.addRange(newRange);
-            "#,
-            tag_literal = tag_literal,
-            inner_literal = inner_literal,
-            fallback_literal = fallback_literal
-        ),
-        None => format!(
-            r#"
-            const el = document.getElementById("{element_id}");
-            if (!el) {{ return; }}
-            el.focus();
-            const sel = window.getSelection();
-            if (!sel || sel.rangeCount === 0) {{
-                document.execCommand("insertHTML", false, {fallback_literal});
-                return;
-            }}
-            const range = sel.getRangeAt(0);
-            if (!el.contains(range.commonAncestorContainer)) {{
-                return;
-            }}
-            const wrapper = document.createElement({tag_literal});
-            if (range.collapsed) {{
-                wrapper.appendChild(document.createTextNode(""));
-            }} else {{
-                wrapper.appendChild(range.extractContents());
-            }}
-            range.insertNode(wrapper);
-            sel.removeAllRanges();
-            const newRange = document.createRange();
-            newRange.selectNodeContents(wrapper);
-            newRange.collapse(false);
-            sel.addRange(newRange);
-            "#,
-            tag_literal = tag_literal,
-            fallback_literal = fallback_literal
-        ),
-    }
+            newRange.setStartAfter(marker);
+            newRange.collapse(true);
+            const sel2 = window.getSelection();
+            sel2.removeAllRanges();
+            sel2.addRange(newRange);
+            marker.remove();
+        }}
+        "#
+    )
 }
 
 fn exec_command_script(element_id: &str, command: &str, value: Option<&str>) -> String {
@@ -968,6 +982,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -1025,6 +1041,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -1257,6 +1275,11 @@ pub fn EditorView() -> Element {
                 MarkdownField::Front => "prompt",
                 MarkdownField::Back => "answer",
             };
+            let _ = eval(&format!(
+                r#"document.getElementById("{element_id}")?.focus();"#,
+                element_id = element_id
+            ))
+            .await;
             let script = match action {
                 MarkdownAction::Bold => exec_command_script(element_id, "bold", None),
                 MarkdownAction::Italic => exec_command_script(element_id, "italic", None),
@@ -1603,6 +1626,18 @@ pub fn EditorView() -> Element {
         });
     });
 
+    let apply_block_dir_action =
+        use_callback(move |(field, dir): (MarkdownField, String)| {
+            let element_id = match field {
+                MarkdownField::Front => "prompt",
+                MarkdownField::Back => "answer",
+            };
+            spawn(async move {
+                let script = set_block_dir_script(element_id, &dir);
+                let _ = eval(&script).await;
+            });
+        });
+
     let on_key = {
         let deck_label = deck_label.clone();
         let decks_state = decks_state.clone();
@@ -1641,7 +1676,36 @@ pub fn EditorView() -> Element {
                 return;
             }
 
-            if evt.data.modifiers().contains(Modifiers::META) {
+            let modifiers = evt.data.modifiers();
+            let can_edit = is_create_mode() || selected_card_id().is_some();
+            let active_field = last_focus_field();
+            if can_edit
+                && matches!(active_field, MarkdownField::Front | MarkdownField::Back)
+                && (modifiers.contains(Modifiers::META) || modifiers.contains(Modifiers::CONTROL))
+            {
+                let wants_undo = matches!(evt.data.key(), Key::Character(value)
+                    if value.eq_ignore_ascii_case("z"));
+                let wants_redo = matches!(evt.data.key(), Key::Character(value)
+                    if value.eq_ignore_ascii_case("y"));
+                if wants_undo || wants_redo {
+                    let element_id = if active_field == MarkdownField::Front {
+                        "prompt"
+                    } else {
+                        "answer"
+                    };
+                    let redo = wants_redo
+                        || (wants_undo && modifiers.contains(Modifiers::SHIFT));
+                    let command = if redo { "redo" } else { "undo" };
+                    evt.prevent_default();
+                    spawn(async move {
+                        let script = exec_command_script(element_id, command, None);
+                        let _ = eval(&script).await;
+                    });
+                    return;
+                }
+            }
+
+            if modifiers.contains(Modifiers::META) {
                 let can_edit = is_create_mode() || selected_card_id().is_some();
                 if evt.data.key() == Key::Enter {
                     evt.prevent_default();
@@ -2236,7 +2300,7 @@ pub fn EditorView() -> Element {
                             if !can_edit {
                                 p { class: "editor-empty-hint", "Select a card or click + New Card." }
                             }
-                            div { class: "editor-group",
+                            div { class: "editor-group editor-group--editor",
                                 div { class: "editor-field-header",
                                     label { class: "editor-label", r#for: "prompt", "Front" }
                                 }
@@ -2348,6 +2412,23 @@ pub fn EditorView() -> Element {
                                             class: "editor-md-toolbar-btn",
                                             r#type: "button",
                                             disabled: prompt_toolbar_disabled,
+                                            title: "Add image",
+                                            aria_label: "Add image",
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                rect { x: "4", y: "5", width: "16", height: "14", rx: "2" }
+                                                path { d: "M7.5 14l2.5-3 3.5 4 2.5-3 3 4" }
+                                                circle { cx: "9", cy: "9", r: "1.2" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
                                             title: "Link",
                                             aria_label: "Link",
                                             onclick: move |_| {
@@ -2407,6 +2488,47 @@ pub fn EditorView() -> Element {
                                             }
                                         }
                                     }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Left-to-right",
+                                            aria_label: "Left-to-right",
+                                            onclick: move |_| {
+                                                apply_block_dir_action
+                                                    .call((MarkdownField::Front, "ltr".to_string()));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                line { x1: "4", y1: "6", x2: "14", y2: "6" }
+                                                line { x1: "4", y1: "12", x2: "14", y2: "12" }
+                                                line { x1: "4", y1: "18", x2: "14", y2: "18" }
+                                                path { d: "M15 9l3 3-3 3" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Right-to-left",
+                                            aria_label: "Right-to-left",
+                                            onclick: move |_| {
+                                                apply_block_dir_action
+                                                    .call((MarkdownField::Front, "rtl".to_string()));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                line { x1: "10", y1: "6", x2: "20", y2: "6" }
+                                                line { x1: "10", y1: "12", x2: "20", y2: "12" }
+                                                line { x1: "10", y1: "18", x2: "20", y2: "18" }
+                                                path { d: "M9 9l-3 3 3 3" }
+                                            }
+                                        }
+                                    }
                                 }
                                 div {
                                     id: "prompt",
@@ -2444,7 +2566,7 @@ pub fn EditorView() -> Element {
                                 }
                             }
 
-                            div { class: "editor-group",
+                            div { class: "editor-group editor-group--editor",
                                 div { class: "editor-field-header",
                                     label { class: "editor-label", r#for: "answer", "Back" }
                                 }
@@ -2615,6 +2737,64 @@ pub fn EditorView() -> Element {
                                             }
                                         }
                                     }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Left-to-right",
+                                            aria_label: "Left-to-right",
+                                            onclick: move |_| {
+                                                apply_block_dir_action
+                                                    .call((MarkdownField::Back, "ltr".to_string()));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                line { x1: "4", y1: "6", x2: "14", y2: "6" }
+                                                line { x1: "4", y1: "12", x2: "14", y2: "12" }
+                                                line { x1: "4", y1: "18", x2: "14", y2: "18" }
+                                                path { d: "M15 9l3 3-3 3" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Right-to-left",
+                                            aria_label: "Right-to-left",
+                                            onclick: move |_| {
+                                                apply_block_dir_action
+                                                    .call((MarkdownField::Back, "rtl".to_string()));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                line { x1: "10", y1: "6", x2: "20", y2: "6" }
+                                                line { x1: "10", y1: "12", x2: "20", y2: "12" }
+                                                line { x1: "10", y1: "18", x2: "20", y2: "18" }
+                                                path { d: "M9 9l-3 3 3 3" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Add image",
+                                            aria_label: "Add image",
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                rect { x: "4", y: "5", width: "16", height: "14", rx: "2" }
+                                                path { d: "M7.5 14l2.5-3 3.5 4 2.5-3 3 4" }
+                                                circle { cx: "9", cy: "9", r: "1.2" }
+                                            }
+                                        }
+                                    }
                                 }
                                 div {
                                     id: "answer",
@@ -2721,10 +2901,6 @@ pub fn EditorView() -> Element {
                                 }
                             }
 
-                            button { class: "editor-add-inline", r#type: "button", disabled: !can_edit,
-                                span { class: "editor-add-plus", "+" }
-                                span { "Add Image" }
-                            }
                         }
 
                         footer { class: "editor-footer",
