@@ -4,6 +4,7 @@ mod session_summary_vm;
 mod session_vm;
 mod markdown_vm;
 mod time_fmt;
+mod editor_vm;
 
 pub use deck_vm::{DeckOptionVm, map_deck_options};
 pub use card_vm::{
@@ -18,3 +19,4 @@ pub use markdown_vm::{
     MarkdownAction, MarkdownField, html_to_markdown, looks_like_html, looks_like_markdown,
     markdown_to_html, normalize_markdown, sanitize_html, strip_html_tags,
 };
+pub use editor_vm::{EditorVm, build_editor_vm};

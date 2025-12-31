@@ -1,11 +1,12 @@
 use dioxus::document::eval;
 use dioxus::prelude::*;
 
-use crate::vm::{CardListItemVm, DeckOptionVm, MarkdownAction, MarkdownField, filter_card_list_items};
+use crate::vm::{DeckOptionVm, MarkdownAction, MarkdownField, filter_card_list_items};
 use crate::views::{ViewState, view_state_from_resource};
 
-use super::super::state::{DeleteState, EditorState, SaveRequest, SaveState};
+use super::super::state::{DeleteState, EditorState, SaveRequest};
 use super::super::scripts::exec_command_script;
+use super::intent::EditorIntent;
 
 fn current_deck_label(
     decks_state: &ViewState<Vec<DeckOptionVm>>,
@@ -57,9 +58,7 @@ fn handle_undo_redo(state: &EditorState, evt: &KeyboardEvent) -> bool {
 fn handle_primary_meta_actions(
     state: &EditorState,
     evt: &KeyboardEvent,
-    save_action: Callback<SaveRequest>,
-    request_new_card_action: Callback<()>,
-    open_delete_modal_action: Callback<()>,
+    dispatch: &Callback<EditorIntent>,
 ) -> bool {
     if !evt.data.modifiers().contains(Modifiers::META) {
         return false;
@@ -67,13 +66,13 @@ fn handle_primary_meta_actions(
 
     if evt.data.key() == Key::Enter {
         evt.prevent_default();
-        save_action.call(SaveRequest::new(false));
+        dispatch.call(EditorIntent::Save(SaveRequest::new(false)));
         return true;
     }
 
     if matches!(evt.data.key(), Key::Character(value) if value.eq_ignore_ascii_case("n")) {
         evt.prevent_default();
-        request_new_card_action.call(());
+        dispatch.call(EditorIntent::RequestNewCard);
         return true;
     }
 
@@ -83,14 +82,18 @@ fn handle_primary_meta_actions(
         && (state.delete_state)() != DeleteState::Deleting
     {
         evt.prevent_default();
-        open_delete_modal_action.call(());
+        dispatch.call(EditorIntent::OpenDeleteModal);
         return true;
     }
 
     false
 }
 
-fn handle_rename_shortcut(state: &EditorState, evt: &KeyboardEvent) -> bool {
+fn handle_rename_shortcut(
+    state: &EditorState,
+    evt: &KeyboardEvent,
+    dispatch: &Callback<EditorIntent>,
+) -> bool {
     if !evt.data.modifiers().contains(Modifiers::META) {
         return false;
     }
@@ -107,25 +110,14 @@ fn handle_rename_shortcut(state: &EditorState, evt: &KeyboardEvent) -> bool {
     evt.prevent_default();
     let decks_state = view_state_from_resource(&state.decks_resource);
     let label = current_deck_label(&decks_state, *state.selected_deck.read());
-    let mut rename_deck_name = state.rename_deck_name;
-    let mut rename_deck_state = state.rename_deck_state;
-    let mut rename_deck_error = state.rename_deck_error;
-    let mut show_deck_menu = state.show_deck_menu;
-    let mut show_delete_modal = state.show_delete_modal;
-    let mut is_renaming_deck = state.is_renaming_deck;
-    rename_deck_name.set(label);
-    rename_deck_state.set(SaveState::Idle);
-    rename_deck_error.set(None);
-    show_deck_menu.set(false);
-    show_delete_modal.set(false);
-    is_renaming_deck.set(true);
+    dispatch.call(EditorIntent::BeginRename(label));
     true
 }
 
 fn handle_format_shortcuts(
     state: &EditorState,
     evt: &KeyboardEvent,
-    apply_format_action: Callback<(MarkdownField, MarkdownAction)>,
+    dispatch: &Callback<EditorIntent>,
 ) -> bool {
     if !evt.data.modifiers().contains(Modifiers::META) {
         return false;
@@ -146,27 +138,27 @@ fn handle_format_shortcuts(
     match evt.data.key() {
         Key::Character(value) if value.eq_ignore_ascii_case("b") => {
             evt.prevent_default();
-            apply_format_action.call((field, MarkdownAction::Bold));
+            dispatch.call(EditorIntent::ApplyFormat(field, MarkdownAction::Bold));
             true
         }
         Key::Character(value) if value.eq_ignore_ascii_case("i") => {
             evt.prevent_default();
-            apply_format_action.call((field, MarkdownAction::Italic));
+            dispatch.call(EditorIntent::ApplyFormat(field, MarkdownAction::Italic));
             true
         }
         Key::Character(value) if value.eq_ignore_ascii_case("k") => {
             evt.prevent_default();
-            apply_format_action.call((field, MarkdownAction::Link));
+            dispatch.call(EditorIntent::ApplyFormat(field, MarkdownAction::Link));
             true
         }
         Key::Character(value) if value == "7" && shift => {
             evt.prevent_default();
-            apply_format_action.call((field, MarkdownAction::NumberedList));
+            dispatch.call(EditorIntent::ApplyFormat(field, MarkdownAction::NumberedList));
             true
         }
         Key::Character(value) if value == "8" && shift => {
             evt.prevent_default();
-            apply_format_action.call((field, MarkdownAction::BulletList));
+            dispatch.call(EditorIntent::ApplyFormat(field, MarkdownAction::BulletList));
             true
         }
         _ => false,
@@ -175,11 +167,7 @@ fn handle_format_shortcuts(
 
 pub(super) fn build_on_key_action(
     state: &EditorState,
-    save_action: Callback<SaveRequest>,
-    request_new_card_action: Callback<()>,
-    open_delete_modal_action: Callback<()>,
-    apply_format_action: Callback<(MarkdownField, MarkdownAction)>,
-    cancel_new_action: Callback<()>,
+    dispatch: Callback<EditorIntent>,
 ) -> Callback<KeyboardEvent> {
     let state = state.clone();
     use_callback(move |evt: KeyboardEvent| {
@@ -191,34 +179,28 @@ pub(super) fn build_on_key_action(
             return;
         }
 
-        if handle_primary_meta_actions(
-            &state,
-            &evt,
-            save_action,
-            request_new_card_action,
-            open_delete_modal_action,
-        ) {
+        if handle_primary_meta_actions(&state, &evt, &dispatch) {
             return;
         }
 
-        if handle_rename_shortcut(&state, &evt) {
+        if handle_rename_shortcut(&state, &evt, &dispatch) {
             return;
         }
 
-        if handle_format_shortcuts(&state, &evt, apply_format_action) {
+        if handle_format_shortcuts(&state, &evt, &dispatch) {
             return;
         }
 
         if evt.data.key() == Key::Escape && (state.is_create_mode)() {
             evt.prevent_default();
-            cancel_new_action.call(());
+            dispatch.call(EditorIntent::CancelNew);
         }
     })
 }
 
 pub(super) fn build_list_on_key_action(
     state: &EditorState,
-    request_select_card_action: Callback<CardListItemVm>,
+    dispatch: Callback<EditorIntent>,
 ) -> Callback<KeyboardEvent> {
     let state = state.clone();
     let cards_state = view_state_from_resource(&state.cards_resource);
@@ -228,10 +210,6 @@ pub(super) fn build_list_on_key_action(
         }
 
         let key = evt.data.key();
-        if !matches!(key, Key::ArrowDown | Key::ArrowUp | Key::Enter) {
-            return;
-        }
-
         let ViewState::Ready(items) = &cards_state else {
             return;
         };
@@ -243,23 +221,71 @@ pub(super) fn build_list_on_key_action(
         let current_id = (state.selected_card_id)();
         let current_index = current_id
             .and_then(|id| filtered.iter().position(|item| item.id == id));
-
-        let next_index = match key {
-            Key::ArrowDown => match current_index {
-                Some(idx) => (idx + 1).min(filtered.len() - 1),
-                None => 0,
-            },
-            Key::ArrowUp => match current_index {
-                Some(idx) => idx.saturating_sub(1),
-                None => filtered.len().saturating_sub(1),
-            },
-            Key::Enter => current_index.unwrap_or(0),
-            _ => return,
+        let Some(next_index) = next_list_index(current_index, filtered.len(), &key) else {
+            return;
         };
 
         if let Some(item) = filtered.get(next_index).cloned() {
             evt.prevent_default();
-            request_select_card_action.call(item);
+            dispatch.call(EditorIntent::RequestSelectCard(item));
         }
     })
+}
+
+fn next_list_index(current_index: Option<usize>, len: usize, key: &Key) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+
+    match key {
+        Key::ArrowDown => Some(match current_index {
+            Some(idx) => (idx + 1).min(len - 1),
+            None => 0,
+        }),
+        Key::ArrowUp => Some(match current_index {
+            Some(idx) => idx.saturating_sub(1),
+            None => len.saturating_sub(1),
+        }),
+        Key::Enter => Some(current_index.unwrap_or(0)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_list_index;
+    use dioxus::prelude::Key;
+
+    #[test]
+    fn next_list_index_handles_empty_list() {
+        assert_eq!(next_list_index(None, 0, &Key::ArrowDown), None);
+    }
+
+    #[test]
+    fn next_list_index_moves_down_from_none() {
+        assert_eq!(next_list_index(None, 3, &Key::ArrowDown), Some(0));
+    }
+
+    #[test]
+    fn next_list_index_moves_up_from_none() {
+        assert_eq!(next_list_index(None, 3, &Key::ArrowUp), Some(2));
+    }
+
+    #[test]
+    fn next_list_index_moves_between_items() {
+        assert_eq!(next_list_index(Some(1), 3, &Key::ArrowDown), Some(2));
+        assert_eq!(next_list_index(Some(1), 3, &Key::ArrowUp), Some(0));
+    }
+
+    #[test]
+    fn next_list_index_caps_at_edges() {
+        assert_eq!(next_list_index(Some(2), 3, &Key::ArrowDown), Some(2));
+        assert_eq!(next_list_index(Some(0), 3, &Key::ArrowUp), Some(0));
+    }
+
+    #[test]
+    fn next_list_index_uses_enter_selection() {
+        assert_eq!(next_list_index(Some(2), 3, &Key::Enter), Some(2));
+        assert_eq!(next_list_index(None, 3, &Key::Enter), Some(0));
+    }
 }

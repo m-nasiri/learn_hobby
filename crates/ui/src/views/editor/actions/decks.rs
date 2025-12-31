@@ -41,10 +41,11 @@ pub(super) fn build_create_deck_action(
         let mut save_menu_state = state.save_menu_state;
         let mut focus_prompt = state.focus_prompt;
 
-        let name = new_deck_name.read().trim().to_owned();
-        if name.is_empty() || new_deck_state() == SaveState::Saving {
+        let name = new_deck_name.read().to_string();
+        if !is_valid_deck_name(&name) || new_deck_state() == SaveState::Saving {
             return;
         }
+        let name = name.trim().to_owned();
 
         spawn(async move {
             new_deck_state.set(SaveState::Saving);
@@ -110,12 +111,13 @@ pub(super) fn build_rename_actions(
         let mut is_renaming_deck = state_for_commit.is_renaming_deck;
         let mut decks_resource = state_for_commit.decks_resource;
         let deck_id = *state_for_commit.selected_deck.read();
-        let name = state_for_commit.rename_deck_name.read().trim().to_owned();
+        let name = state_for_commit.rename_deck_name.read().to_string();
 
-        if name.is_empty() || rename_deck_state() == SaveState::Saving {
+        if !is_valid_deck_name(&name) || rename_deck_state() == SaveState::Saving {
             rename_deck_error.set(Some("Name cannot be empty.".to_string()));
             return;
         }
+        let name = name.trim().to_owned();
 
         spawn(async move {
             rename_deck_state.set(SaveState::Saving);
@@ -237,4 +239,25 @@ pub(super) fn build_request_select_deck_action(
         }
         apply_select_deck_action.call(deck_id);
     })
+}
+
+fn is_valid_deck_name(name: &str) -> bool {
+    !name.trim().is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_deck_name;
+
+    #[test]
+    fn valid_deck_name_rejects_empty() {
+        assert!(!is_valid_deck_name(""));
+        assert!(!is_valid_deck_name("   "));
+    }
+
+    #[test]
+    fn valid_deck_name_accepts_non_empty() {
+        assert!(is_valid_deck_name("Default"));
+        assert!(is_valid_deck_name("  Deck  "));
+    }
 }

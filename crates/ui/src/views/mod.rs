@@ -1,4 +1,4 @@
-mod editor;
+pub(crate) mod editor;
 mod history;
 mod home;
 mod session;

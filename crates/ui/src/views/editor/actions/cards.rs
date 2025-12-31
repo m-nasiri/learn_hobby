@@ -292,26 +292,51 @@ pub(super) fn use_cards_resource_effect(
         let mut focus_prompt = state.focus_prompt;
         let cards_state = view_state_from_resource(&state.cards_resource);
         if let ViewState::Ready(items) = &cards_state {
-            if items.is_empty() {
-                if !is_create_mode() {
-                    selected_card_id.set(None);
-                    last_selected_card.set(None);
-                    is_create_mode.set(true);
-                    clear_editor_fields.borrow_mut()();
-                    save_state.set(SaveState::Idle);
-                    delete_state.set(DeleteState::Idle);
-                    show_delete_modal.set(false);
-                    show_validation.set(false);
-                    show_unsaved_modal.set(false);
-                    pending_action.set(None);
-                    focus_prompt.set(true);
-                }
-            } else if selected_card_id().is_none()
-                && !is_create_mode()
+            if should_enter_create_mode(items.len(), is_create_mode()) {
+                selected_card_id.set(None);
+                last_selected_card.set(None);
+                is_create_mode.set(true);
+                clear_editor_fields.borrow_mut()();
+                save_state.set(SaveState::Idle);
+                delete_state.set(DeleteState::Idle);
+                show_delete_modal.set(false);
+                show_validation.set(false);
+                show_unsaved_modal.set(false);
+                pending_action.set(None);
+                focus_prompt.set(true);
+            } else if should_select_first(items.len(), selected_card_id().is_none(), is_create_mode())
                 && let Some(first) = items.first()
             {
                 select_card_action.call(first.clone());
             }
         }
     });
+}
+
+fn should_enter_create_mode(items_len: usize, is_create_mode: bool) -> bool {
+    items_len == 0 && !is_create_mode
+}
+
+fn should_select_first(items_len: usize, selected_is_none: bool, is_create_mode: bool) -> bool {
+    items_len > 0 && selected_is_none && !is_create_mode
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_enter_create_mode, should_select_first};
+
+    #[test]
+    fn enter_create_mode_only_when_empty_and_not_creating() {
+        assert!(should_enter_create_mode(0, false));
+        assert!(!should_enter_create_mode(0, true));
+        assert!(!should_enter_create_mode(2, false));
+    }
+
+    #[test]
+    fn select_first_only_when_needed() {
+        assert!(should_select_first(3, true, false));
+        assert!(!should_select_first(3, false, false));
+        assert!(!should_select_first(3, true, true));
+        assert!(!should_select_first(0, true, false));
+    }
 }

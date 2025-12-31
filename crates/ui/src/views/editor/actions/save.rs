@@ -24,6 +24,12 @@ struct SavePayload {
     skip_duplicate_check: bool,
 }
 
+fn is_blank_content(prompt_html: &str, answer_html: &str) -> bool {
+    let prompt_plain = strip_html_tags(prompt_html);
+    let answer_plain = strip_html_tags(answer_html);
+    prompt_plain.trim().is_empty() || answer_plain.trim().is_empty()
+}
+
 fn build_save_payload(state: &EditorState, request: SaveRequest) -> Option<SavePayload> {
     let save_state = state.save_state;
     let duplicate_check_state = state.duplicate_check_state;
@@ -40,9 +46,7 @@ fn build_save_payload(state: &EditorState, request: SaveRequest) -> Option<SaveP
     let raw_answer = state.answer_text.read().to_string();
     let prompt_html = sanitize_html(&raw_prompt);
     let answer_html = sanitize_html(&raw_answer);
-    let prompt_plain = strip_html_tags(&prompt_html);
-    let answer_plain = strip_html_tags(&answer_html);
-    if prompt_plain.trim().is_empty() || answer_plain.trim().is_empty() {
+    if is_blank_content(&prompt_html, &answer_html) {
         let mut show_validation = state.show_validation;
         show_validation.set(true);
         return None;
@@ -68,6 +72,24 @@ fn build_save_payload(state: &EditorState, request: SaveRequest) -> Option<SaveP
         practice: request.practice,
         skip_duplicate_check: request.skip_duplicate_check,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_blank_content;
+
+    #[test]
+    fn blank_content_detects_empty_html() {
+        assert!(is_blank_content("<p> </p>", "<div>\n</div>"));
+        assert!(is_blank_content("", "<p>Answer</p>"));
+        assert!(is_blank_content("<p>Prompt</p>", ""));
+    }
+
+    #[test]
+    fn blank_content_allows_text() {
+        assert!(!is_blank_content("<p>Prompt</p>", "<p>Answer</p>"));
+        assert!(!is_blank_content("Prompt", "<div>Answer</div>"));
+    }
 }
 
 async fn check_duplicate(

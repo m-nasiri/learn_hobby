@@ -1,8 +1,11 @@
 mod actions;
 mod components;
 mod scripts;
-mod state;
-mod utils;
+pub(crate) mod state;
+pub(crate) mod utils;
 mod view;
 
 pub use view::EditorView;
+
+#[cfg(test)]
+mod intent_smoke;

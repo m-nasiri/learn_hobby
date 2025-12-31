@@ -1,6 +1,7 @@
 mod cards;
 mod decks;
 mod format;
+mod intent;
 mod keyboard;
 mod menus;
 mod save;
@@ -13,37 +14,44 @@ use crate::vm::{CardListItemVm, MarkdownAction, MarkdownField};
 
 use super::state::{EditorServices, EditorState, SaveRequest};
 
+pub use intent::EditorIntent;
+
 #[derive(Clone)]
-pub struct EditorActions {
-    pub save: Callback<SaveRequest>,
-    pub create_deck: Callback<()>,
-    pub cancel_rename: Callback<()>,
-    pub commit_rename: Callback<()>,
-    pub begin_rename: Callback<String>,
-    pub request_select_deck: Callback<learn_core::model::DeckId>,
-    pub request_select_card: Callback<CardListItemVm>,
-    pub request_new_card: Callback<()>,
-    pub add_tag: Callback<String>,
-    pub remove_tag: Callback<String>,
-    pub set_tag_filter: Callback<Option<String>>,
-    pub handle_paste: Callback<MarkdownField>,
-    pub apply_format: Callback<(MarkdownField, MarkdownAction)>,
-    pub apply_block_dir: Callback<(MarkdownField, String)>,
-    pub confirm_discard: Callback<()>,
-    pub cancel_discard: Callback<()>,
-    pub open_delete_modal: Callback<()>,
-    pub toggle_save_menu: Callback<()>,
-    pub close_save_menu: Callback<()>,
-    pub close_delete_modal: Callback<()>,
-    pub close_duplicate_modal: Callback<()>,
-    pub confirm_duplicate: Callback<()>,
-    pub delete: Callback<()>,
-    pub cancel_new: Callback<()>,
+pub struct EditorDispatcher {
+    pub dispatch: Callback<EditorIntent>,
     pub on_key: Callback<KeyboardEvent>,
     pub list_on_key: Callback<KeyboardEvent>,
 }
 
-pub fn use_editor_actions(state: &EditorState, services: &EditorServices) -> EditorActions {
+#[derive(Clone)]
+struct EditorActionHandlers {
+    save: Callback<SaveRequest>,
+    create_deck: Callback<()>,
+    cancel_rename: Callback<()>,
+    commit_rename: Callback<()>,
+    begin_rename: Callback<String>,
+    request_select_deck: Callback<learn_core::model::DeckId>,
+    request_select_card: Callback<CardListItemVm>,
+    request_new_card: Callback<()>,
+    add_tag: Callback<String>,
+    remove_tag: Callback<String>,
+    set_tag_filter: Callback<Option<String>>,
+    handle_paste: Callback<MarkdownField>,
+    apply_format: Callback<(MarkdownField, MarkdownAction)>,
+    apply_block_dir: Callback<(MarkdownField, String)>,
+    confirm_discard: Callback<()>,
+    cancel_discard: Callback<()>,
+    open_delete_modal: Callback<()>,
+    toggle_save_menu: Callback<()>,
+    close_save_menu: Callback<()>,
+    close_delete_modal: Callback<()>,
+    close_duplicate_modal: Callback<()>,
+    confirm_duplicate: Callback<()>,
+    delete: Callback<()>,
+    cancel_new: Callback<()>,
+}
+
+pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> EditorDispatcher {
     let navigator = use_navigator();
     let state = state.clone();
     let services = services.clone();
@@ -81,17 +89,7 @@ pub fn use_editor_actions(state: &EditorState, services: &EditorServices) -> Edi
 
     cards::use_cards_resource_effect(&state, select_card_action);
 
-    let on_key = keyboard::build_on_key_action(
-        &state,
-        save_action,
-        request_new_card_action,
-        open_delete_modal_action,
-        apply_format_action,
-        cancel_new_action,
-    );
-    let list_on_key = keyboard::build_list_on_key_action(&state, request_select_card_action);
-
-    EditorActions {
+    let handlers = EditorActionHandlers {
         save: save_action,
         create_deck: create_deck_action,
         cancel_rename: cancel_rename_action,
@@ -116,7 +114,52 @@ pub fn use_editor_actions(state: &EditorState, services: &EditorServices) -> Edi
         confirm_duplicate: confirm_duplicate_action,
         delete: delete_action,
         cancel_new: cancel_new_action,
+    };
+
+    let dispatch = {
+        let handlers = handlers.clone();
+        use_callback(move |intent: EditorIntent| dispatch_intent(intent, &handlers))
+    };
+
+    let on_key = keyboard::build_on_key_action(&state, dispatch);
+    let list_on_key = keyboard::build_list_on_key_action(&state, dispatch);
+
+    EditorDispatcher {
+        dispatch,
         on_key,
         list_on_key,
+    }
+}
+
+fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
+    match intent {
+        EditorIntent::Save(request) => handlers.save.call(request),
+        EditorIntent::CreateDeck => handlers.create_deck.call(()),
+        EditorIntent::CancelRename => handlers.cancel_rename.call(()),
+        EditorIntent::CommitRename => handlers.commit_rename.call(()),
+        EditorIntent::BeginRename(label) => handlers.begin_rename.call(label),
+        EditorIntent::RequestSelectDeck(deck_id) => handlers.request_select_deck.call(deck_id),
+        EditorIntent::RequestSelectCard(card) => handlers.request_select_card.call(card),
+        EditorIntent::RequestNewCard => handlers.request_new_card.call(()),
+        EditorIntent::AddTag(tag) => handlers.add_tag.call(tag),
+        EditorIntent::RemoveTag(tag) => handlers.remove_tag.call(tag),
+        EditorIntent::SetTagFilter(tag) => handlers.set_tag_filter.call(tag),
+        EditorIntent::HandlePaste(field) => handlers.handle_paste.call(field),
+        EditorIntent::ApplyFormat(field, action) => {
+            handlers.apply_format.call((field, action));
+        }
+        EditorIntent::ApplyBlockDir(field, dir) => {
+            handlers.apply_block_dir.call((field, dir));
+        }
+        EditorIntent::ConfirmDiscard => handlers.confirm_discard.call(()),
+        EditorIntent::CancelDiscard => handlers.cancel_discard.call(()),
+        EditorIntent::OpenDeleteModal => handlers.open_delete_modal.call(()),
+        EditorIntent::ToggleSaveMenu => handlers.toggle_save_menu.call(()),
+        EditorIntent::CloseSaveMenu => handlers.close_save_menu.call(()),
+        EditorIntent::CloseDeleteModal => handlers.close_delete_modal.call(()),
+        EditorIntent::CloseDuplicateModal => handlers.close_duplicate_modal.call(()),
+        EditorIntent::ConfirmDuplicate => handlers.confirm_duplicate.call(()),
+        EditorIntent::Delete => handlers.delete.call(()),
+        EditorIntent::CancelNew => handlers.cancel_new.call(()),
     }
 }
