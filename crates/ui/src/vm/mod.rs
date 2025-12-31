@@ -15,6 +15,6 @@ pub use session_summary_vm::{
 };
 pub use session_vm::{SessionIntent, SessionOutcome, SessionPhase, SessionVm, start_session};
 pub use markdown_vm::{
-    MarkdownAction, MarkdownField, PasteOffer, SelectionRange, apply_markdown_action,
-    html_to_markdown, looks_like_html, markdown_to_html, normalize_markdown,
+    MarkdownAction, MarkdownField, html_to_markdown, looks_like_html, looks_like_markdown,
+    markdown_to_html, normalize_markdown, sanitize_html, strip_html_tags,
 };

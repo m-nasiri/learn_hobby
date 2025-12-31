@@ -10,9 +10,9 @@ use services::{CardListFilter, CardListSort};
 use crate::context::AppContext;
 use crate::routes::Route;
 use crate::vm::{
-    CardListItemVm, MarkdownAction, MarkdownField, SelectionRange, apply_markdown_action,
-    build_card_list_item, filter_card_list_items, html_to_markdown, map_card_list_items,
-    map_deck_options, markdown_to_html,
+    CardListItemVm, MarkdownAction, MarkdownField, build_card_list_item,
+    filter_card_list_items, looks_like_markdown, map_card_list_items, map_deck_options,
+    markdown_to_html, sanitize_html, strip_html_tags,
 };
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 use serde::Deserialize;
@@ -44,12 +44,6 @@ enum DuplicateCheckState {
     Idle,
     Checking,
     Error(ViewError),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MarkdownMode {
-    Write,
-    Preview,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,13 +85,6 @@ struct HighlightSpan {
 struct ClipboardSnapshot {
     html: String,
     text: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct SelectionSnapshot {
-    ok: bool,
-    start: usize,
-    end: usize,
 }
 
 const CLIPBOARD_READ_SCRIPT: &str = r#"
@@ -265,71 +252,184 @@ fn build_tag_suggestions(deck_tags: &[String], current: &[String], query: &str) 
         .collect()
 }
 
-fn apply_paste_conversion(current: &str, pasted_text: &str, markdown: &str) -> String {
-    if pasted_text.is_empty() {
-        if current.trim().is_empty() {
-            return markdown.to_string();
-        }
-        return format!("{current}\n{markdown}");
-    }
-    if current.trim() == pasted_text.trim() {
-        return markdown.to_string();
-    }
-    if let Some(idx) = current.rfind(pasted_text) {
-        let mut output = String::with_capacity(current.len() + markdown.len());
-        output.push_str(&current[..idx]);
-        output.push_str(markdown);
-        output.push_str(&current[idx + pasted_text.len()..]);
-        return output;
-    }
-    if current.trim().is_empty() {
-        return markdown.to_string();
-    }
-    format!("{current}\n{markdown}")
-}
-
 async fn read_clipboard_snapshot() -> Option<ClipboardSnapshot> {
     eval(CLIPBOARD_READ_SCRIPT).join::<ClipboardSnapshot>().await.ok()
 }
 
-fn selection_read_script(element_id: &str) -> String {
+fn js_string_literal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn read_editable_html_script(element_id: &str) -> String {
     format!(
         r#"
         const el = document.getElementById("{element_id}");
-        if (!el) {{ return {{ ok: false, start: 0, end: 0 }}; }}
-        return {{ ok: true, start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 }};
+        return el ? el.innerHTML : "";
         "#
     )
 }
 
-fn selection_set_script(element_id: &str, start: usize, end: usize) -> String {
+async fn read_editable_html(element_id: &str) -> Option<String> {
+    let script = read_editable_html_script(element_id);
+    eval(&script).join::<String>().await.ok()
+}
+
+fn set_editable_html_script(element_id: &str, html: &str) -> String {
+    let html_literal = js_string_literal(html);
     format!(
         r#"
         const el = document.getElementById("{element_id}");
-        if (el && el.setSelectionRange) {{
-            el.focus();
-            el.setSelectionRange({start}, {end});
+        if (el) {{ el.innerHTML = {html_literal}; }}
+        "#
+    )
+}
+
+async fn set_editable_html(element_id: &str, html: &str) {
+    let script = set_editable_html_script(element_id, html);
+    let _ = eval(&script).await;
+}
+
+fn insert_html_script(element_id: &str, html: &str) -> String {
+    let html_literal = js_string_literal(html);
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        el.focus();
+        document.execCommand("insertHTML", false, {html_literal});
+        "#
+    )
+}
+
+fn insert_text_script(element_id: &str, text: &str) -> String {
+    let text_literal = js_string_literal(text);
+    let html_literal = js_string_literal(&escape_html(text));
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        el.focus();
+        if (!document.execCommand("insertText", false, {text_literal})) {{
+            document.execCommand("insertHTML", false, {html_literal});
         }}
         "#
     )
 }
 
-async fn read_selection_range(element_id: &str) -> Option<SelectionRange> {
-    let script = selection_read_script(element_id);
-    let snapshot = eval(&script).join::<SelectionSnapshot>().await.ok()?;
-    if snapshot.ok {
-        Some(SelectionRange {
-            start: snapshot.start,
-            end: snapshot.end,
-        })
-    } else {
-        None
+fn wrap_selection_script(element_id: &str, tag: &str, inner_tag: Option<&str>) -> String {
+    let tag_literal = js_string_literal(tag);
+    let inner_literal = inner_tag.map(js_string_literal);
+    let fallback_html = match inner_tag {
+        Some(inner_tag) => format!("<{tag}><{inner_tag}></{inner_tag}></{tag}>"),
+        None => format!("<{tag}></{tag}>"),
+    };
+    let fallback_literal = js_string_literal(&fallback_html);
+    match inner_literal {
+        Some(inner_literal) => format!(
+            r#"
+            const el = document.getElementById("{element_id}");
+            if (!el) {{ return; }}
+            el.focus();
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) {{
+                document.execCommand("insertHTML", false, {fallback_literal});
+                return;
+            }}
+            const range = sel.getRangeAt(0);
+            if (!el.contains(range.commonAncestorContainer)) {{
+                return;
+            }}
+            const wrapper = document.createElement({tag_literal});
+            const inner = document.createElement({inner_literal});
+            if (range.collapsed) {{
+                inner.appendChild(document.createTextNode(""));
+            }} else {{
+                inner.appendChild(range.extractContents());
+            }}
+            wrapper.appendChild(inner);
+            range.insertNode(wrapper);
+            sel.removeAllRanges();
+            const newRange = document.createRange();
+            newRange.selectNodeContents(inner);
+            newRange.collapse(false);
+            sel.addRange(newRange);
+            "#,
+            tag_literal = tag_literal,
+            inner_literal = inner_literal,
+            fallback_literal = fallback_literal
+        ),
+        None => format!(
+            r#"
+            const el = document.getElementById("{element_id}");
+            if (!el) {{ return; }}
+            el.focus();
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) {{
+                document.execCommand("insertHTML", false, {fallback_literal});
+                return;
+            }}
+            const range = sel.getRangeAt(0);
+            if (!el.contains(range.commonAncestorContainer)) {{
+                return;
+            }}
+            const wrapper = document.createElement({tag_literal});
+            if (range.collapsed) {{
+                wrapper.appendChild(document.createTextNode(""));
+            }} else {{
+                wrapper.appendChild(range.extractContents());
+            }}
+            range.insertNode(wrapper);
+            sel.removeAllRanges();
+            const newRange = document.createRange();
+            newRange.selectNodeContents(wrapper);
+            newRange.collapse(false);
+            sel.addRange(newRange);
+            "#,
+            tag_literal = tag_literal,
+            fallback_literal = fallback_literal
+        ),
     }
 }
 
-async fn set_selection_range(element_id: &str, range: SelectionRange) {
-    let script = selection_set_script(element_id, range.start, range.end);
-    let _ = eval(&script).await;
+fn exec_command_script(element_id: &str, command: &str, value: Option<&str>) -> String {
+    let command_literal = js_string_literal(command);
+    let value_literal = value.map(js_string_literal).unwrap_or_else(|| "null".to_string());
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        el.focus();
+        document.execCommand({command_literal}, false, {value_literal});
+        "#
+    )
+}
+
+fn escape_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 #[component]
@@ -348,7 +448,7 @@ pub fn EditorView() -> Element {
     let card_service_for_save = card_service.clone();
     let card_service_for_delete = card_service.clone();
     let selected_deck = use_signal(|| deck_id);
-    let mut save_state = use_signal(|| SaveState::Idle);
+    let save_state = use_signal(|| SaveState::Idle);
     let mut delete_state = use_signal(|| DeleteState::Idle);
     let mut show_delete_modal = use_signal(|| false);
     let mut show_validation = use_signal(|| false);
@@ -373,8 +473,6 @@ pub fn EditorView() -> Element {
     let mut card_tags = use_signal(Vec::new);
     let last_selected_tags = use_signal(Vec::new);
     let mut tag_input = use_signal(String::new);
-    let mut prompt_mode = use_signal(|| MarkdownMode::Write);
-    let mut answer_mode = use_signal(|| MarkdownMode::Write);
     let mut last_focus_field = use_signal(|| MarkdownField::Front);
     let mut duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
     let mut show_duplicate_modal = use_signal(|| false);
@@ -509,85 +607,35 @@ pub fn EditorView() -> Element {
     });
 
     // UI-only state for now (service wiring comes next step).
-    let mut prompt_text = use_signal(String::new);
-    let mut answer_text = use_signal(String::new);
-    let mut prompt_preview_html = use_signal(String::new);
-    let mut answer_preview_html = use_signal(String::new);
-    let mut prompt_preview_text = use_signal(String::new);
-    let mut answer_preview_text = use_signal(String::new);
-    let mut prompt_preview_gen = use_signal(|| 0u64);
-    let mut answer_preview_gen = use_signal(|| 0u64);
-
-    use_effect(move || {
-        if prompt_mode() != MarkdownMode::Preview {
-            return;
-        }
-        let current = prompt_text.read().to_string();
-        if prompt_preview_text() == current {
-            return;
-        }
-        prompt_preview_text.set(current.clone());
-        if prompt_preview_html.read().is_empty() {
-            prompt_preview_html.set(markdown_to_html(&current));
-            return;
-        }
-        let next_gen = prompt_preview_gen() + 1;
-        prompt_preview_gen.set(next_gen);
-        let mut prompt_preview_html = prompt_preview_html;
-        let prompt_preview_gen = prompt_preview_gen;
-        spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            if prompt_preview_gen() == next_gen {
-                prompt_preview_html.set(markdown_to_html(&current));
-            }
-        });
-    });
-
-    use_effect(move || {
-        if answer_mode() != MarkdownMode::Preview {
-            return;
-        }
-        let current = answer_text.read().to_string();
-        if answer_preview_text() == current {
-            return;
-        }
-        answer_preview_text.set(current.clone());
-        if answer_preview_html.read().is_empty() {
-            answer_preview_html.set(markdown_to_html(&current));
-            return;
-        }
-        let next_gen = answer_preview_gen() + 1;
-        answer_preview_gen.set(next_gen);
-        let mut answer_preview_html = answer_preview_html;
-        let answer_preview_gen = answer_preview_gen;
-        spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            if answer_preview_gen() == next_gen {
-                answer_preview_html.set(markdown_to_html(&current));
-            }
-        });
-    });
+    let prompt_text = use_signal(String::new);
+    let answer_text = use_signal(String::new);
+    let mut prompt_render_html = use_signal(String::new);
+    let mut answer_render_html = use_signal(String::new);
 
     let has_unsaved_changes = {
-        let prompt_text = prompt_text;
-        let answer_text = answer_text;
         let card_tags = card_tags;
         Rc::new(move || {
             if !(is_create_mode() || selected_card_id().is_some()) {
                 return false;
             }
-            let prompt = prompt_text.read().trim().to_string();
-            let answer = answer_text.read().trim().to_string();
+            let prompt_html = prompt_text.read().to_string();
+            let answer_html = answer_text.read().to_string();
+            let prompt_plain = strip_html_tags(&prompt_html);
+            let answer_plain = strip_html_tags(&answer_html);
             let tags = card_tags.read().clone();
             if is_create_mode() {
-                return !prompt.is_empty() || !answer.is_empty() || !tags.is_empty();
+                return !prompt_plain.trim().is_empty()
+                    || !answer_plain.trim().is_empty()
+                    || !tags.is_empty();
             }
             if let Some(original) = last_selected_card() {
-                prompt != original.prompt.trim()
-                    || answer != original.answer.trim()
+                prompt_html.trim() != original.prompt_html.trim()
+                    || answer_html.trim() != original.answer_html.trim()
                     || !tags_equal(&tags, &last_selected_tags())
             } else {
-                !prompt.is_empty() || !answer.is_empty() || !tags.is_empty()
+                !prompt_plain.trim().is_empty()
+                    || !answer_plain.trim().is_empty()
+                    || !tags.is_empty()
             }
         })
     };
@@ -614,6 +662,8 @@ pub fn EditorView() -> Element {
         let mut focus_prompt = focus_prompt;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut last_selected_tags = last_selected_tags;
         let mut tag_input = tag_input;
@@ -626,8 +676,12 @@ pub fn EditorView() -> Element {
         let deck_id = *selected_deck.read();
         let has_unsaved_changes = Rc::clone(&has_unsaved_changes_for_save);
 
-        let prompt = prompt_text.read().trim().to_owned();
-        let answer = answer_text.read().trim().to_owned();
+        let raw_prompt = prompt_text.read().to_string();
+        let raw_answer = answer_text.read().to_string();
+        let prompt_html = sanitize_html(&raw_prompt);
+        let answer_html = sanitize_html(&raw_answer);
+        let prompt_plain = strip_html_tags(&prompt_html);
+        let answer_plain = strip_html_tags(&answer_html);
         let tag_names = tag_names_from_strings(&card_tags.read());
         let practice = request.practice;
         let skip_duplicate_check = request.skip_duplicate_check;
@@ -642,7 +696,7 @@ pub fn EditorView() -> Element {
             return;
         }
 
-        if prompt.is_empty() || answer.is_empty() {
+        if prompt_plain.trim().is_empty() || answer_plain.trim().is_empty() {
             show_validation.set(true);
             return;
         }
@@ -667,7 +721,7 @@ pub fn EditorView() -> Element {
             if !skip_duplicate_check {
                 duplicate_check_state.set(DuplicateCheckState::Checking);
                 let duplicate = card_service
-                    .prompt_exists(deck_id, &prompt, editing_id)
+                    .prompt_exists(deck_id, &prompt_html, editing_id)
                     .await;
                 match duplicate {
                     Ok(true) => {
@@ -698,8 +752,8 @@ pub fn EditorView() -> Element {
                         .update_card_content_with_tags(
                             deck_id,
                             card_id,
-                            ContentDraft::text_only(prompt.clone()),
-                            ContentDraft::text_only(answer.clone()),
+                            ContentDraft::text_only(prompt_html.clone()),
+                            ContentDraft::text_only(answer_html.clone()),
                             &tag_names,
                         )
                         .await
@@ -708,8 +762,8 @@ pub fn EditorView() -> Element {
                 None => card_service
                     .create_card_with_tags(
                         deck_id,
-                        ContentDraft::text_only(prompt.clone()),
-                        ContentDraft::text_only(answer.clone()),
+                        ContentDraft::text_only(prompt_html.clone()),
+                        ContentDraft::text_only(answer_html.clone()),
                         &tag_names,
                     )
                     .await
@@ -736,14 +790,23 @@ pub fn EditorView() -> Element {
                         (true, false) => {
                             prompt_text.set(String::new());
                             answer_text.set(String::new());
+                            prompt_render_html.set(String::new());
+                            answer_render_html.set(String::new());
                             card_tags.set(Vec::new());
                             focus_prompt.set(true);
                         }
                         (false, _) => {
                             if let Some(card_id) = card_id {
                                 selected_card_id.set(Some(card_id));
-                                last_selected_card
-                                    .set(Some(build_card_list_item(card_id, &prompt, &answer)));
+                                prompt_text.set(prompt_html.clone());
+                                answer_text.set(answer_html.clone());
+                                prompt_render_html.set(prompt_html.clone());
+                                answer_render_html.set(answer_html.clone());
+                                last_selected_card.set(Some(build_card_list_item(
+                                    card_id,
+                                    &prompt_html,
+                                    &answer_html,
+                                )));
                                 last_selected_tags.set(card_tags.read().clone());
                                 focus_prompt.set(true);
                             }
@@ -770,6 +833,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
         let mut show_deck_menu = show_deck_menu;
         let mut is_renaming_deck = is_renaming_deck;
         let mut rename_deck_state = rename_deck_state;
@@ -817,6 +882,8 @@ pub fn EditorView() -> Element {
                     is_create_mode.set(true);
                     prompt_text.set(String::new());
                     answer_text.set(String::new());
+                    prompt_render_html.set(String::new());
+                    answer_render_html.set(String::new());
                 }
                 Err(_) => {
                     new_deck_state.set(SaveState::Error(ViewError::Unknown));
@@ -929,6 +996,8 @@ pub fn EditorView() -> Element {
         is_create_mode.set(false);
         prompt_text.set(String::new());
         answer_text.set(String::new());
+        prompt_render_html.set(String::new());
+        answer_render_html.set(String::new());
         card_tags.set(Vec::new());
         last_selected_tags.set(Vec::new());
         tag_input.set(String::new());
@@ -976,8 +1045,12 @@ pub fn EditorView() -> Element {
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
         is_create_mode.set(false);
-        prompt_text.set(item.prompt);
-        answer_text.set(item.answer);
+        let prompt_html = item.prompt_html;
+        let answer_html = item.answer_html;
+        prompt_text.set(prompt_html.clone());
+        answer_text.set(answer_html.clone());
+        prompt_render_html.set(prompt_html);
+        answer_render_html.set(answer_html);
         card_tags.set(Vec::new());
         last_selected_tags.set(Vec::new());
         tag_input.set(String::new());
@@ -1036,6 +1109,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut tag_input = tag_input;
         let mut save_state = save_state;
@@ -1055,6 +1130,8 @@ pub fn EditorView() -> Element {
         is_create_mode.set(true);
         prompt_text.set(String::new());
         answer_text.set(String::new());
+        prompt_render_html.set(String::new());
+        answer_render_html.set(String::new());
         card_tags.set(Vec::new());
         tag_input.set(String::new());
         save_state.set(SaveState::Idle);
@@ -1137,50 +1214,73 @@ pub fn EditorView() -> Element {
     let handle_paste_action = use_callback(move |target: MarkdownField| {
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut save_state = save_state;
         spawn(async move {
             if let Some(snapshot) = read_clipboard_snapshot().await {
-                if snapshot.html.trim().is_empty() {
+                let element_id = match target {
+                    MarkdownField::Front => "prompt",
+                    MarkdownField::Back => "answer",
+                };
+                let html = snapshot.html.trim();
+                if !html.is_empty() {
+                    let sanitized = sanitize_html(html);
+                    let script = insert_html_script(element_id, &sanitized);
+                    let _ = eval(&script).await;
+                } else if looks_like_markdown(&snapshot.text) {
+                    let html = markdown_to_html(&snapshot.text);
+                    let script = insert_html_script(element_id, &html);
+                    let _ = eval(&script).await;
+                } else if !snapshot.text.is_empty() {
+                    let script = insert_text_script(element_id, &snapshot.text);
+                    let _ = eval(&script).await;
+                } else {
                     return;
                 }
-                let markdown = html_to_markdown(&snapshot.html);
-                match target {
-                    MarkdownField::Front => {
-                        let current = prompt_text.read().to_string();
-                        let updated = apply_paste_conversion(&current, &snapshot.text, &markdown);
-                        prompt_text.set(updated);
-                    }
-                    MarkdownField::Back => {
-                        let current = answer_text.read().to_string();
-                        let updated = apply_paste_conversion(&current, &snapshot.text, &markdown);
-                        answer_text.set(updated);
+
+                if let Some(updated) = read_editable_html(element_id).await {
+                    match target {
+                        MarkdownField::Front => prompt_text.set(updated),
+                        MarkdownField::Back => answer_text.set(updated),
                     }
                 }
+                save_state.set(SaveState::Idle);
             }
         });
     });
 
-    let apply_markdown_action_action =
-        use_callback(move |(field, action): (MarkdownField, MarkdownAction)| {
-            let mut prompt_text = prompt_text;
-            let mut answer_text = answer_text;
-            let mut save_state = save_state;
-            spawn(async move {
-                let (element_id, current) = match field {
-                    MarkdownField::Front => ("prompt", prompt_text.read().to_string()),
-                    MarkdownField::Back => ("answer", answer_text.read().to_string()),
-                };
-                let selection = read_selection_range(element_id).await;
-                let (next, next_selection) = apply_markdown_action(&current, action, selection);
+    let apply_format_action = use_callback(move |(field, action): (MarkdownField, MarkdownAction)| {
+        let mut prompt_text = prompt_text;
+        let mut answer_text = answer_text;
+        let mut save_state = save_state;
+        spawn(async move {
+            let element_id = match field {
+                MarkdownField::Front => "prompt",
+                MarkdownField::Back => "answer",
+            };
+            let script = match action {
+                MarkdownAction::Bold => exec_command_script(element_id, "bold", None),
+                MarkdownAction::Italic => exec_command_script(element_id, "italic", None),
+                MarkdownAction::Link => exec_command_script(element_id, "createLink", Some("https://")),
+                MarkdownAction::Quote => exec_command_script(element_id, "formatBlock", Some("blockquote")),
+                MarkdownAction::BulletList => {
+                    exec_command_script(element_id, "insertUnorderedList", None)
+                }
+                MarkdownAction::NumberedList => {
+                    exec_command_script(element_id, "insertOrderedList", None)
+                }
+                MarkdownAction::Code => wrap_selection_script(element_id, "code", None),
+                MarkdownAction::CodeBlock => wrap_selection_script(element_id, "pre", Some("code")),
+            };
+            let _ = eval(&script).await;
+            if let Some(updated) = read_editable_html(element_id).await {
                 match field {
-                    MarkdownField::Front => prompt_text.set(next),
-                    MarkdownField::Back => answer_text.set(next),
+                    MarkdownField::Front => prompt_text.set(updated),
+                    MarkdownField::Back => answer_text.set(updated),
                 }
-                save_state.set(SaveState::Idle);
-                if let Some(selection) = next_selection {
-                    set_selection_range(element_id, selection).await;
-                }
-            });
+            }
+            save_state.set(SaveState::Idle);
         });
+    });
 
     let confirm_discard_action = use_callback(move |()| {
         let mut show_unsaved_modal = show_unsaved_modal;
@@ -1322,6 +1422,8 @@ pub fn EditorView() -> Element {
                     is_create_mode.set(false);
                     prompt_text.set(String::new());
                     answer_text.set(String::new());
+                    prompt_render_html.set(String::new());
+                    answer_render_html.set(String::new());
                     card_tags.set(Vec::new());
                     last_selected_tags.set(Vec::new());
                     tag_input.set(String::new());
@@ -1347,6 +1449,8 @@ pub fn EditorView() -> Element {
         let mut is_create_mode = is_create_mode;
         let mut prompt_text = prompt_text;
         let mut answer_text = answer_text;
+        let mut prompt_render_html = prompt_render_html;
+        let mut answer_render_html = answer_render_html;
         let mut card_tags = card_tags;
         let mut tag_input = tag_input;
         let mut save_state = save_state;
@@ -1363,14 +1467,18 @@ pub fn EditorView() -> Element {
 
         if let Some(card) = last_selected_card() {
             selected_card_id.set(Some(card.id));
-            prompt_text.set(card.prompt.clone());
-            answer_text.set(card.answer.clone());
+            prompt_text.set(card.prompt_html.clone());
+            answer_text.set(card.answer_html.clone());
+            prompt_render_html.set(card.prompt_html.clone());
+            answer_render_html.set(card.answer_html.clone());
             card_tags.set(last_selected_tags());
             is_create_mode.set(false);
         } else {
             selected_card_id.set(None);
             prompt_text.set(String::new());
             answer_text.set(String::new());
+            prompt_render_html.set(String::new());
+            answer_render_html.set(String::new());
             card_tags.set(Vec::new());
             is_create_mode.set(true);
         }
@@ -1394,6 +1502,8 @@ pub fn EditorView() -> Element {
     let mut is_create_mode_for_effect = is_create_mode;
     let mut prompt_text_for_effect = prompt_text;
     let mut answer_text_for_effect = answer_text;
+    let mut prompt_render_html_for_effect = prompt_render_html;
+    let mut answer_render_html_for_effect = answer_render_html;
     let mut save_state_for_effect = save_state;
     let mut delete_state_for_effect = delete_state;
     let mut show_delete_modal_for_effect = show_delete_modal;
@@ -1411,6 +1521,8 @@ pub fn EditorView() -> Element {
                     is_create_mode_for_effect.set(true);
                     prompt_text_for_effect.set(String::new());
                     answer_text_for_effect.set(String::new());
+                    prompt_render_html_for_effect.set(String::new());
+                    answer_render_html_for_effect.set(String::new());
                     save_state_for_effect.set(SaveState::Idle);
                     delete_state_for_effect.set(DeleteState::Idle);
                     show_delete_modal_for_effect.set(false);
@@ -1439,8 +1551,10 @@ pub fn EditorView() -> Element {
     };
 
     let can_cancel = is_create_mode() && last_selected_card().is_some();
-    let prompt_invalid = show_validation() && prompt_text.read().trim().is_empty();
-    let answer_invalid = show_validation() && answer_text.read().trim().is_empty();
+    let prompt_plain = strip_html_tags(&prompt_text.read());
+    let answer_plain = strip_html_tags(&answer_text.read());
+    let prompt_invalid = show_validation() && prompt_plain.trim().is_empty();
+    let answer_invalid = show_validation() && answer_plain.trim().is_empty();
     let search_value = search_query.read().to_string();
     let has_search = !search_value.trim().is_empty();
     let match_count = match &cards_state {
@@ -1462,10 +1576,8 @@ pub fn EditorView() -> Element {
         &card_tags.read(),
         &tag_input_value,
     );
-    let prompt_preview_html_value = prompt_preview_html.read().to_string();
-    let answer_preview_html_value = answer_preview_html.read().to_string();
-    let prompt_toolbar_disabled = !can_edit || prompt_mode() == MarkdownMode::Preview;
-    let answer_toolbar_disabled = !can_edit || answer_mode() == MarkdownMode::Preview;
+    let prompt_toolbar_disabled = !can_edit;
+    let answer_toolbar_disabled = !can_edit;
 
     use_effect(move || {
         if !focus_prompt() {
@@ -1473,6 +1585,22 @@ pub fn EditorView() -> Element {
         }
         focus_prompt.set(false);
         let _ = eval("document.getElementById('prompt')?.focus();");
+    });
+
+    let prompt_render_html_for_effect = prompt_render_html;
+    use_effect(move || {
+        let html = prompt_render_html_for_effect.read().to_string();
+        spawn(async move {
+            set_editable_html("prompt", &html).await;
+        });
+    });
+
+    let answer_render_html_for_effect = answer_render_html;
+    use_effect(move || {
+        let html = answer_render_html_for_effect.read().to_string();
+        spawn(async move {
+            set_editable_html("answer", &html).await;
+        });
     });
 
     let on_key = {
@@ -1485,8 +1613,6 @@ pub fn EditorView() -> Element {
         let mut show_deck_menu = show_deck_menu;
         let mut show_delete_modal = show_delete_modal;
         let show_duplicate_modal = show_duplicate_modal;
-        let prompt_mode = prompt_mode;
-        let answer_mode = answer_mode;
         let last_focus_field = last_focus_field;
         use_callback(move |evt: KeyboardEvent| {
             if show_delete_modal() && evt.data.key() == Key::Escape {
@@ -1555,45 +1681,35 @@ pub fn EditorView() -> Element {
                 }
 
                 let active_field = last_focus_field();
-                let allow_prompt = active_field == MarkdownField::Front
-                    && prompt_mode() == MarkdownMode::Write;
-                let allow_answer = active_field == MarkdownField::Back
-                    && answer_mode() == MarkdownMode::Write;
-                if can_edit && (allow_prompt || allow_answer) {
-                    let field = if allow_prompt {
-                        MarkdownField::Front
-                    } else {
-                        MarkdownField::Back
-                    };
+                if can_edit && matches!(active_field, MarkdownField::Front | MarkdownField::Back) {
+                    let field = active_field;
                     let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
                     match evt.data.key() {
                         Key::Character(value) if value.eq_ignore_ascii_case("b") => {
                             evt.prevent_default();
-                            apply_markdown_action_action
-                                .call((field, MarkdownAction::Bold));
+                            apply_format_action.call((field, MarkdownAction::Bold));
                             return;
                         }
                         Key::Character(value) if value.eq_ignore_ascii_case("i") => {
                             evt.prevent_default();
-                            apply_markdown_action_action
-                                .call((field, MarkdownAction::Italic));
+                            apply_format_action.call((field, MarkdownAction::Italic));
                             return;
                         }
                         Key::Character(value) if value.eq_ignore_ascii_case("k") => {
                             evt.prevent_default();
-                            apply_markdown_action_action
+                            apply_format_action
                                 .call((field, MarkdownAction::Link));
                             return;
                         }
                         Key::Character(value) if value == "7" && shift => {
                             evt.prevent_default();
-                            apply_markdown_action_action
+                            apply_format_action
                                 .call((field, MarkdownAction::NumberedList));
                             return;
                         }
                         Key::Character(value) if value == "8" && shift => {
                             evt.prevent_default();
-                            apply_markdown_action_action
+                            apply_format_action
                                 .call((field, MarkdownAction::BulletList));
                             return;
                         }
@@ -2133,7 +2249,7 @@ pub fn EditorView() -> Element {
                                             title: "Bold",
                                             aria_label: "Bold",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::Bold,
                                                 ));
@@ -2147,7 +2263,7 @@ pub fn EditorView() -> Element {
                                             title: "Italic",
                                             aria_label: "Italic",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::Italic,
                                                 ));
@@ -2167,7 +2283,7 @@ pub fn EditorView() -> Element {
                                             title: "Quote",
                                             aria_label: "Quote",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::Quote,
                                                 ));
@@ -2186,7 +2302,7 @@ pub fn EditorView() -> Element {
                                             title: "Bulleted list",
                                             aria_label: "Bulleted list",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::BulletList,
                                                 ));
@@ -2209,7 +2325,7 @@ pub fn EditorView() -> Element {
                                             title: "Numbered list",
                                             aria_label: "Numbered list",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::NumberedList,
                                                 ));
@@ -2235,7 +2351,7 @@ pub fn EditorView() -> Element {
                                             title: "Link",
                                             aria_label: "Link",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::Link,
                                                 ));
@@ -2258,7 +2374,7 @@ pub fn EditorView() -> Element {
                                             title: "Inline code",
                                             aria_label: "Inline code",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::Code,
                                                 ));
@@ -2277,7 +2393,7 @@ pub fn EditorView() -> Element {
                                             title: "Code block",
                                             aria_label: "Code block",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Front,
                                                     MarkdownAction::CodeBlock,
                                                 ));
@@ -2291,73 +2407,37 @@ pub fn EditorView() -> Element {
                                             }
                                         }
                                     }
-                                    div { class: "editor-md-toolbar-spacer" }
-                                    div { class: "editor-md-toolbar-separator" }
-                                    div { class: "editor-md-toolbar-group",
-                                        button {
-                                            class: if prompt_mode() == MarkdownMode::Write {
-                                                "editor-mode-btn editor-mode-btn--active"
-                                            } else {
-                                                "editor-mode-btn"
-                                            },
-                                            r#type: "button",
-                                            disabled: !can_edit,
-                                            title: "Write",
-                                            aria_label: "Write",
-                                            onclick: move |_| prompt_mode.set(MarkdownMode::Write),
-                                            svg {
-                                                class: "editor-md-toolbar-icon",
-                                                view_box: "0 0 24 24",
-                                                path { d: "M14.5 6.5l3 3" }
-                                                path { d: "M4.5 19.5l1.5-4.5 9-9 3 3-9 9-4.5 1.5z" }
-                                            }
-                                        }
-                                        button {
-                                            class: if prompt_mode() == MarkdownMode::Preview {
-                                                "editor-mode-btn editor-mode-btn--active"
-                                            } else {
-                                                "editor-mode-btn"
-                                            },
-                                            r#type: "button",
-                                            disabled: !can_edit,
-                                            title: "Preview",
-                                            aria_label: "Preview",
-                                            onclick: move |_| prompt_mode.set(MarkdownMode::Preview),
-                                            svg {
-                                                class: "editor-md-toolbar-icon",
-                                                view_box: "0 0 24 24",
-                                                path { d: "M2.5 12s4-6 9.5-6 9.5 6 9.5 6-4 6-9.5 6-9.5-6-9.5-6z" }
-                                                circle { cx: "12", cy: "12", r: "3.2" }
-                                            }
-                                        }
-                                    }
                                 }
-                                if prompt_mode() == MarkdownMode::Preview {
-                                    div {
-                                        class: "editor-preview",
-                                        dangerous_inner_html: "{prompt_preview_html_value}",
-                                    }
-                                } else {
-                                    textarea {
-                                        id: "prompt",
-                                        class: if prompt_invalid {
-                                            "editor-input editor-input--multi editor-input--error"
-                                        } else {
-                                            "editor-input editor-input--multi"
-                                        },
-                                        rows: 6,
-                                        placeholder: "Enter the prompt for the front of the card...",
-                                        value: "{prompt_text.read()}",
-                                        disabled: !can_edit,
-                                        onfocus: move |_| last_focus_field.set(MarkdownField::Front),
-                                        oninput: move |evt| {
-                                            prompt_text.set(evt.value());
-                                            save_state.set(SaveState::Idle);
-                                        },
-                                        onpaste: move |_| {
-                                            handle_paste_action.call(MarkdownField::Front);
-                                        },
-                                    }
+                                div {
+                                    id: "prompt",
+                                    class: if prompt_invalid {
+                                        "editor-input editor-input--multi editor-input--error"
+                                    } else {
+                                        "editor-input editor-input--multi"
+                                    },
+                                    contenteditable: "{can_edit}",
+                                    dir: "auto",
+                                    aria_label: "Front",
+                                    role: "textbox",
+                                    aria_multiline: "true",
+                                    aria_placeholder: "Enter the prompt for the front of the card...",
+                                    spellcheck: "true",
+                                    tabindex: "0",
+                                    onfocus: move |_| last_focus_field.set(MarkdownField::Front),
+                                    oninput: move |_| {
+                                        let mut prompt_text = prompt_text;
+                                        let mut save_state = save_state;
+                                        spawn(async move {
+                                            if let Some(updated) = read_editable_html("prompt").await {
+                                                prompt_text.set(updated);
+                                                save_state.set(SaveState::Idle);
+                                            }
+                                        });
+                                    },
+                                    onpaste: move |evt| {
+                                        evt.prevent_default();
+                                        handle_paste_action.call(MarkdownField::Front);
+                                    },
                                 }
                                 if prompt_invalid {
                                     p { class: "editor-error", "Front is required." }
@@ -2377,7 +2457,7 @@ pub fn EditorView() -> Element {
                                             title: "Bold",
                                             aria_label: "Bold",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::Bold,
                                                 ));
@@ -2391,7 +2471,7 @@ pub fn EditorView() -> Element {
                                             title: "Italic",
                                             aria_label: "Italic",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::Italic,
                                                 ));
@@ -2411,7 +2491,7 @@ pub fn EditorView() -> Element {
                                             title: "Quote",
                                             aria_label: "Quote",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::Quote,
                                                 ));
@@ -2430,7 +2510,7 @@ pub fn EditorView() -> Element {
                                             title: "Bulleted list",
                                             aria_label: "Bulleted list",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::BulletList,
                                                 ));
@@ -2453,7 +2533,7 @@ pub fn EditorView() -> Element {
                                             title: "Numbered list",
                                             aria_label: "Numbered list",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::NumberedList,
                                                 ));
@@ -2479,7 +2559,7 @@ pub fn EditorView() -> Element {
                                             title: "Link",
                                             aria_label: "Link",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::Link,
                                                 ));
@@ -2502,7 +2582,7 @@ pub fn EditorView() -> Element {
                                             title: "Inline code",
                                             aria_label: "Inline code",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::Code,
                                                 ));
@@ -2521,7 +2601,7 @@ pub fn EditorView() -> Element {
                                             title: "Code block",
                                             aria_label: "Code block",
                                             onclick: move |_| {
-                                                apply_markdown_action_action.call((
+                                                apply_format_action.call((
                                                     MarkdownField::Back,
                                                     MarkdownAction::CodeBlock,
                                                 ));
@@ -2535,73 +2615,37 @@ pub fn EditorView() -> Element {
                                             }
                                         }
                                     }
-                                    div { class: "editor-md-toolbar-spacer" }
-                                    div { class: "editor-md-toolbar-separator" }
-                                    div { class: "editor-md-toolbar-group",
-                                        button {
-                                            class: if answer_mode() == MarkdownMode::Write {
-                                                "editor-mode-btn editor-mode-btn--active"
-                                            } else {
-                                                "editor-mode-btn"
-                                            },
-                                            r#type: "button",
-                                            disabled: !can_edit,
-                                            title: "Write",
-                                            aria_label: "Write",
-                                            onclick: move |_| answer_mode.set(MarkdownMode::Write),
-                                            svg {
-                                                class: "editor-md-toolbar-icon",
-                                                view_box: "0 0 24 24",
-                                                path { d: "M14.5 6.5l3 3" }
-                                                path { d: "M4.5 19.5l1.5-4.5 9-9 3 3-9 9-4.5 1.5z" }
-                                            }
-                                        }
-                                        button {
-                                            class: if answer_mode() == MarkdownMode::Preview {
-                                                "editor-mode-btn editor-mode-btn--active"
-                                            } else {
-                                                "editor-mode-btn"
-                                            },
-                                            r#type: "button",
-                                            disabled: !can_edit,
-                                            title: "Preview",
-                                            aria_label: "Preview",
-                                            onclick: move |_| answer_mode.set(MarkdownMode::Preview),
-                                            svg {
-                                                class: "editor-md-toolbar-icon",
-                                                view_box: "0 0 24 24",
-                                                path { d: "M2.5 12s4-6 9.5-6 9.5 6 9.5 6-4 6-9.5 6-9.5-6-9.5-6z" }
-                                                circle { cx: "12", cy: "12", r: "3.2" }
-                                            }
-                                        }
-                                    }
                                 }
-                                if answer_mode() == MarkdownMode::Preview {
-                                    div {
-                                        class: "editor-preview",
-                                        dangerous_inner_html: "{answer_preview_html_value}",
-                                    }
-                                } else {
-                                    textarea {
-                                        id: "answer",
-                                        class: if answer_invalid {
-                                            "editor-input editor-input--multi editor-input--error"
-                                        } else {
-                                            "editor-input editor-input--multi"
-                                        },
-                                        rows: 6,
-                                        placeholder: "Enter the answer for the back of the card...",
-                                        value: "{answer_text.read()}",
-                                        disabled: !can_edit,
-                                        onfocus: move |_| last_focus_field.set(MarkdownField::Back),
-                                        oninput: move |evt| {
-                                            answer_text.set(evt.value());
-                                            save_state.set(SaveState::Idle);
-                                        },
-                                        onpaste: move |_| {
-                                            handle_paste_action.call(MarkdownField::Back);
-                                        },
-                                    }
+                                div {
+                                    id: "answer",
+                                    class: if answer_invalid {
+                                        "editor-input editor-input--multi editor-input--error"
+                                    } else {
+                                        "editor-input editor-input--multi"
+                                    },
+                                    contenteditable: "{can_edit}",
+                                    dir: "auto",
+                                    aria_label: "Back",
+                                    role: "textbox",
+                                    aria_multiline: "true",
+                                    aria_placeholder: "Enter the answer for the back of the card...",
+                                    spellcheck: "true",
+                                    tabindex: "0",
+                                    onfocus: move |_| last_focus_field.set(MarkdownField::Back),
+                                    oninput: move |_| {
+                                        let mut answer_text = answer_text;
+                                        let mut save_state = save_state;
+                                        spawn(async move {
+                                            if let Some(updated) = read_editable_html("answer").await {
+                                                answer_text.set(updated);
+                                                save_state.set(SaveState::Idle);
+                                            }
+                                        });
+                                    },
+                                    onpaste: move |evt| {
+                                        evt.prevent_default();
+                                        handle_paste_action.call(MarkdownField::Back);
+                                    },
                                 }
                                 if answer_invalid {
                                     p { class: "editor-error", "Back is required." }

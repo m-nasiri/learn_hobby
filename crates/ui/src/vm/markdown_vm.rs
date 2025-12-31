@@ -16,19 +16,7 @@ pub enum MarkdownAction {
     CodeBlock,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SelectionRange {
-    pub start: usize,
-    pub end: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PasteOffer {
-    pub target: MarkdownField,
-    pub html: String,
-    pub text: String,
-}
-
+use std::collections::{HashMap, HashSet};
 pub fn markdown_to_html(input: &str) -> String {
     let mut options = pulldown_cmark::Options::empty();
     options.insert(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
@@ -46,9 +34,10 @@ pub fn html_to_markdown(input: &str) -> String {
     normalize_markdown(&markdown)
 }
 
-fn sanitize_html(html: &str) -> String {
+pub fn sanitize_html(html: &str) -> String {
     let tags: HashSet<&str> = [
-        "p", "br", "em", "strong", "code", "pre", "blockquote", "ul", "ol", "li", "a",
+        "p", "div", "span", "br", "em", "strong", "b", "i", "code", "pre", "blockquote", "ul",
+        "ol", "li", "a",
     ]
     .into_iter()
     .collect();
@@ -61,6 +50,84 @@ fn sanitize_html(html: &str) -> String {
         .tag_attributes(attributes)
         .clean(html)
         .to_string()
+}
+
+pub fn looks_like_markdown(input: &str) -> bool {
+    let trimmed = input.trim_start();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("```") || lower.contains("**") || lower.contains("__") {
+        return true;
+    }
+
+    if lower.contains("](") {
+        return true;
+    }
+
+    for line in trimmed.lines() {
+        let line = line.trim_start();
+        if line.starts_with("# ")
+            || line.starts_with("## ")
+            || line.starts_with("- ")
+            || line.starts_with("* ")
+            || line.starts_with("> ")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn strip_html_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    let mut tag_buf = String::new();
+
+    for ch in input.chars() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+                let tag = tag_buf.trim().to_ascii_lowercase();
+                if tag.starts_with("br")
+                    || tag.starts_with("/p")
+                    || tag.starts_with("p")
+                    || tag.starts_with("/div")
+                    || tag.starts_with("div")
+                    || tag.starts_with("/li")
+                    || tag.starts_with("li")
+                    || tag.starts_with("/blockquote")
+                    || tag.starts_with("blockquote")
+                    || tag.starts_with("/pre")
+                    || tag.starts_with("pre")
+                {
+                    out.push('\n');
+                }
+                tag_buf.clear();
+            } else {
+                tag_buf.push(ch);
+            }
+            continue;
+        }
+
+        if ch == '<' {
+            in_tag = true;
+            tag_buf.clear();
+            continue;
+        }
+
+        out.push(ch);
+    }
+
+    out.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }
 
 pub fn looks_like_html(input: &str) -> bool {
@@ -112,172 +179,12 @@ pub fn normalize_markdown(input: &str) -> String {
     lines.join("\n")
 }
 
-pub fn apply_markdown_action(
-    text: &str,
-    action: MarkdownAction,
-    selection: Option<SelectionRange>,
-) -> (String, Option<SelectionRange>) {
-    let selection = selection.unwrap_or_else(|| SelectionRange {
-        start: utf16_len(text),
-        end: utf16_len(text),
-    });
-    let start = utf16_to_byte_idx(text, selection.start);
-    let end = utf16_to_byte_idx(text, selection.end);
-    let (start, end) = if start <= end { (start, end) } else { (end, start) };
-    let has_selection = start != end;
-
-    let (next, selection_bytes) = match action {
-        MarkdownAction::Bold => wrap(text, start, end, "**", "**", has_selection),
-        MarkdownAction::Italic => wrap(text, start, end, "*", "*", has_selection),
-        MarkdownAction::Code => wrap(text, start, end, "`", "`", has_selection),
-        MarkdownAction::Link => apply_link(text, start, end, has_selection),
-        MarkdownAction::Quote => prefix_lines(text, start, end, "> ", has_selection),
-        MarkdownAction::BulletList => prefix_lines(text, start, end, "- ", has_selection),
-        MarkdownAction::NumberedList => prefix_lines(text, start, end, "1. ", has_selection),
-        MarkdownAction::CodeBlock => wrap_block(text, start, end, has_selection),
-    };
-
-    let selection = selection_bytes.map(|(sel_start, sel_end)| SelectionRange {
-        start: byte_to_utf16_idx(&next, sel_start),
-        end: byte_to_utf16_idx(&next, sel_end),
-    });
-
-    (next, selection)
-}
-
-fn wrap(
-    text: &str,
-    start: usize,
-    end: usize,
-    prefix: &str,
-    suffix: &str,
-    has_selection: bool,
-) -> (String, Option<(usize, usize)>) {
-    let mut output = String::with_capacity(text.len() + prefix.len() + suffix.len());
-    output.push_str(&text[..start]);
-    output.push_str(prefix);
-    if has_selection {
-        output.push_str(&text[start..end]);
-        output.push_str(suffix);
-        output.push_str(&text[end..]);
-        let sel_start = start + prefix.len();
-        let sel_end = sel_start + (end - start);
-        return (output, Some((sel_start, sel_end)));
-    }
-    output.push_str(suffix);
-    output.push_str(&text[start..]);
-    let cursor = start + prefix.len();
-    (output, Some((cursor, cursor)))
-}
-
-fn apply_link(text: &str, start: usize, end: usize, has_selection: bool) -> (String, Option<(usize, usize)>) {
-    if has_selection {
-        let selected = &text[start..end];
-        let mut output = String::with_capacity(text.len() + selected.len() + 7);
-        output.push_str(&text[..start]);
-        output.push('[');
-        output.push_str(selected);
-        output.push_str("](url)");
-        output.push_str(&text[end..]);
-        let url_start = start + 2 + selected.len();
-        let url_end = url_start + 3;
-        return (output, Some((url_start, url_end)));
-    }
-
-    let mut output = String::with_capacity(text.len() + 4);
-    output.push_str(&text[..start]);
-    output.push_str("[]()");
-    output.push_str(&text[start..]);
-    let cursor = start + 1;
-    (output, Some((cursor, cursor)))
-}
-
-fn prefix_lines(
-    text: &str,
-    start: usize,
-    end: usize,
-    prefix: &str,
-    has_selection: bool,
-) -> (String, Option<(usize, usize)>) {
-    if !has_selection {
-        let mut output = String::with_capacity(text.len() + prefix.len());
-        output.push_str(&text[..start]);
-        output.push_str(prefix);
-        output.push_str(&text[start..]);
-        let cursor = start + prefix.len();
-        return (output, Some((cursor, cursor)));
-    }
-
-    let selected = &text[start..end];
-    let mut prefixed = String::new();
-    for (idx, line) in selected.split('\n').enumerate() {
-        if idx > 0 {
-            prefixed.push('\n');
-        }
-        prefixed.push_str(prefix);
-        prefixed.push_str(line);
-    }
-
-    let mut output = String::with_capacity(text.len() + prefixed.len());
-    output.push_str(&text[..start]);
-    output.push_str(&prefixed);
-    output.push_str(&text[end..]);
-    let sel_end = start + prefixed.len();
-    (output, Some((start, sel_end)))
-}
-
-fn wrap_block(text: &str, start: usize, end: usize, has_selection: bool) -> (String, Option<(usize, usize)>) {
-    let prefix = "```\n";
-    let suffix = "\n```";
-    let mut output = String::with_capacity(text.len() + prefix.len() + suffix.len());
-    output.push_str(&text[..start]);
-    output.push_str(prefix);
-    if has_selection {
-        output.push_str(&text[start..end]);
-        output.push_str(suffix);
-        output.push_str(&text[end..]);
-        let sel_start = start + prefix.len();
-        let sel_end = sel_start + (end - start);
-        return (output, Some((sel_start, sel_end)));
-    }
-    output.push_str(suffix);
-    output.push_str(&text[start..]);
-    let cursor = start + prefix.len();
-    (output, Some((cursor, cursor)))
-}
-
-fn utf16_len(text: &str) -> usize {
-    text.chars().map(|ch| ch.len_utf16()).sum()
-}
-
-fn utf16_to_byte_idx(text: &str, utf16_idx: usize) -> usize {
-    let mut count = 0usize;
-    for (byte_idx, ch) in text.char_indices() {
-        let next = count + ch.len_utf16();
-        if next > utf16_idx {
-            return byte_idx;
-        }
-        count = next;
-    }
-    text.len()
-}
-
-fn byte_to_utf16_idx(text: &str, byte_idx: usize) -> usize {
-    let mut count = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if idx >= byte_idx {
-            break;
-        }
-        count += ch.len_utf16();
-    }
-    count
-}
 
 #[cfg(test)]
 mod tests {
     use super::{
-        MarkdownAction, SelectionRange, apply_markdown_action, html_to_markdown, looks_like_html,
-        markdown_to_html, normalize_markdown,
+        html_to_markdown, looks_like_html, looks_like_markdown, markdown_to_html,
+        normalize_markdown, strip_html_tags,
     };
 
     #[test]
@@ -317,14 +224,17 @@ mod tests {
     }
 
     #[test]
-    fn apply_markdown_action_wraps_selection() {
-        let (out, selection) = apply_markdown_action(
-            "Hello",
-            MarkdownAction::Bold,
-            Some(SelectionRange { start: 0, end: 5 }),
-        );
-        assert_eq!(out, "**Hello**");
-        assert_eq!(selection, Some(SelectionRange { start: 2, end: 7 }));
+    fn markdown_detection_matches_common_patterns() {
+        assert!(looks_like_markdown("**bold**"));
+        assert!(looks_like_markdown("- list item"));
+        assert!(looks_like_markdown("> quote"));
+        assert!(looks_like_markdown("[link](https://example.com)"));
+        assert!(!looks_like_markdown("Plain sentence."));
+    }
+
+    #[test]
+    fn strip_html_tags_removes_markup() {
+        let text = strip_html_tags("<p>Hello<br>World</p>");
+        assert_eq!(text.trim(), "Hello\nWorld");
     }
 }
-use std::collections::{HashMap, HashSet};

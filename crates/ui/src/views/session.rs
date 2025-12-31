@@ -8,7 +8,7 @@ use learn_core::model::{DeckId, ReviewGrade};
 use crate::context::AppContext;
 use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
-use crate::vm::{SessionIntent, SessionOutcome, SessionPhase, SessionVm, start_session};
+use crate::vm::{SessionIntent, SessionOutcome, SessionPhase, SessionVm, sanitize_html, start_session};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LastAction {
@@ -178,6 +178,8 @@ pub fn SessionView(deck_id: u64) -> Element {
     let vm_guard = vm.read();
     let card_prompt = vm_guard.as_ref().and_then(SessionVm::prompt_text);
     let card_answer = vm_guard.as_ref().and_then(SessionVm::answer_text);
+    let card_prompt_html = card_prompt.map(sanitize_html);
+    let card_answer_html = card_answer.map(sanitize_html);
     let phase = vm_guard.as_ref().map(SessionVm::phase);
 
     rsx! {
@@ -214,10 +216,10 @@ pub fn SessionView(deck_id: u64) -> Element {
                             "Retry"
                         }
                     }
-                    if let Some(prompt) = card_prompt {
+                    if let Some(prompt_html) = card_prompt_html {
                         div { class: "session-card",
                             p { class: "session-label", "Prompt" }
-                            p { class: "session-text", "{prompt}" }
+                            div { class: "session-text", dangerous_inner_html: "{prompt_html}" }
                             match phase {
                                 Some(SessionPhase::Prompt) => rsx! {
                                     button {
@@ -228,8 +230,8 @@ pub fn SessionView(deck_id: u64) -> Element {
                                 },
                                 Some(SessionPhase::Answer) => rsx! {
                                     p { class: "session-label", "Answer" }
-                                    if let Some(answer) = card_answer {
-                                        p { class: "session-text", "{answer}" }
+                                    if let Some(answer_html) = card_answer_html.clone() {
+                                        div { class: "session-text", dangerous_inner_html: "{answer_html}" }
                                     }
                                     div { class: "session-grades",
                                         GradeButton { label: "Again", grade: ReviewGrade::Again, on_intent: dispatch_intent }

@@ -1,11 +1,15 @@
 use learn_core::model::CardId;
 
+use super::markdown_vm::{sanitize_html, strip_html_tags};
+
 /// UI-ready summary of a card for list rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CardListItemVm {
     pub id: CardId,
-    pub prompt: String,
-    pub answer: String,
+    pub prompt_html: String,
+    pub answer_html: String,
+    pub prompt_text: String,
+    pub answer_text: String,
     pub prompt_preview: String,
     pub answer_preview: String,
 }
@@ -14,15 +18,19 @@ impl CardListItemVm {
     #[must_use]
     pub fn new(
         id: CardId,
-        prompt: String,
-        answer: String,
+        prompt_html: String,
+        answer_html: String,
+        prompt_text: String,
+        answer_text: String,
         prompt_preview: String,
         answer_preview: String,
     ) -> Self {
         Self {
             id,
-            prompt,
-            answer,
+            prompt_html,
+            answer_html,
+            prompt_text,
+            answer_text,
             prompt_preview,
             answer_preview,
         }
@@ -40,12 +48,22 @@ pub fn map_card_list_items(cards: &[learn_core::model::Card]) -> Vec<CardListIte
 
 /// Build a list item view model from raw prompt/answer text.
 #[must_use]
-pub fn build_card_list_item(id: CardId, prompt: &str, answer: &str) -> CardListItemVm {
-    let prompt = prompt.to_owned();
-    let answer = answer.to_owned();
-    let prompt_preview = truncate_preview(&prompt, 56);
-    let answer_preview = truncate_preview(&answer, 56);
-    CardListItemVm::new(id, prompt, answer, prompt_preview, answer_preview)
+pub fn build_card_list_item(id: CardId, prompt_html: &str, answer_html: &str) -> CardListItemVm {
+    let prompt_html = sanitize_html(prompt_html);
+    let answer_html = sanitize_html(answer_html);
+    let prompt_text = strip_html_tags(&prompt_html);
+    let answer_text = strip_html_tags(&answer_html);
+    let prompt_preview = truncate_preview(&prompt_text, 56);
+    let answer_preview = truncate_preview(&answer_text, 56);
+    CardListItemVm::new(
+        id,
+        prompt_html,
+        answer_html,
+        prompt_text,
+        answer_text,
+        prompt_preview,
+        answer_preview,
+    )
 }
 
 /// Filter list items by a search query (case-insensitive).
@@ -59,8 +77,8 @@ pub fn filter_card_list_items(items: &[CardListItemVm], query: &str) -> Vec<Card
     items
         .iter()
         .filter(|item| {
-            item.prompt.to_lowercase().contains(&needle)
-                || item.answer.to_lowercase().contains(&needle)
+            item.prompt_text.to_lowercase().contains(&needle)
+                || item.answer_text.to_lowercase().contains(&needle)
         })
         .cloned()
         .collect()
