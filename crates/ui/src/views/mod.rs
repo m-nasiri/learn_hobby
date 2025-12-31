@@ -13,3 +13,8 @@ pub use session::SessionView;
 pub use settings::SettingsView;
 pub use summary::SummaryView;
 pub use state::{view_state_from_resource, ViewError, ViewState};
+
+#[cfg(test)]
+mod test_harness;
+#[cfg(test)]
+mod view_smoke;
