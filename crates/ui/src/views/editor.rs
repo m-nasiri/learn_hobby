@@ -10,10 +10,12 @@ use services::{CardListFilter, CardListSort};
 use crate::context::AppContext;
 use crate::routes::Route;
 use crate::vm::{
-    CardListItemVm, build_card_list_item, filter_card_list_items, map_card_list_items,
-    map_deck_options,
+    CardListItemVm, MarkdownAction, MarkdownField, SelectionRange, apply_markdown_action,
+    build_card_list_item, filter_card_list_items, html_to_markdown, map_card_list_items,
+    map_deck_options, markdown_to_html,
 };
 use crate::views::{ViewError, ViewState, view_state_from_resource};
+use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SaveState {
@@ -42,6 +44,12 @@ enum DuplicateCheckState {
     Idle,
     Checking,
     Error(ViewError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkdownMode {
+    Write,
+    Preview,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +86,43 @@ struct HighlightSpan {
     text: String,
     is_match: bool,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+struct ClipboardSnapshot {
+    html: String,
+    text: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SelectionSnapshot {
+    ok: bool,
+    start: usize,
+    end: usize,
+}
+
+const CLIPBOARD_READ_SCRIPT: &str = r#"
+    let html = "";
+    let text = "";
+    try {
+        if (navigator.clipboard && navigator.clipboard.read) {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                if (!html && item.types.includes("text/html")) {
+                    const blob = await item.getType("text/html");
+                    html = await blob.text();
+                }
+                if (!text && item.types.includes("text/plain")) {
+                    const blob = await item.getType("text/plain");
+                    text = await blob.text();
+                }
+            }
+        }
+        if (!text && navigator.clipboard && navigator.clipboard.readText) {
+            text = await navigator.clipboard.readText();
+        }
+    } catch (_) {}
+    return { html, text };
+"#;
 
 fn highlight_spans(text: &str, query: &str) -> Vec<HighlightSpan> {
     let needle = query.trim();
@@ -220,6 +265,73 @@ fn build_tag_suggestions(deck_tags: &[String], current: &[String], query: &str) 
         .collect()
 }
 
+fn apply_paste_conversion(current: &str, pasted_text: &str, markdown: &str) -> String {
+    if pasted_text.is_empty() {
+        if current.trim().is_empty() {
+            return markdown.to_string();
+        }
+        return format!("{current}\n{markdown}");
+    }
+    if current.trim() == pasted_text.trim() {
+        return markdown.to_string();
+    }
+    if let Some(idx) = current.rfind(pasted_text) {
+        let mut output = String::with_capacity(current.len() + markdown.len());
+        output.push_str(&current[..idx]);
+        output.push_str(markdown);
+        output.push_str(&current[idx + pasted_text.len()..]);
+        return output;
+    }
+    if current.trim().is_empty() {
+        return markdown.to_string();
+    }
+    format!("{current}\n{markdown}")
+}
+
+async fn read_clipboard_snapshot() -> Option<ClipboardSnapshot> {
+    eval(CLIPBOARD_READ_SCRIPT).join::<ClipboardSnapshot>().await.ok()
+}
+
+fn selection_read_script(element_id: &str) -> String {
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return {{ ok: false, start: 0, end: 0 }}; }}
+        return {{ ok: true, start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 }};
+        "#
+    )
+}
+
+fn selection_set_script(element_id: &str, start: usize, end: usize) -> String {
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (el && el.setSelectionRange) {{
+            el.focus();
+            el.setSelectionRange({start}, {end});
+        }}
+        "#
+    )
+}
+
+async fn read_selection_range(element_id: &str) -> Option<SelectionRange> {
+    let script = selection_read_script(element_id);
+    let snapshot = eval(&script).join::<SelectionSnapshot>().await.ok()?;
+    if snapshot.ok {
+        Some(SelectionRange {
+            start: snapshot.start,
+            end: snapshot.end,
+        })
+    } else {
+        None
+    }
+}
+
+async fn set_selection_range(element_id: &str, range: SelectionRange) {
+    let script = selection_set_script(element_id, range.start, range.end);
+    let _ = eval(&script).await;
+}
+
 #[component]
 pub fn EditorView() -> Element {
     let ctx = use_context::<AppContext>();
@@ -261,6 +373,9 @@ pub fn EditorView() -> Element {
     let mut card_tags = use_signal(Vec::new);
     let last_selected_tags = use_signal(Vec::new);
     let mut tag_input = use_signal(String::new);
+    let mut prompt_mode = use_signal(|| MarkdownMode::Write);
+    let mut answer_mode = use_signal(|| MarkdownMode::Write);
+    let mut last_focus_field = use_signal(|| MarkdownField::Front);
     let mut duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
     let mut show_duplicate_modal = use_signal(|| false);
     let mut pending_duplicate_practice = use_signal(|| false);
@@ -396,6 +511,62 @@ pub fn EditorView() -> Element {
     // UI-only state for now (service wiring comes next step).
     let mut prompt_text = use_signal(String::new);
     let mut answer_text = use_signal(String::new);
+    let mut prompt_preview_html = use_signal(String::new);
+    let mut answer_preview_html = use_signal(String::new);
+    let mut prompt_preview_text = use_signal(String::new);
+    let mut answer_preview_text = use_signal(String::new);
+    let mut prompt_preview_gen = use_signal(|| 0u64);
+    let mut answer_preview_gen = use_signal(|| 0u64);
+
+    use_effect(move || {
+        if prompt_mode() != MarkdownMode::Preview {
+            return;
+        }
+        let current = prompt_text.read().to_string();
+        if prompt_preview_text() == current {
+            return;
+        }
+        prompt_preview_text.set(current.clone());
+        if prompt_preview_html.read().is_empty() {
+            prompt_preview_html.set(markdown_to_html(&current));
+            return;
+        }
+        let next_gen = prompt_preview_gen() + 1;
+        prompt_preview_gen.set(next_gen);
+        let mut prompt_preview_html = prompt_preview_html;
+        let prompt_preview_gen = prompt_preview_gen;
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if prompt_preview_gen() == next_gen {
+                prompt_preview_html.set(markdown_to_html(&current));
+            }
+        });
+    });
+
+    use_effect(move || {
+        if answer_mode() != MarkdownMode::Preview {
+            return;
+        }
+        let current = answer_text.read().to_string();
+        if answer_preview_text() == current {
+            return;
+        }
+        answer_preview_text.set(current.clone());
+        if answer_preview_html.read().is_empty() {
+            answer_preview_html.set(markdown_to_html(&current));
+            return;
+        }
+        let next_gen = answer_preview_gen() + 1;
+        answer_preview_gen.set(next_gen);
+        let mut answer_preview_html = answer_preview_html;
+        let answer_preview_gen = answer_preview_gen;
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if answer_preview_gen() == next_gen {
+                answer_preview_html.set(markdown_to_html(&current));
+            }
+        });
+    });
 
     let has_unsaved_changes = {
         let prompt_text = prompt_text;
@@ -878,6 +1049,7 @@ pub fn EditorView() -> Element {
         let mut delete_state = delete_state;
         let mut show_unsaved_modal = show_unsaved_modal;
         let mut pending_action = pending_action;
+        let mut last_focus_field = last_focus_field;
 
         selected_card_id.set(None);
         is_create_mode.set(true);
@@ -896,6 +1068,7 @@ pub fn EditorView() -> Element {
         pending_duplicate_practice.set(false);
         save_menu_state.set(SaveMenuState::Closed);
         focus_prompt.set(true);
+        last_focus_field.set(MarkdownField::Front);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         new_deck_name.set(String::new());
@@ -960,6 +1133,54 @@ pub fn EditorView() -> Element {
             selected_tag_filters.set(Vec::new());
         }
     });
+
+    let handle_paste_action = use_callback(move |target: MarkdownField| {
+        let mut prompt_text = prompt_text;
+        let mut answer_text = answer_text;
+        spawn(async move {
+            if let Some(snapshot) = read_clipboard_snapshot().await {
+                if snapshot.html.trim().is_empty() {
+                    return;
+                }
+                let markdown = html_to_markdown(&snapshot.html);
+                match target {
+                    MarkdownField::Front => {
+                        let current = prompt_text.read().to_string();
+                        let updated = apply_paste_conversion(&current, &snapshot.text, &markdown);
+                        prompt_text.set(updated);
+                    }
+                    MarkdownField::Back => {
+                        let current = answer_text.read().to_string();
+                        let updated = apply_paste_conversion(&current, &snapshot.text, &markdown);
+                        answer_text.set(updated);
+                    }
+                }
+            }
+        });
+    });
+
+    let apply_markdown_action_action =
+        use_callback(move |(field, action): (MarkdownField, MarkdownAction)| {
+            let mut prompt_text = prompt_text;
+            let mut answer_text = answer_text;
+            let mut save_state = save_state;
+            spawn(async move {
+                let (element_id, current) = match field {
+                    MarkdownField::Front => ("prompt", prompt_text.read().to_string()),
+                    MarkdownField::Back => ("answer", answer_text.read().to_string()),
+                };
+                let selection = read_selection_range(element_id).await;
+                let (next, next_selection) = apply_markdown_action(&current, action, selection);
+                match field {
+                    MarkdownField::Front => prompt_text.set(next),
+                    MarkdownField::Back => answer_text.set(next),
+                }
+                save_state.set(SaveState::Idle);
+                if let Some(selection) = next_selection {
+                    set_selection_range(element_id, selection).await;
+                }
+            });
+        });
 
     let confirm_discard_action = use_callback(move |()| {
         let mut show_unsaved_modal = show_unsaved_modal;
@@ -1241,6 +1462,10 @@ pub fn EditorView() -> Element {
         &card_tags.read(),
         &tag_input_value,
     );
+    let prompt_preview_html_value = prompt_preview_html.read().to_string();
+    let answer_preview_html_value = answer_preview_html.read().to_string();
+    let prompt_toolbar_disabled = !can_edit || prompt_mode() == MarkdownMode::Preview;
+    let answer_toolbar_disabled = !can_edit || answer_mode() == MarkdownMode::Preview;
 
     use_effect(move || {
         if !focus_prompt() {
@@ -1260,6 +1485,9 @@ pub fn EditorView() -> Element {
         let mut show_deck_menu = show_deck_menu;
         let mut show_delete_modal = show_delete_modal;
         let show_duplicate_modal = show_duplicate_modal;
+        let prompt_mode = prompt_mode;
+        let answer_mode = answer_mode;
+        let last_focus_field = last_focus_field;
         use_callback(move |evt: KeyboardEvent| {
             if show_delete_modal() && evt.data.key() == Key::Escape {
                 evt.prevent_default();
@@ -1288,6 +1516,7 @@ pub fn EditorView() -> Element {
             }
 
             if evt.data.modifiers().contains(Modifiers::META) {
+                let can_edit = is_create_mode() || selected_card_id().is_some();
                 if evt.data.key() == Key::Enter {
                     evt.prevent_default();
                     save_action.call(SaveRequest::new(false));
@@ -1323,6 +1552,53 @@ pub fn EditorView() -> Element {
                     show_delete_modal.set(false);
                     is_renaming_deck.set(true);
                     return;
+                }
+
+                let active_field = last_focus_field();
+                let allow_prompt = active_field == MarkdownField::Front
+                    && prompt_mode() == MarkdownMode::Write;
+                let allow_answer = active_field == MarkdownField::Back
+                    && answer_mode() == MarkdownMode::Write;
+                if can_edit && (allow_prompt || allow_answer) {
+                    let field = if allow_prompt {
+                        MarkdownField::Front
+                    } else {
+                        MarkdownField::Back
+                    };
+                    let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
+                    match evt.data.key() {
+                        Key::Character(value) if value.eq_ignore_ascii_case("b") => {
+                            evt.prevent_default();
+                            apply_markdown_action_action
+                                .call((field, MarkdownAction::Bold));
+                            return;
+                        }
+                        Key::Character(value) if value.eq_ignore_ascii_case("i") => {
+                            evt.prevent_default();
+                            apply_markdown_action_action
+                                .call((field, MarkdownAction::Italic));
+                            return;
+                        }
+                        Key::Character(value) if value.eq_ignore_ascii_case("k") => {
+                            evt.prevent_default();
+                            apply_markdown_action_action
+                                .call((field, MarkdownAction::Link));
+                            return;
+                        }
+                        Key::Character(value) if value == "7" && shift => {
+                            evt.prevent_default();
+                            apply_markdown_action_action
+                                .call((field, MarkdownAction::NumberedList));
+                            return;
+                        }
+                        Key::Character(value) if value == "8" && shift => {
+                            evt.prevent_default();
+                            apply_markdown_action_action
+                                .call((field, MarkdownAction::BulletList));
+                            return;
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -1845,22 +2121,243 @@ pub fn EditorView() -> Element {
                                 p { class: "editor-empty-hint", "Select a card or click + New Card." }
                             }
                             div { class: "editor-group",
-                                label { class: "editor-label", r#for: "prompt", "Front" }
-                                textarea {
-                                    id: "prompt",
-                                    class: if prompt_invalid {
-                                        "editor-input editor-input--multi editor-input--error"
-                                    } else {
-                                        "editor-input editor-input--multi"
-                                    },
-                                    rows: 6,
-                                    placeholder: "Enter the prompt for the front of the card...",
-                                    value: "{prompt_text.read()}",
-                                    disabled: !can_edit,
-                                    oninput: move |evt| {
-                                        prompt_text.set(evt.value());
-                                        save_state.set(SaveState::Idle);
-                                    },
+                                div { class: "editor-field-header",
+                                    label { class: "editor-label", r#for: "prompt", "Front" }
+                                }
+                                div { class: "editor-md-toolbar",
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Bold",
+                                            aria_label: "Bold",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::Bold,
+                                                ));
+                                            },
+                                            span { class: "editor-md-toolbar-glyph", "B" }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Italic",
+                                            aria_label: "Italic",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::Italic,
+                                                ));
+                                            },
+                                            span {
+                                                class: "editor-md-toolbar-glyph editor-md-toolbar-glyph--italic",
+                                                "I"
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Quote",
+                                            aria_label: "Quote",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::Quote,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M7 9h3v4H8l1 3" }
+                                                path { d: "M13 9h3v4h-2l1 3" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Bulleted list",
+                                            aria_label: "Bulleted list",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::BulletList,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                circle { cx: "6", cy: "8", r: "1.2" }
+                                                circle { cx: "6", cy: "12", r: "1.2" }
+                                                circle { cx: "6", cy: "16", r: "1.2" }
+                                                line { x1: "10", y1: "8", x2: "19", y2: "8" }
+                                                line { x1: "10", y1: "12", x2: "19", y2: "12" }
+                                                line { x1: "10", y1: "16", x2: "19", y2: "16" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Numbered list",
+                                            aria_label: "Numbered list",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::NumberedList,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                rect { x: "4.6", y: "6.6", width: "2.8", height: "2.8", rx: "0.6" }
+                                                rect { x: "4.6", y: "10.6", width: "2.8", height: "2.8", rx: "0.6" }
+                                                rect { x: "4.6", y: "14.6", width: "2.8", height: "2.8", rx: "0.6" }
+                                                line { x1: "10", y1: "8", x2: "19", y2: "8" }
+                                                line { x1: "10", y1: "12", x2: "19", y2: "12" }
+                                                line { x1: "10", y1: "16", x2: "19", y2: "16" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Link",
+                                            aria_label: "Link",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::Link,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M9.5 14.5l5-5" }
+                                                path { d: "M8.7 15.3a4 4 0 0 1 0-5.7l2.1-2.1a4 4 0 1 1 5.7 5.7l-1 1" }
+                                                path { d: "M15.3 8.7a4 4 0 0 1 0 5.7l-2.1 2.1a4 4 0 1 1-5.7-5.7l1-1" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Inline code",
+                                            aria_label: "Inline code",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::Code,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M9 8L5 12l4 4" }
+                                                path { d: "M15 8l4 4-4 4" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: prompt_toolbar_disabled,
+                                            title: "Code block",
+                                            aria_label: "Code block",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Front,
+                                                    MarkdownAction::CodeBlock,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                rect { x: "4.5", y: "4.5", width: "15", height: "15", rx: "2.5" }
+                                                path { d: "M10 10l-2 2 2 2" }
+                                                path { d: "M14 10l2 2-2 2" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-spacer" }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: if prompt_mode() == MarkdownMode::Write {
+                                                "editor-mode-btn editor-mode-btn--active"
+                                            } else {
+                                                "editor-mode-btn"
+                                            },
+                                            r#type: "button",
+                                            disabled: !can_edit,
+                                            title: "Write",
+                                            aria_label: "Write",
+                                            onclick: move |_| prompt_mode.set(MarkdownMode::Write),
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M14.5 6.5l3 3" }
+                                                path { d: "M4.5 19.5l1.5-4.5 9-9 3 3-9 9-4.5 1.5z" }
+                                            }
+                                        }
+                                        button {
+                                            class: if prompt_mode() == MarkdownMode::Preview {
+                                                "editor-mode-btn editor-mode-btn--active"
+                                            } else {
+                                                "editor-mode-btn"
+                                            },
+                                            r#type: "button",
+                                            disabled: !can_edit,
+                                            title: "Preview",
+                                            aria_label: "Preview",
+                                            onclick: move |_| prompt_mode.set(MarkdownMode::Preview),
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M2.5 12s4-6 9.5-6 9.5 6 9.5 6-4 6-9.5 6-9.5-6-9.5-6z" }
+                                                circle { cx: "12", cy: "12", r: "3.2" }
+                                            }
+                                        }
+                                    }
+                                }
+                                if prompt_mode() == MarkdownMode::Preview {
+                                    div {
+                                        class: "editor-preview",
+                                        dangerous_inner_html: "{prompt_preview_html_value}",
+                                    }
+                                } else {
+                                    textarea {
+                                        id: "prompt",
+                                        class: if prompt_invalid {
+                                            "editor-input editor-input--multi editor-input--error"
+                                        } else {
+                                            "editor-input editor-input--multi"
+                                        },
+                                        rows: 6,
+                                        placeholder: "Enter the prompt for the front of the card...",
+                                        value: "{prompt_text.read()}",
+                                        disabled: !can_edit,
+                                        onfocus: move |_| last_focus_field.set(MarkdownField::Front),
+                                        oninput: move |evt| {
+                                            prompt_text.set(evt.value());
+                                            save_state.set(SaveState::Idle);
+                                        },
+                                        onpaste: move |_| {
+                                            handle_paste_action.call(MarkdownField::Front);
+                                        },
+                                    }
                                 }
                                 if prompt_invalid {
                                     p { class: "editor-error", "Front is required." }
@@ -1868,22 +2365,243 @@ pub fn EditorView() -> Element {
                             }
 
                             div { class: "editor-group",
-                                label { class: "editor-label", r#for: "answer", "Back" }
-                                textarea {
-                                    id: "answer",
-                                    class: if answer_invalid {
-                                        "editor-input editor-input--multi editor-input--error"
-                                    } else {
-                                        "editor-input editor-input--multi"
-                                    },
-                                    rows: 6,
-                                    placeholder: "Enter the answer for the back of the card...",
-                                    value: "{answer_text.read()}",
-                                    disabled: !can_edit,
-                                    oninput: move |evt| {
-                                        answer_text.set(evt.value());
-                                        save_state.set(SaveState::Idle);
-                                    },
+                                div { class: "editor-field-header",
+                                    label { class: "editor-label", r#for: "answer", "Back" }
+                                }
+                                div { class: "editor-md-toolbar",
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Bold",
+                                            aria_label: "Bold",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::Bold,
+                                                ));
+                                            },
+                                            span { class: "editor-md-toolbar-glyph", "B" }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Italic",
+                                            aria_label: "Italic",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::Italic,
+                                                ));
+                                            },
+                                            span {
+                                                class: "editor-md-toolbar-glyph editor-md-toolbar-glyph--italic",
+                                                "I"
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Quote",
+                                            aria_label: "Quote",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::Quote,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M7 9h3v4H8l1 3" }
+                                                path { d: "M13 9h3v4h-2l1 3" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Bulleted list",
+                                            aria_label: "Bulleted list",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::BulletList,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                circle { cx: "6", cy: "8", r: "1.2" }
+                                                circle { cx: "6", cy: "12", r: "1.2" }
+                                                circle { cx: "6", cy: "16", r: "1.2" }
+                                                line { x1: "10", y1: "8", x2: "19", y2: "8" }
+                                                line { x1: "10", y1: "12", x2: "19", y2: "12" }
+                                                line { x1: "10", y1: "16", x2: "19", y2: "16" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Numbered list",
+                                            aria_label: "Numbered list",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::NumberedList,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                rect { x: "4.6", y: "6.6", width: "2.8", height: "2.8", rx: "0.6" }
+                                                rect { x: "4.6", y: "10.6", width: "2.8", height: "2.8", rx: "0.6" }
+                                                rect { x: "4.6", y: "14.6", width: "2.8", height: "2.8", rx: "0.6" }
+                                                line { x1: "10", y1: "8", x2: "19", y2: "8" }
+                                                line { x1: "10", y1: "12", x2: "19", y2: "12" }
+                                                line { x1: "10", y1: "16", x2: "19", y2: "16" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Link",
+                                            aria_label: "Link",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::Link,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M9.5 14.5l5-5" }
+                                                path { d: "M8.7 15.3a4 4 0 0 1 0-5.7l2.1-2.1a4 4 0 1 1 5.7 5.7l-1 1" }
+                                                path { d: "M15.3 8.7a4 4 0 0 1 0 5.7l-2.1 2.1a4 4 0 1 1-5.7-5.7l1-1" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Inline code",
+                                            aria_label: "Inline code",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::Code,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M9 8L5 12l4 4" }
+                                                path { d: "M15 8l4 4-4 4" }
+                                            }
+                                        }
+                                        button {
+                                            class: "editor-md-toolbar-btn",
+                                            r#type: "button",
+                                            disabled: answer_toolbar_disabled,
+                                            title: "Code block",
+                                            aria_label: "Code block",
+                                            onclick: move |_| {
+                                                apply_markdown_action_action.call((
+                                                    MarkdownField::Back,
+                                                    MarkdownAction::CodeBlock,
+                                                ));
+                                            },
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                rect { x: "4.5", y: "4.5", width: "15", height: "15", rx: "2.5" }
+                                                path { d: "M10 10l-2 2 2 2" }
+                                                path { d: "M14 10l2 2-2 2" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "editor-md-toolbar-spacer" }
+                                    div { class: "editor-md-toolbar-separator" }
+                                    div { class: "editor-md-toolbar-group",
+                                        button {
+                                            class: if answer_mode() == MarkdownMode::Write {
+                                                "editor-mode-btn editor-mode-btn--active"
+                                            } else {
+                                                "editor-mode-btn"
+                                            },
+                                            r#type: "button",
+                                            disabled: !can_edit,
+                                            title: "Write",
+                                            aria_label: "Write",
+                                            onclick: move |_| answer_mode.set(MarkdownMode::Write),
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M14.5 6.5l3 3" }
+                                                path { d: "M4.5 19.5l1.5-4.5 9-9 3 3-9 9-4.5 1.5z" }
+                                            }
+                                        }
+                                        button {
+                                            class: if answer_mode() == MarkdownMode::Preview {
+                                                "editor-mode-btn editor-mode-btn--active"
+                                            } else {
+                                                "editor-mode-btn"
+                                            },
+                                            r#type: "button",
+                                            disabled: !can_edit,
+                                            title: "Preview",
+                                            aria_label: "Preview",
+                                            onclick: move |_| answer_mode.set(MarkdownMode::Preview),
+                                            svg {
+                                                class: "editor-md-toolbar-icon",
+                                                view_box: "0 0 24 24",
+                                                path { d: "M2.5 12s4-6 9.5-6 9.5 6 9.5 6-4 6-9.5 6-9.5-6-9.5-6z" }
+                                                circle { cx: "12", cy: "12", r: "3.2" }
+                                            }
+                                        }
+                                    }
+                                }
+                                if answer_mode() == MarkdownMode::Preview {
+                                    div {
+                                        class: "editor-preview",
+                                        dangerous_inner_html: "{answer_preview_html_value}",
+                                    }
+                                } else {
+                                    textarea {
+                                        id: "answer",
+                                        class: if answer_invalid {
+                                            "editor-input editor-input--multi editor-input--error"
+                                        } else {
+                                            "editor-input editor-input--multi"
+                                        },
+                                        rows: 6,
+                                        placeholder: "Enter the answer for the back of the card...",
+                                        value: "{answer_text.read()}",
+                                        disabled: !can_edit,
+                                        onfocus: move |_| last_focus_field.set(MarkdownField::Back),
+                                        oninput: move |evt| {
+                                            answer_text.set(evt.value());
+                                            save_state.set(SaveState::Idle);
+                                        },
+                                        onpaste: move |_| {
+                                            handle_paste_action.call(MarkdownField::Back);
+                                        },
+                                    }
                                 }
                                 if answer_invalid {
                                     p { class: "editor-error", "Back is required." }

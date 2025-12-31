@@ -157,6 +157,17 @@ Good candidates:
 - Avoid modal spam: at most one modal at a time; prefer inline toasts.
 - Respect “quiet hours” for nudges.
 
+### Markdown Editor UX (Front/Back)
+- Default to Write; Preview is optional and per-field.
+- Preview rendering is memoized and only computed when Preview is active; debounce if needed.
+- Paste handling: if HTML is present in clipboard data, auto-convert to Markdown to preserve formatting; never block normal paste when only text is available.
+- HTML detection heuristic (when you only have text): trim leading whitespace; require `<` + `>` structure; only treat as HTML if it contains one of:
+  `<!doctype`, `<html`, `<body`, `<p`, `<div`, `<span`, `<br`, `<a `, `<img`.
+- Conversion UX: if you surface a notice, use a single inline banner under the field; avoid persistent or multi-step state.
+- Toolbar behavior: selection is optional. If selection exists, wrap it; otherwise insert markers and place cursor between them.
+- Sanitization: use a conservative allowlist (p, br, em, strong, code, pre, blockquote, ul, ol, li, a) and allow only `href` on `a`.
+- HTML→Markdown: normalize line endings, trim trailing spaces, collapse excessive blank lines in the converter wrapper.
+
 ### Window & Navigation Rules (Desktop-first)
 
 - The application uses a **single primary window**.
