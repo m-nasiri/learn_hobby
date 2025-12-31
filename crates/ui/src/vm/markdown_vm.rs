@@ -17,6 +17,7 @@ pub enum MarkdownAction {
 }
 
 use std::collections::{HashMap, HashSet};
+#[must_use]
 pub fn markdown_to_html(input: &str) -> String {
     let mut options = pulldown_cmark::Options::empty();
     options.insert(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
@@ -29,11 +30,13 @@ pub fn markdown_to_html(input: &str) -> String {
     sanitize_html(&html)
 }
 
+#[must_use]
 pub fn html_to_markdown(input: &str) -> String {
     let markdown = html2md::parse_html(input);
     normalize_markdown(&markdown)
 }
 
+#[must_use]
 pub fn sanitize_html(html: &str) -> String {
     let tags: HashSet<&str> = [
         "p", "div", "span", "br", "em", "strong", "b", "i", "code", "pre", "blockquote", "ul",
@@ -52,6 +55,7 @@ pub fn sanitize_html(html: &str) -> String {
         .to_string()
 }
 
+#[must_use]
 pub fn looks_like_markdown(input: &str) -> bool {
     let trimmed = input.trim_start();
     if trimmed.is_empty() {
@@ -82,6 +86,7 @@ pub fn looks_like_markdown(input: &str) -> bool {
     false
 }
 
+#[must_use]
 pub fn strip_html_tags(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut in_tag = false;
@@ -94,7 +99,7 @@ pub fn strip_html_tags(input: &str) -> String {
                 let tag = tag_buf.trim().to_ascii_lowercase();
                 if tag.starts_with("br")
                     || tag.starts_with("/p")
-                    || tag.starts_with("p")
+                    || tag.starts_with('p')
                     || tag.starts_with("/div")
                     || tag.starts_with("div")
                     || tag.starts_with("/li")
@@ -130,6 +135,7 @@ pub fn strip_html_tags(input: &str) -> String {
         .replace("&#39;", "'")
 }
 
+#[must_use]
 pub fn looks_like_html(input: &str) -> bool {
     let trimmed = input.trim_start();
     if trimmed.is_empty() {
@@ -158,6 +164,7 @@ pub fn looks_like_html(input: &str) -> bool {
     tags.iter().any(|tag| lower.contains(tag))
 }
 
+#[must_use]
 pub fn normalize_markdown(input: &str) -> String {
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines = Vec::new();
@@ -176,7 +183,11 @@ pub fn normalize_markdown(input: &str) -> String {
         lines.push(trimmed);
     }
 
-    lines.join("\n")
+    let mut output = lines.join("\n");
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
 }
 
 
