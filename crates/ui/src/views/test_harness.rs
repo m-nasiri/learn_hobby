@@ -205,3 +205,62 @@ pub async fn setup_view_harness_with_summary_repo(
         session_handles,
     }
 }
+
+pub async fn setup_view_harness_with_session_loop(
+    view: ViewKind,
+    deck_name: &str,
+    storage: Storage,
+    session_loop: Arc<SessionLoopService>,
+) -> ViewHarness {
+    let clock = Clock::fixed(fixed_now());
+    let deck_service = Arc::new(DeckService::new(clock, Arc::clone(&storage.decks)));
+    let card_service = Arc::new(CardService::new(clock, Arc::clone(&storage.cards)));
+    let card_service_for_harness = Arc::clone(&card_service);
+    let session_summaries = Arc::new(SessionSummaryService::new(
+        clock,
+        Arc::clone(&storage.session_summaries),
+    ));
+
+    let deck_id = deck_service
+        .create_deck(
+            deck_name.to_string(),
+            None,
+            DeckSettings::default_for_adhd(),
+        )
+        .await
+        .expect("create deck");
+
+    let view = match view {
+        ViewKind::Session(_) => ViewKind::Session(deck_id.value()),
+        other => other,
+    };
+    let session_handles = match view {
+        ViewKind::Session(_) => Some(SessionTestHandles::default()),
+        _ => None,
+    };
+
+    let app = Arc::new(TestApp {
+        deck_id,
+        session_summaries,
+        session_loop,
+        card_service,
+        deck_service,
+    });
+
+    let dom = VirtualDom::new_with_props(
+        ViewRouterHarness,
+        ViewHarnessProps {
+            app,
+            view,
+            session_handles: session_handles.clone(),
+        },
+    );
+
+    ViewHarness {
+        dom,
+        storage,
+        deck_id,
+        card_service: card_service_for_harness,
+        session_handles,
+    }
+}

@@ -1,11 +1,24 @@
 use chrono::Duration;
 use dioxus::prelude::ReadableExt;
-use learn_core::model::{CardId, DeckId, ReviewGrade, ReviewLog, SessionSummary};
+use learn_core::model::{CardId, Deck, DeckId, ReviewGrade, ReviewLog, SessionSummary};
 use learn_core::model::content::ContentDraft;
 use learn_core::time::fixed_now;
-use storage::repository::{InMemoryRepository, SessionSummaryRepository, Storage, StorageError};
+use services::{Clock, SessionLoopService};
+use storage::repository::{
+    DeckRepository,
+    InMemoryRepository,
+    NewDeckRecord,
+    SessionSummaryRepository,
+    Storage,
+    StorageError,
+};
 
-use super::test_harness::{ViewKind, setup_view_harness, setup_view_harness_with_summary_repo};
+use super::test_harness::{
+    ViewKind,
+    setup_view_harness,
+    setup_view_harness_with_session_loop,
+    setup_view_harness_with_summary_repo,
+};
 use crate::vm::{SessionIntent, SessionPhase, SessionVm};
 
 #[tokio::test(flavor = "current_thread")]
@@ -121,6 +134,27 @@ impl SessionSummaryRepository for FailingSummaryRepo {
     }
 }
 
+struct FailingDeckRepo;
+
+#[async_trait::async_trait]
+impl DeckRepository for FailingDeckRepo {
+    async fn insert_new_deck(&self, _deck: NewDeckRecord) -> Result<DeckId, StorageError> {
+        Err(StorageError::Connection("fail".to_string()))
+    }
+
+    async fn upsert_deck(&self, _deck: &Deck) -> Result<(), StorageError> {
+        Err(StorageError::Connection("fail".to_string()))
+    }
+
+    async fn get_deck(&self, _id: DeckId) -> Result<Option<Deck>, StorageError> {
+        Err(StorageError::Connection("fail".to_string()))
+    }
+
+    async fn list_decks(&self, _limit: u32) -> Result<Vec<Deck>, StorageError> {
+        Err(StorageError::Connection("fail".to_string()))
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn home_view_smoke_renders_error_state() {
     let repo = std::sync::Arc::new(FailingSummaryRepo);
@@ -203,4 +237,31 @@ async fn session_view_smoke_empty_state() {
 
     let html = harness.render();
     assert!(html.contains("No cards available"), "missing empty state in {html}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn session_view_smoke_renders_error_state() {
+    let storage = Storage::in_memory();
+    let clock = Clock::fixed(fixed_now());
+    let session_loop = std::sync::Arc::new(SessionLoopService::new(
+        clock,
+        std::sync::Arc::new(FailingDeckRepo),
+        std::sync::Arc::clone(&storage.cards),
+        std::sync::Arc::clone(&storage.reviews),
+        std::sync::Arc::clone(&storage.session_summaries),
+    ));
+
+    let mut harness = setup_view_harness_with_session_loop(
+        ViewKind::Session(0),
+        "Default",
+        storage,
+        session_loop,
+    )
+    .await;
+    harness.rebuild();
+    harness.drive_async().await;
+
+    let html = harness.render();
+    assert!(html.contains("Something went wrong"), "missing error in {html}");
+    assert!(html.contains("Retry"), "missing retry in {html}");
 }
