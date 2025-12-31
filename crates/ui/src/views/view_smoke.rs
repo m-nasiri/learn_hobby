@@ -1,9 +1,12 @@
 use chrono::Duration;
+use dioxus::prelude::ReadableExt;
 use learn_core::model::{CardId, DeckId, ReviewGrade, ReviewLog, SessionSummary};
+use learn_core::model::content::ContentDraft;
 use learn_core::time::fixed_now;
 use storage::repository::{InMemoryRepository, SessionSummaryRepository, Storage, StorageError};
 
 use super::test_harness::{ViewKind, setup_view_harness, setup_view_harness_with_summary_repo};
+use crate::vm::{SessionIntent, SessionPhase, SessionVm};
 
 #[tokio::test(flavor = "current_thread")]
 async fn home_view_smoke_renders_recent_count() {
@@ -132,4 +135,72 @@ async fn home_view_smoke_renders_error_state() {
     let html = harness.render();
     assert!(html.contains("Something went wrong"), "missing error in {html}");
     assert!(html.contains("Retry"), "missing retry in {html}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn session_view_smoke_reveal_and_grade() {
+    let mut harness = setup_view_harness(ViewKind::Session(0), "Default").await;
+    let deck_id = harness.deck_id;
+    let card_service = harness.card_service.clone();
+
+    card_service
+        .create_card(
+            deck_id,
+            ContentDraft::text_only("What is Rust?"),
+            ContentDraft::text_only("A systems language."),
+        )
+        .await
+        .expect("create card");
+    card_service
+        .create_card(
+            deck_id,
+            ContentDraft::text_only("What is Dioxus?"),
+            ContentDraft::text_only("A Rust UI framework."),
+        )
+        .await
+        .expect("create card");
+
+    harness.rebuild();
+    harness.drive_async().await;
+
+    let handles = harness.session_handles.as_ref().expect("session handles");
+    let dispatch = handles.dispatch();
+    let vm_signal = handles.vm();
+
+    assert_eq!(
+        vm_signal.read().as_ref().map(SessionVm::phase),
+        Some(SessionPhase::Prompt)
+    );
+    assert_eq!(
+        vm_signal.read().as_ref().and_then(SessionVm::prompt_text),
+        Some("What is Rust?")
+    );
+
+    dispatch.call(SessionIntent::Reveal);
+    harness.drive_async().await;
+    assert_eq!(
+        vm_signal.read().as_ref().map(SessionVm::phase),
+        Some(SessionPhase::Answer)
+    );
+
+    dispatch.call(SessionIntent::Grade(ReviewGrade::Good));
+    harness.drive_async().await;
+    assert_eq!(
+        vm_signal.read().as_ref().map(SessionVm::phase),
+        Some(SessionPhase::Prompt)
+    );
+    assert_eq!(
+        vm_signal.read().as_ref().and_then(SessionVm::prompt_text),
+        Some("What is Dioxus?")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn session_view_smoke_empty_state() {
+    let mut harness = setup_view_harness(ViewKind::Session(0), "Default").await;
+    harness.rebuild();
+    harness.drive_async().await;
+
+    let html = harness.render();
+    assert!(html.contains("No cards available"), "missing empty state in {html}");
 }

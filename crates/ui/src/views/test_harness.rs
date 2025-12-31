@@ -12,7 +12,8 @@ use services::{
 use storage::repository::{SessionSummaryRepository, Storage};
 
 use crate::context::{UiApp, build_app_context};
-use crate::views::{HistoryView, HomeView, SummaryView};
+use crate::views::{HistoryView, HomeView, SummaryView, SessionView};
+use crate::views::session::SessionTestHandles;
 
 #[derive(Clone)]
 struct TestApp {
@@ -54,12 +55,14 @@ pub enum ViewKind {
     Home,
     History,
     Summary(i64),
+    Session(u64),
 }
 
 #[derive(Props, Clone)]
 struct ViewHarnessProps {
     app: Arc<TestApp>,
     view: ViewKind,
+    session_handles: Option<SessionTestHandles>,
 }
 
 impl PartialEq for ViewHarnessProps {
@@ -75,6 +78,9 @@ fn ViewRouterHarness(props: ViewHarnessProps) -> Element {
     let app: Arc<dyn UiApp> = props.app.clone();
     use_context_provider(|| build_app_context(&app));
     use_context_provider(|| props.view);
+    if let Some(handles) = props.session_handles.clone() {
+        use_context_provider(|| handles);
+    }
     rsx! { Router::<TestRoute> {} }
 }
 
@@ -92,6 +98,7 @@ fn Root() -> Element {
         ViewKind::Home => rsx! { HomeView {} },
         ViewKind::History => rsx! { HistoryView {} },
         ViewKind::Summary(summary_id) => rsx! { SummaryView { summary_id } },
+        ViewKind::Session(deck_id) => rsx! { SessionView { deck_id } },
     }
 }
 
@@ -99,12 +106,24 @@ pub struct ViewHarness {
     pub dom: VirtualDom,
     pub storage: Storage,
     pub deck_id: DeckId,
+    pub card_service: Arc<CardService>,
+    pub session_handles: Option<SessionTestHandles>,
 }
 
 impl ViewHarness {
     pub fn rebuild(&mut self) {
         self.dom.rebuild_in_place();
         drive_dom(&mut self.dom);
+    }
+
+    pub async fn drive_async(&mut self) {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            self.dom.wait_for_work(),
+        )
+        .await;
+        self.dom.render_immediate(&mut NoOpMutations);
+        self.dom.process_events();
     }
 
     pub fn render(&self) -> String {
@@ -133,6 +152,7 @@ pub async fn setup_view_harness_with_summary_repo(
     let clock = Clock::fixed(fixed_now());
     let deck_service = Arc::new(DeckService::new(clock, Arc::clone(&storage.decks)));
     let card_service = Arc::new(CardService::new(clock, Arc::clone(&storage.cards)));
+    let card_service_for_harness = Arc::clone(&card_service);
     let session_summaries = Arc::new(SessionSummaryService::new(clock, Arc::clone(&summaries)));
     let session_loop = Arc::new(SessionLoopService::new(
         clock,
@@ -151,6 +171,15 @@ pub async fn setup_view_harness_with_summary_repo(
         .await
         .expect("create deck");
 
+    let view = match view {
+        ViewKind::Session(_) => ViewKind::Session(deck_id.value()),
+        other => other,
+    };
+    let session_handles = match view {
+        ViewKind::Session(_) => Some(SessionTestHandles::default()),
+        _ => None,
+    };
+
     let app = Arc::new(TestApp {
         deck_id,
         session_summaries,
@@ -159,7 +188,20 @@ pub async fn setup_view_harness_with_summary_repo(
         deck_service,
     });
 
-    let dom = VirtualDom::new_with_props(ViewRouterHarness, ViewHarnessProps { app, view });
+    let dom = VirtualDom::new_with_props(
+        ViewRouterHarness,
+        ViewHarnessProps {
+            app,
+            view,
+            session_handles: session_handles.clone(),
+        },
+    );
 
-    ViewHarness { dom, storage, deck_id }
+    ViewHarness {
+        dom,
+        storage,
+        deck_id,
+        card_service: card_service_for_harness,
+        session_handles,
+    }
 }

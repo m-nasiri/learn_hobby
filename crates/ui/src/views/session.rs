@@ -10,6 +10,11 @@ use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 use crate::vm::{SessionIntent, SessionOutcome, SessionPhase, SessionVm, sanitize_html, start_session};
 
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::rc::Rc;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LastAction {
     StartSession,
@@ -113,6 +118,17 @@ pub fn SessionView(deck_id: u64) -> Element {
             }
         })
     };
+
+    #[cfg(test)]
+    {
+        let mut registered = use_signal(|| false);
+        if !registered() {
+            registered.set(true);
+            if let Some(handles) = try_consume_context::<SessionTestHandles>() {
+                handles.register(dispatch_intent, vm);
+            }
+        }
+    }
 
     let retry_action = use_callback(move |()| {
         match last_action() {
@@ -264,5 +280,35 @@ fn GradeButton(
             onclick: move |_| on_intent.call(SessionIntent::Grade(grade)),
             "{label}"
         }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct SessionTestHandles {
+    dispatch: Rc<RefCell<Option<Callback<SessionIntent>>>>,
+    vm: Rc<RefCell<Option<Signal<Option<SessionVm>>>>>,
+}
+
+#[cfg(test)]
+impl SessionTestHandles {
+    pub(crate) fn register(
+        &self,
+        dispatch: Callback<SessionIntent>,
+        vm: Signal<Option<SessionVm>>,
+    ) {
+        *self.dispatch.borrow_mut() = Some(dispatch);
+        *self.vm.borrow_mut() = Some(vm);
+    }
+
+    pub(crate) fn dispatch(&self) -> Callback<SessionIntent> {
+        self.dispatch
+            .borrow()
+            .clone()
+            .expect("session dispatch registered")
+    }
+
+    pub(crate) fn vm(&self) -> Signal<Option<SessionVm>> {
+        self.vm.borrow().clone().expect("session vm registered")
     }
 }
