@@ -50,11 +50,14 @@ impl PracticeCounts {
 fn focus_target_for_phase(
     completed: bool,
     can_practice_again: bool,
+    can_practice_all: bool,
     phase: Option<SessionPhase>,
 ) -> &'static str {
     if completed {
         return if can_practice_again {
             "session-complete-primary"
+        } else if can_practice_all {
+            "session-complete-all"
         } else {
             "session-complete-secondary"
         };
@@ -69,6 +72,7 @@ fn focus_target_for_phase(
 fn focus_cycle_ids_for_phase(
     completed: bool,
     can_practice_again: bool,
+    can_practice_all: bool,
     phase: Option<SessionPhase>,
 ) -> &'static [&'static str] {
     if completed {
@@ -76,8 +80,11 @@ fn focus_cycle_ids_for_phase(
             &[
                 "session-quit",
                 "session-complete-primary",
+                "session-complete-all",
                 "session-complete-secondary",
             ]
+        } else if can_practice_all {
+            &["session-quit", "session-complete-all", "session-complete-secondary"]
         } else {
             &["session-quit", "session-complete-secondary"]
         };
@@ -195,8 +202,8 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         .as_ref()
         .and_then(|value| value.as_ref().ok())
         .copied();
-    let can_practice_again = practice_counts.map_or(true, PracticeCounts::has_pending);
-    let has_any_cards = practice_counts.map_or(false, PracticeCounts::has_any);
+    let can_practice_again = practice_counts.is_none_or(PracticeCounts::has_pending);
+    let has_any_cards = practice_counts.is_some_and(PracticeCounts::has_any);
 
     use_effect(move || {
         let phase = vm.read().as_ref().map(SessionVm::phase);
@@ -212,7 +219,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         last_focus_phase.set(phase);
         last_focus_completed.set(completed);
         last_focus_can_practice.set(can_practice_again);
-        let target = focus_target_for_phase(completed, can_practice_again, phase);
+        let target = focus_target_for_phase(completed, can_practice_again, has_any_cards, phase);
         let js = format!(
             "document.getElementById({target:?})?.focus();",
         );
@@ -221,7 +228,6 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
 
     let dispatch_intent = {
         let session_loop = session_loop.clone();
-        let counts_resource = counts_resource;
         use_callback(move |intent: SessionIntent| {
             let mut error = error;
             let mut vm = vm;
@@ -322,7 +328,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                 let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
                 let phase = vm.read().as_ref().map(SessionVm::phase);
                 let completed = completion.read().is_some();
-                let ids = focus_cycle_ids_for_phase(completed, can_practice_again, phase);
+                let ids = focus_cycle_ids_for_phase(completed, can_practice_again, has_any_cards, phase);
                 let ids_js = ids
                     .iter()
                     .map(|id| format!("{id:?}"))
@@ -543,8 +549,10 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                         footer { class: "session-modal__footer session-modal__footer--complete",
                             CompletionActions {
                                 destination,
+                                deck_id: deck_id.value(),
                                 on_restart,
                                 can_practice_again,
+                                can_practice_all: has_any_cards,
                                 completion_note,
                             }
                         }
@@ -586,8 +594,10 @@ fn GradeButton(
 #[component]
 fn CompletionActions(
     destination: CompletionDestination,
+    deck_id: u64,
     on_restart: EventHandler<()>,
     can_practice_again: bool,
+    can_practice_all: bool,
     completion_note: Option<&'static str>,
 ) -> Element {
     let navigator = use_navigator();
@@ -608,6 +618,16 @@ fn CompletionActions(
             }
             button {
                 class: "session-complete__cta session-complete__cta--secondary",
+                id: "session-complete-all",
+                r#type: "button",
+                disabled: !can_practice_all,
+                onclick: move |_| {
+                    let _ = navigator.push(Route::SessionAll { deck_id });
+                },
+                "Practice All Cards"
+            }
+            button {
+                class: "session-complete__cta session-complete__cta--ghost",
                 id: "session-complete-secondary",
                 r#type: "button",
                 onclick: move |_| {

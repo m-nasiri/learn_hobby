@@ -91,8 +91,9 @@ async fn history_view_smoke_renders_summary_card() {
 
     harness.rebuild();
     let html = harness.render();
-    assert!(html.contains("Total:"), "missing summary text in {html}");
-    assert!(html.contains("View"), "missing view link in {html}");
+    assert!(html.contains("Default"), "missing deck name in {html}");
+    assert!(html.contains("Practice again"), "missing action in {html}");
+    assert!(html.contains("% Good"), "missing grade breakdown in {html}");
 }
 
 #[tokio::test(flavor = "current_thread")]

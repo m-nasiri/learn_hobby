@@ -171,20 +171,29 @@ pub fn PracticeView() -> Element {
                                                     },
                                                     "Practice Due Cards"
                                                 }
-                                                button {
-                                                    class: "practice-action-item",
-                                                    r#type: "button",
-                                                    onclick: move |_| {
-                                                        open_menu.set(None);
-                                                        let _ = nav.push(Route::SessionAll { deck_id });
-                                                    },
-                                                    "Practice All Cards"
-                                                }
-                                                button {
-                                                    class: "practice-action-item practice-action-item--danger",
-                                                    r#type: "button",
-                                                    onclick: move |_| {
-                                                        open_menu.set(None);
+                                            button {
+                                                class: "practice-action-item",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    open_menu.set(None);
+                                                    let _ = nav.push(Route::SessionAll { deck_id });
+                                                },
+                                                "Practice All Cards"
+                                            }
+                                            button {
+                                                class: "practice-action-item",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    open_menu.set(None);
+                                                    let _ = nav.push(Route::SessionMistakes { deck_id });
+                                                },
+                                                "Re-practice Mistakes"
+                                            }
+                                            button {
+                                                class: "practice-action-item practice-action-item--danger",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    open_menu.set(None);
                                                         reset_state.set(ResetState::Idle);
                                                         reset_target.set(Some(deck_id));
                                                     },

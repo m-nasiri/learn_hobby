@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use learn_core::model::{Deck, DeckId, SessionSummary, TagName};
+use learn_core::model::{CardPhase, Deck, DeckId, SessionSummary, TagName};
 use storage::repository::{
     CardRepository, DeckRepository, SessionSummaryRepository, SessionSummaryRow,
 };
@@ -83,6 +83,33 @@ impl SessionQueries {
             .ok_or(storage::repository::StorageError::NotFound)?;
         let cards = cards.list_cards(deck_id, u32::MAX).await?;
         let session = SessionService::new_all(&deck, cards, now)?;
+        Ok((deck, session))
+    }
+
+    /// Create a session from cards currently in relearning (mistakes).
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Empty` if no cards match, or
+    /// `SessionError::Storage` on repository failures.
+    pub async fn start_from_storage_mistakes(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        now: DateTime<Utc>,
+    ) -> Result<(Deck, SessionService), SessionError> {
+        let deck = decks
+            .get_deck(deck_id)
+            .await?
+            .ok_or(storage::repository::StorageError::NotFound)?;
+        let mut mistakes: Vec<_> = cards
+            .list_cards(deck_id, u32::MAX)
+            .await?
+            .into_iter()
+            .filter(|card| card.phase() == CardPhase::Relearning)
+            .collect();
+        mistakes.sort_by_key(|card| (card.next_review_at(), card.id().value()));
+        let session = SessionService::new(&deck, mistakes, now)?;
         Ok((deck, session))
     }
 

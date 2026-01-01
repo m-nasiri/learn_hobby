@@ -15,6 +15,8 @@ pub enum Route {
         #[route("/session/:deck_id", SessionDeckRoute)] Session { deck_id: u64 },
         #[route("/session/:deck_id/all", SessionAllRoute)]
         SessionAll { deck_id: u64 },
+        #[route("/session/:deck_id/mistakes", SessionMistakesRoute)]
+        SessionMistakes { deck_id: u64 },
         #[route("/session/:deck_id/tag/:tag", SessionTagRoute)]
         SessionTag { deck_id: u64, tag: String },
         #[route("/editor", EditorView)] Editor {},
@@ -68,6 +70,11 @@ fn SessionDeckRoute(deck_id: u64) -> Element {
 #[component]
 fn SessionAllRoute(deck_id: u64) -> Element {
     rsx! { SessionView { deck_id, tag: None, mode: crate::vm::SessionStartMode::All } }
+}
+
+#[component]
+fn SessionMistakesRoute(deck_id: u64) -> Element {
+    rsx! { SessionView { deck_id, tag: None, mode: crate::vm::SessionStartMode::Mistakes } }
 }
 
 #[component]

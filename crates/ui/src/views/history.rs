@@ -30,6 +30,7 @@ pub fn HistoryView() -> Element {
     let mut open_menu = use_signal(|| None::<i64>);
     let mut reset_target = use_signal(|| None::<u64>);
     let mut reset_state = use_signal(|| ResetState::Idle);
+    let mut show_mistakes_only = use_signal(|| false);
 
     let resource = use_resource(move || {
         let summaries = summaries.clone();
@@ -106,6 +107,9 @@ pub fn HistoryView() -> Element {
                                 || matches_deck
                                 || card.completed_at_str.to_lowercase().contains(&query)
                         })
+                        .filter(|card| {
+                            !show_mistakes_only() || (card.again + card.hard) > 0
+                        })
                         .cloned()
                         .collect::<Vec<_>>();
                     let empty_message = if data.cards.is_empty() {
@@ -126,33 +130,45 @@ pub fn HistoryView() -> Element {
                         })
                     };
                     rsx! {
-                        div { class: "practice-search history-search",
-                            span { class: "practice-search-icon", aria_hidden: "true",
-                                svg {
-                                    view_box: "0 0 24 24",
-                                    stroke: "currentColor",
-                                    stroke_width: "1.8",
-                                    fill: "none",
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    circle { cx: "11", cy: "11", r: "7" }
-                                    path { d: "M20 20l-3.5-3.5" }
+                        div { class: "history-controls",
+                            div { class: "practice-search history-search",
+                                span { class: "practice-search-icon", aria_hidden: "true",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.8",
+                                        fill: "none",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        circle { cx: "11", cy: "11", r: "7" }
+                                        path { d: "M20 20l-3.5-3.5" }
+                                    }
+                                }
+                                input {
+                                    class: "practice-search-input",
+                                    r#type: "text",
+                                    placeholder: "Search history...",
+                                    value: "{search()}",
+                                    oninput: move |evt| search.set(evt.value()),
+                                }
+                                if !search().is_empty() {
+                                    button {
+                                        class: "practice-search-clear",
+                                        r#type: "button",
+                                        onclick: move |_| search.set(String::new()),
+                                        span { class: "practice-search-clear-icon", "×" }
+                                    }
                                 }
                             }
-                            input {
-                                class: "practice-search-input",
-                                r#type: "text",
-                                placeholder: "Search history...",
-                                value: "{search()}",
-                                oninput: move |evt| search.set(evt.value()),
-                            }
-                            if !search().is_empty() {
-                                button {
-                                    class: "practice-search-clear",
-                                    r#type: "button",
-                                    onclick: move |_| search.set(String::new()),
-                                    span { class: "practice-search-clear-icon", "×" }
-                                }
+                            button {
+                                class: if show_mistakes_only() {
+                                    "history-filter history-filter--active"
+                                } else {
+                                    "history-filter"
+                                },
+                                r#type: "button",
+                                onclick: move |_| show_mistakes_only.set(!show_mistakes_only()),
+                                "Mistakes only"
                             }
                         }
                         if visible_cards.is_empty() {

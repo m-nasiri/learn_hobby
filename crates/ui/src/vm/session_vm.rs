@@ -13,6 +13,7 @@ pub enum SessionIntent {
 pub enum SessionStartMode {
     Due,
     All,
+    Mistakes,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,10 +131,12 @@ pub async fn start_session(
 ) -> Result<SessionVm, ViewError> {
     let session_result = if let Some(tag) = tag {
         session_loop.start_session_with_tags(deck_id, &[tag]).await
-    } else if mode == SessionStartMode::All {
-        session_loop.start_session_all_cards(deck_id).await
     } else {
-        session_loop.start_session(deck_id).await
+        match mode {
+            SessionStartMode::Due => session_loop.start_session(deck_id).await,
+            SessionStartMode::All => session_loop.start_session_all_cards(deck_id).await,
+            SessionStartMode::Mistakes => session_loop.start_session_mistakes(deck_id).await,
+        }
     };
 
     let session = match session_result {

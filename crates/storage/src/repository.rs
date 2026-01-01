@@ -760,7 +760,7 @@ impl CardRepository for InMemoryRepository {
             .cards
             .values()
             .filter(|card| card.deck_id() == deck_id)
-            .map(|card| card.id())
+            .map(Card::id)
             .collect();
         let mut updated = 0_u64;
         for id in ids {
