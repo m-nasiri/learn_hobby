@@ -400,6 +400,113 @@ a {
   gap: 12px;
 }
 
+.history-action {
+  position: relative;
+}
+
+.history-action-caret {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.9);
+  transform: rotate(45deg);
+  margin-left: 8px;
+  margin-bottom: 2px;
+}
+
+.history-action-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 34px rgba(31, 36, 40, 0.18);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  z-index: 20;
+}
+
+.history-action-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font: inherit;
+  color: var(--ink-1);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.history-action-item:hover {
+  background: rgba(120, 146, 240, 0.12);
+}
+
+.history-action-item--danger {
+  color: #b14a4a;
+}
+
+.history-action-item--danger:hover {
+  background: rgba(179, 58, 58, 0.15);
+}
+
+.history-menu-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 10;
+}
+
+.history-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 22, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.history-modal {
+  width: min(360px, 90vw);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 48px rgba(31, 36, 40, 0.22);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 18px 20px;
+  display: grid;
+  gap: 10px;
+}
+
+.history-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.history-modal-body {
+  margin: 0;
+  color: rgba(0, 0, 0, 0.68);
+  font-size: 0.92rem;
+}
+
+.history-modal-error {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #b14a4a;
+}
+
+.history-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .history-item__date {
   font-size: 0.85rem;
   color: var(--ink-2);
