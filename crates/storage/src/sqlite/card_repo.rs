@@ -295,6 +295,25 @@ impl CardRepository for SqliteRepository {
         Ok(cards)
     }
 
+    async fn mistakes_count(&self, deck_id: DeckId) -> Result<u32, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let row = sqlx::query(
+            r"
+            SELECT COUNT(*) AS total
+            FROM cards
+            WHERE deck_id = ?1 AND phase = 'relearning'
+            ",
+        )
+        .bind(deck)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        u32_from_i64("total", row.try_get::<i64, _>("total").map_err(|e| ser(&e))?)
+    }
+
     async fn reset_deck_learning(
         &self,
         deck_id: DeckId,

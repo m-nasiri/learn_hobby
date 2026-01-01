@@ -304,6 +304,13 @@ pub trait CardRepository: Send + Sync {
     /// Returns `StorageError` on connection or serialization failure.
     async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
 
+    /// Count cards currently in a mistake/relearning state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn mistakes_count(&self, deck_id: DeckId) -> Result<u32, StorageError>;
+
     /// Reset learning state for all cards in a deck.
     ///
     /// Resets phase to `New`, clears review metadata, and sets `next_review_at` to `now`.
@@ -745,6 +752,19 @@ impl CardRepository for InMemoryRepository {
         });
         cards.truncate(limit_usize(limit));
         Ok(cards)
+    }
+
+    async fn mistakes_count(&self, deck_id: DeckId) -> Result<u32, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let count = guard
+            .cards
+            .values()
+            .filter(|card| card.deck_id() == deck_id && card.phase() == CardPhase::Relearning)
+            .count();
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
     async fn reset_deck_learning(

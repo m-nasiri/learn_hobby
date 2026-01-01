@@ -35,6 +35,7 @@ struct PracticeCounts {
     total: u32,
     due: u32,
     new_count: u32,
+    mistakes: u32,
 }
 
 impl PracticeCounts {
@@ -45,12 +46,17 @@ impl PracticeCounts {
     const fn has_any(self) -> bool {
         self.total > 0
     }
+
+    const fn has_mistakes(self) -> bool {
+        self.mistakes > 0
+    }
 }
 
 fn focus_target_for_phase(
     completed: bool,
     can_practice_again: bool,
     can_practice_all: bool,
+    can_practice_mistakes: bool,
     phase: Option<SessionPhase>,
 ) -> &'static str {
     if completed {
@@ -58,6 +64,8 @@ fn focus_target_for_phase(
             "session-complete-primary"
         } else if can_practice_all {
             "session-complete-all"
+        } else if can_practice_mistakes {
+            "session-complete-mistakes"
         } else {
             "session-complete-secondary"
         };
@@ -73,6 +81,7 @@ fn focus_cycle_ids_for_phase(
     completed: bool,
     can_practice_again: bool,
     can_practice_all: bool,
+    can_practice_mistakes: bool,
     phase: Option<SessionPhase>,
 ) -> &'static [&'static str] {
     if completed {
@@ -91,8 +100,10 @@ fn focus_cycle_ids_for_phase(
                 "session-complete-mistakes",
                 "session-complete-secondary",
             ]
-        } else {
+        } else if can_practice_mistakes {
             &["session-quit", "session-complete-mistakes", "session-complete-secondary"]
+        } else {
+            &["session-quit", "session-complete-secondary"]
         };
     }
     match phase {
@@ -150,9 +161,21 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                             total: item.total,
                             due: item.due,
                             new_count: item.new,
+                            mistakes: 0,
                         });
-                    Ok::<_, ViewError>(counts)
+                    let mistakes = card_service
+                        .mistakes_count(deck_id)
+                        .await
+                        .map_err(|_| ViewError::Unknown)?;
+                    Ok::<_, ViewError>(PracticeCounts {
+                        mistakes,
+                        ..counts
+                    })
                 } else {
+                    let mistakes = card_service
+                        .mistakes_count(deck_id)
+                        .await
+                        .map_err(|_| ViewError::Unknown)?;
                     let stats = card_service
                         .deck_practice_stats(deck_id)
                         .await
@@ -161,6 +184,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                         total: stats.total,
                         due: stats.due,
                         new_count: stats.new,
+                        mistakes,
                     })
                 }
             }
@@ -210,6 +234,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         .copied();
     let can_practice_again = practice_counts.is_none_or(PracticeCounts::has_pending);
     let has_any_cards = practice_counts.is_some_and(PracticeCounts::has_any);
+    let can_practice_mistakes = practice_counts.is_none_or(PracticeCounts::has_mistakes);
 
     use_effect(move || {
         let phase = vm.read().as_ref().map(SessionVm::phase);
@@ -225,7 +250,13 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         last_focus_phase.set(phase);
         last_focus_completed.set(completed);
         last_focus_can_practice.set(can_practice_again);
-        let target = focus_target_for_phase(completed, can_practice_again, has_any_cards, phase);
+        let target = focus_target_for_phase(
+            completed,
+            can_practice_again,
+            has_any_cards,
+            can_practice_mistakes,
+            phase,
+        );
         let js = format!(
             "document.getElementById({target:?})?.focus();",
         );
@@ -334,7 +365,13 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                 let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
                 let phase = vm.read().as_ref().map(SessionVm::phase);
                 let completed = completion.read().is_some();
-                let ids = focus_cycle_ids_for_phase(completed, can_practice_again, has_any_cards, phase);
+                let ids = focus_cycle_ids_for_phase(
+                    completed,
+                    can_practice_again,
+                    has_any_cards,
+                    can_practice_mistakes,
+                    phase,
+                );
                 let ids_js = ids
                     .iter()
                     .map(|id| format!("{id:?}"))
@@ -559,6 +596,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                                 on_restart,
                                 can_practice_again,
                                 can_practice_all: has_any_cards,
+                                can_practice_mistakes,
                                 completion_note,
                             }
                         }
@@ -604,6 +642,7 @@ fn CompletionActions(
     on_restart: EventHandler<()>,
     can_practice_again: bool,
     can_practice_all: bool,
+    can_practice_mistakes: bool,
     completion_note: Option<&'static str>,
 ) -> Element {
     let navigator = use_navigator();
@@ -636,6 +675,7 @@ fn CompletionActions(
                 class: "session-complete__cta session-complete__cta--secondary",
                 id: "session-complete-mistakes",
                 r#type: "button",
+                disabled: !can_practice_mistakes,
                 onclick: move |_| {
                     let _ = navigator.push(Route::SessionMistakes { deck_id });
                 },

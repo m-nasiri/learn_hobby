@@ -152,6 +152,16 @@ impl CardService {
         Ok(cards)
     }
 
+    /// Count cards currently in a mistake/relearning state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` on persistence failures.
+    pub async fn mistakes_count(&self, deck_id: DeckId) -> Result<u32, CardServiceError> {
+        let count = self.cards.mistakes_count(deck_id).await?;
+        Ok(count)
+    }
+
     /// Reset learning state for all cards in a deck.
     ///
     /// # Errors

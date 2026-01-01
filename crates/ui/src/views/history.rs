@@ -107,9 +107,7 @@ pub fn HistoryView() -> Element {
                                 || matches_deck
                                 || card.completed_at_str.to_lowercase().contains(&query)
                         })
-                        .filter(|card| {
-                            !show_mistakes_only() || (card.again + card.hard) > 0
-                        })
+                        .filter(|card| !show_mistakes_only() || card.again > 0)
                         .cloned()
                         .collect::<Vec<_>>();
                     let empty_message = if data.cards.is_empty() {
@@ -170,7 +168,7 @@ pub fn HistoryView() -> Element {
                                 onclick: move |_| show_mistakes_only.set(!show_mistakes_only()),
                                 "Mistakes only"
                             }
-                            span { class: "history-filter-note", "Mistakes = Again/Hard grades" }
+                            span { class: "history-filter-note", "Mistakes = Again grades" }
                         }
                         if visible_cards.is_empty() {
                             p { class: "history-empty", "{empty_message}" }
@@ -285,7 +283,7 @@ fn SummaryCard(
     let navigator = use_navigator();
     let avatar = deck_label.chars().next().unwrap_or('D').to_string();
     let is_open = open_menu() == Some(card.id);
-    let has_mistakes = (card.again + card.hard) > 0;
+    let has_mistakes = card.again > 0;
     rsx! {
         li { class: "history-item",
             div { class: "history-item__main",
