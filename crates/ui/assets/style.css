@@ -292,6 +292,146 @@ a {
   color: var(--ink-2);
 }
 
+.history-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.history-search {
+  margin-bottom: var(--space-2);
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 22px rgba(31, 36, 40, 0.08);
+}
+
+.history-item__main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  flex: 1;
+}
+
+.history-item__avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--ink-1);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(229, 236, 245, 0.9));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.history-item__content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.history-item__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.history-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.history-item__dot {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+.history-item__breakdown {
+  color: var(--ink-2);
+}
+
+.history-metric {
+  font-weight: 600;
+}
+
+.history-metric--again {
+  color: #c65b4a;
+}
+
+.history-metric--hard {
+  color: #d28b3b;
+}
+
+.history-metric--good {
+  color: #5c9b57;
+}
+
+.history-metric--easy {
+  color: #4f79f6;
+}
+
+.history-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.history-item__date {
+  font-size: 0.85rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.history-item__due {
+  font-size: 0.85rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.history-item__action {
+  min-height: 36px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: none;
+  background: #4f79f6;
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(79, 121, 246, 0.2);
+}
+
+.history-item__action:hover {
+  background: #4069e4;
+}
+
+.history-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
 .session-card {
   padding: var(--space-4);
   background: rgba(255, 255, 255, 0.8);

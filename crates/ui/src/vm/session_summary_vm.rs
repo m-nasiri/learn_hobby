@@ -12,10 +12,18 @@ pub struct SessionSummaryCardVm {
     pub hard: u32,
     pub good: u32,
     pub easy: u32,
+
+    pub cards_label: String,
+    pub again_pct: u32,
+    pub hard_pct: u32,
+    pub good_pct: u32,
+    pub easy_pct: u32,
 }
 
 impl From<&SessionSummaryListItem> for SessionSummaryCardVm {
     fn from(item: &SessionSummaryListItem) -> Self {
+        let total = item.total;
+        let pct = |count: u32| if total == 0 { 0 } else { (count.saturating_mul(100)) / total };
         Self {
             id: item.id,
             completed_at_str: format_datetime(&item.completed_at),
@@ -24,6 +32,11 @@ impl From<&SessionSummaryListItem> for SessionSummaryCardVm {
             hard: item.hard,
             good: item.good,
             easy: item.easy,
+            cards_label: format!("{total} Cards"),
+            again_pct: pct(item.again),
+            hard_pct: pct(item.hard),
+            good_pct: pct(item.good),
+            easy_pct: pct(item.easy),
         }
     }
 }
