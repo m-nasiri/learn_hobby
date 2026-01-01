@@ -52,19 +52,24 @@ impl PracticeCounts {
     }
 }
 
-fn focus_target_for_phase(
-    completed: bool,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CompletionFlags {
     can_practice_again: bool,
     can_practice_all: bool,
     can_practice_mistakes: bool,
+}
+
+fn focus_target_for_phase(
+    completed: bool,
+    completion: CompletionFlags,
     phase: Option<SessionPhase>,
 ) -> &'static str {
     if completed {
-        return if can_practice_again {
+        return if completion.can_practice_again {
             "session-complete-primary"
-        } else if can_practice_all {
+        } else if completion.can_practice_all {
             "session-complete-all"
-        } else if can_practice_mistakes {
+        } else if completion.can_practice_mistakes {
             "session-complete-mistakes"
         } else {
             "session-complete-secondary"
@@ -79,13 +84,11 @@ fn focus_target_for_phase(
 
 fn focus_cycle_ids_for_phase(
     completed: bool,
-    can_practice_again: bool,
-    can_practice_all: bool,
-    can_practice_mistakes: bool,
+    completion: CompletionFlags,
     phase: Option<SessionPhase>,
 ) -> &'static [&'static str] {
     if completed {
-        return if can_practice_again {
+        return if completion.can_practice_again {
             &[
                 "session-quit",
                 "session-complete-primary",
@@ -93,14 +96,14 @@ fn focus_cycle_ids_for_phase(
                 "session-complete-mistakes",
                 "session-complete-secondary",
             ]
-        } else if can_practice_all {
+        } else if completion.can_practice_all {
             &[
                 "session-quit",
                 "session-complete-all",
                 "session-complete-mistakes",
                 "session-complete-secondary",
             ]
-        } else if can_practice_mistakes {
+        } else if completion.can_practice_mistakes {
             &["session-quit", "session-complete-mistakes", "session-complete-secondary"]
         } else {
             &["session-quit", "session-complete-secondary"]
@@ -232,9 +235,12 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         .as_ref()
         .and_then(|value| value.as_ref().ok())
         .copied();
-    let can_practice_again = practice_counts.is_none_or(PracticeCounts::has_pending);
-    let has_any_cards = practice_counts.is_some_and(PracticeCounts::has_any);
-    let can_practice_mistakes = practice_counts.is_none_or(PracticeCounts::has_mistakes);
+    let completion_flags = CompletionFlags {
+        can_practice_again: practice_counts.is_none_or(PracticeCounts::has_pending),
+        can_practice_all: practice_counts.is_some_and(PracticeCounts::has_any),
+        can_practice_mistakes: practice_counts.is_none_or(PracticeCounts::has_mistakes),
+    };
+    let has_any_cards = completion_flags.can_practice_all;
 
     use_effect(move || {
         let phase = vm.read().as_ref().map(SessionVm::phase);
@@ -242,21 +248,15 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         if did_focus()
             && last_focus_phase() == phase
             && last_focus_completed() == completed
-            && last_focus_can_practice() == can_practice_again
+            && last_focus_can_practice() == completion_flags.can_practice_again
         {
             return;
         }
         did_focus.set(true);
         last_focus_phase.set(phase);
         last_focus_completed.set(completed);
-        last_focus_can_practice.set(can_practice_again);
-        let target = focus_target_for_phase(
-            completed,
-            can_practice_again,
-            has_any_cards,
-            can_practice_mistakes,
-            phase,
-        );
+        last_focus_can_practice.set(completion_flags.can_practice_again);
+        let target = focus_target_for_phase(completed, completion_flags, phase);
         let js = format!(
             "document.getElementById({target:?})?.focus();",
         );
@@ -365,13 +365,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                 let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
                 let phase = vm.read().as_ref().map(SessionVm::phase);
                 let completed = completion.read().is_some();
-                let ids = focus_cycle_ids_for_phase(
-                    completed,
-                    can_practice_again,
-                    has_any_cards,
-                    can_practice_mistakes,
-                    phase,
-                );
+                let ids = focus_cycle_ids_for_phase(completed, completion_flags, phase);
                 let ids_js = ids
                     .iter()
                     .map(|id| format!("{id:?}"))
@@ -469,7 +463,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     } else {
         ("Add Cards", Route::Editor {})
     };
-    let completion_note = (!can_practice_again)
+    let completion_note = (!completion_flags.can_practice_again)
         .then_some("All caught up. No cards due right now.");
     let deck_label = deck_label_resource
         .value()
@@ -594,9 +588,9 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                                 destination,
                                 deck_id: deck_id.value(),
                                 on_restart,
-                                can_practice_again,
-                                can_practice_all: has_any_cards,
-                                can_practice_mistakes,
+                                can_practice_again: completion_flags.can_practice_again,
+                                can_practice_all: completion_flags.can_practice_all,
+                                can_practice_mistakes: completion_flags.can_practice_mistakes,
                                 completion_note,
                             }
                         }

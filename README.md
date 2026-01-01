@@ -39,3 +39,10 @@ LEARN_DB_URL=sqlite:dev.sqlite3 LEARN_DECK_ID=1 dx serve -p app
 Notes:
 - CLI flags override env vars.
 - `dx serve` does not forward app args like `--db`; use env vars.
+
+## Practice options (UI)
+
+- Practice Due Cards: default session (due + new, micro-session size).
+- Practice All Cards: full-deck session (ignores micro-session size).
+- Re-practice Mistakes: cards currently in `Relearning` phase (typically Again grades).
+- Reset Learning Progress: resets scheduling for all cards in a deck.

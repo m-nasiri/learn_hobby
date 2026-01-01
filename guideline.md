@@ -146,6 +146,11 @@ Good candidates:
 - Show progress simply (“3 of 5”).
 - Primary action is always clear and single.
 
+### Practice semantics
+- Practice Due Cards = due + new (micro-session size).
+- Practice All Cards = full deck, ignores micro-session size.
+- Mistakes = cards in `Relearning` phase (typically Again grades).
+
 ### Accessibility rules
 - Keyboard-first on desktop: `1/2/3/4` for grading, `Space` to reveal, `Esc` to pause/close.
 - Predictable focus order; visible focus ring.
