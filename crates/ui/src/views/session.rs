@@ -1,7 +1,7 @@
 use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
-use keyboard_types::{Code, Key};
+use keyboard_types::{Code, Key, Modifiers};
 
 use learn_core::model::{DeckId, ReviewGrade, TagName};
 
@@ -19,6 +19,28 @@ use std::rc::Rc;
 enum LastAction {
     StartSession,
     Answer(ReviewGrade),
+}
+
+fn focus_target_for_phase(phase: Option<SessionPhase>) -> &'static str {
+    match phase {
+        Some(SessionPhase::Prompt) => "session-reveal",
+        Some(SessionPhase::Answer) => "session-grade-again",
+        None => "session-quit",
+    }
+}
+
+fn focus_cycle_ids_for_phase(phase: Option<SessionPhase>) -> &'static [&'static str] {
+    match phase {
+        Some(SessionPhase::Prompt) => &["session-quit", "session-reveal"],
+        Some(SessionPhase::Answer) => &[
+            "session-quit",
+            "session-grade-again",
+            "session-grade-hard",
+            "session-grade-good",
+            "session-grade-easy",
+        ],
+        None => &["session-quit"],
+    }
 }
 
 #[component]
@@ -40,6 +62,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let vm = use_signal(|| None::<SessionVm>);
     let last_action = use_signal(|| None::<LastAction>);
     let mut did_focus = use_signal(|| false);
+    let mut last_focus_phase = use_signal(|| None::<SessionPhase>);
     let due_resource = {
         let card_service = card_service.clone();
         let tag_name = tag_name.clone();
@@ -104,11 +127,17 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let state = view_state_from_resource(&resource);
 
     use_effect(move || {
-        if did_focus() {
+        let phase = vm.read().as_ref().map(SessionVm::phase);
+        if did_focus() && last_focus_phase() == phase {
             return;
         }
         did_focus.set(true);
-        let _ = eval("document.getElementById('session-root')?.focus();");
+        last_focus_phase.set(phase);
+        let target = focus_target_for_phase(phase);
+        let js = format!(
+            "document.getElementById({target:?})?.focus();",
+        );
+        let _ = eval(&js);
     });
 
     let dispatch_intent = {
@@ -196,6 +225,33 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
 
     let on_key = {
         use_callback(move |evt: KeyboardEvent| {
+            if evt.data.key() == Key::Tab {
+                evt.prevent_default();
+                let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
+                let phase = vm.read().as_ref().map(SessionVm::phase);
+                let ids = focus_cycle_ids_for_phase(phase);
+                let ids_js = ids
+                    .iter()
+                    .map(|id| format!("{id:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let delta = if shift { -1 } else { 1 };
+                let js = format!(
+                    r#"(function() {{
+                        const ids = [{ids_js}];
+                        if (!ids.length) return;
+                        const active = document.activeElement && document.activeElement.id;
+                        let idx = ids.indexOf(active);
+                        if (idx === -1) idx = 0;
+                        idx = (idx + {delta} + ids.length) % ids.length;
+                        const next = ids[idx];
+                        const el = document.getElementById(next);
+                        if (el) el.focus();
+                    }})();"#,
+                );
+                let _ = eval(&js);
+                return;
+            }
             if evt.data.key() == Key::Escape {
                 evt.prevent_default();
                 navigator.push(Route::Practice {});
@@ -279,16 +335,21 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     rsx! {
         div { class: "page session-page", id: "session-root", tabindex: "0", onkeydown: on_key,
             div { class: "session-overlay",
-                div { class: "session-modal",
+                div {
+                    class: "session-modal",
+                    role: "dialog",
+                    aria_modal: "true",
+                    aria_labelledby: "session-modal-title",
                     header { class: "session-modal__header",
                         div { class: "session-modal__heading",
-                            h2 { class: "session-modal__title", "Practice Session" }
+                            h2 { class: "session-modal__title", id: "session-modal-title", "Practice Session" }
                             if !context_label.is_empty() {
                                 p { class: "session-modal__context", "{context_label}" }
                             }
                         }
                         button {
                             class: "session-modal__quit",
+                            id: "session-quit",
                             r#type: "button",
                             onclick: move |_| {
                                 let _ = navigator.push(Route::Practice {});
@@ -331,6 +392,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                                         Some(SessionPhase::Prompt) => rsx! {
                                             button {
                                                 class: "session-reveal-btn",
+                                                id: "session-reveal",
                                                 onclick: move |_| dispatch_intent.call(SessionIntent::Reveal),
                                                 "Show Answer"
                                             }
@@ -375,14 +437,15 @@ fn GradeButton(
     on_intent: EventHandler<SessionIntent>,
 ) -> Element {
     let variant = match grade {
-        ReviewGrade::Again => "session-grade session-grade--again",
-        ReviewGrade::Hard => "session-grade session-grade--hard",
-        ReviewGrade::Good => "session-grade session-grade--good",
-        ReviewGrade::Easy => "session-grade session-grade--easy",
+        ReviewGrade::Again => ("session-grade session-grade--again", "session-grade-again"),
+        ReviewGrade::Hard => ("session-grade session-grade--hard", "session-grade-hard"),
+        ReviewGrade::Good => ("session-grade session-grade--good", "session-grade-good"),
+        ReviewGrade::Easy => ("session-grade session-grade--easy", "session-grade-easy"),
     };
     rsx! {
         button {
-            class: "{variant}",
+            class: "{variant.0}",
+            id: "{variant.1}",
             onclick: move |_| on_intent.call(SessionIntent::Grade(grade)),
             "{label}"
         }
