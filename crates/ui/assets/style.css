@@ -337,12 +337,25 @@ a {
   background: rgba(249, 250, 252, 0.92);
 }
 
+.session-modal__heading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
 .session-modal__title {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--ink-2);
+}
+
+.session-modal__context {
+  margin: 0;
+  font-size: 0.78rem;
+  color: rgba(0, 0, 0, 0.45);
 }
 
 .session-modal__quit {

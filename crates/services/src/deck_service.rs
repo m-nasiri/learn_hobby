@@ -50,6 +50,18 @@ impl DeckService {
         Ok(decks)
     }
 
+    /// Fetch a deck by ID.
+    ///
+    /// Returns `Ok(None)` when the deck does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeckServiceError::Storage` if repository access fails.
+    pub async fn get_deck(&self, deck_id: DeckId) -> Result<Option<Deck>, DeckServiceError> {
+        let deck = self.decks.get_deck(deck_id).await?;
+        Ok(deck)
+    }
+
     /// Rename a deck while preserving existing settings and metadata.
     ///
     /// # Errors
@@ -77,5 +89,32 @@ impl DeckService {
 
         self.decks.upsert_deck(&updated).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use learn_core::time::fixed_now;
+    use storage::repository::InMemoryRepository;
+
+    #[tokio::test]
+    async fn get_deck_returns_persisted_deck() {
+        let repo = InMemoryRepository::new();
+        let deck = Deck::new(
+            DeckId::new(1),
+            "Test",
+            None,
+            DeckSettings::default_for_adhd(),
+            fixed_now(),
+        )
+        .unwrap();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let service = DeckService::new(Clock::Fixed(fixed_now()), std::sync::Arc::new(repo));
+        let fetched = service.get_deck(deck.id()).await.unwrap();
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().name(), "Test");
     }
 }

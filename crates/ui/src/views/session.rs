@@ -28,6 +28,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let deck_id = DeckId::new(deck_id);
     let session_loop = ctx.session_loop();
     let card_service = ctx.card_service();
+    let deck_service = ctx.deck_service();
     let parsed_tag = tag.as_deref().map(|value| TagName::new(value.to_string()));
     let (tag_name, invalid_tag) = match parsed_tag {
         Some(Ok(tag)) => (Some(tag), false),
@@ -63,6 +64,19 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                         .map_err(|_| ViewError::Unknown)?;
                     Ok::<_, ViewError>(stats.due)
                 }
+            }
+        })
+    };
+    let deck_label_resource = {
+        let deck_service = deck_service.clone();
+        use_resource(move || {
+            let deck_service = deck_service.clone();
+            async move {
+                let deck = deck_service
+                    .get_deck(deck_id)
+                    .await
+                    .map_err(|_| ViewError::Unknown)?;
+                Ok::<_, ViewError>(deck.map(|deck| deck.name().to_string()))
             }
         })
     };
@@ -249,13 +263,30 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
         .as_ref()
         .and_then(|value| value.as_ref().ok())
         .map_or_else(|| "Due: --".to_string(), |due| format!("Due: {due}"));
+    let deck_label = deck_label_resource
+        .value()
+        .read()
+        .as_ref()
+        .and_then(|value| value.as_ref().ok())
+        .and_then(Clone::clone);
+    let context_label = match (deck_label.as_deref(), tag.as_deref()) {
+        (Some(deck), Some(tag)) => format!("{deck} · Tag: {tag}"),
+        (Some(deck), None) => deck.to_string(),
+        (None, Some(tag)) => format!("Tag: {tag}"),
+        (None, None) => String::new(),
+    };
 
     rsx! {
         div { class: "page session-page", id: "session-root", tabindex: "0", onkeydown: on_key,
             div { class: "session-overlay",
                 div { class: "session-modal",
                     header { class: "session-modal__header",
-                        h2 { class: "session-modal__title", "Practice Session" }
+                        div { class: "session-modal__heading",
+                            h2 { class: "session-modal__title", "Practice Session" }
+                            if !context_label.is_empty() {
+                                p { class: "session-modal__context", "{context_label}" }
+                            }
+                        }
                         button {
                             class: "session-modal__quit",
                             r#type: "button",
