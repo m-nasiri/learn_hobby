@@ -462,6 +462,38 @@ a {
   background: #4069e4;
 }
 
+.session-complete__cta:disabled {
+  opacity: 0.55;
+  cursor: default;
+  box-shadow: none;
+}
+
+.session-complete__actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.session-complete__cta--secondary {
+  background: #fff;
+  color: var(--ink-1);
+  border: 1px solid rgba(28, 34, 44, 0.18);
+  box-shadow: none;
+}
+
+.session-complete__cta--secondary:hover {
+  background: rgba(28, 34, 44, 0.04);
+}
+
+.session-complete__note {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
 .session-grades {
   display: flex;
   gap: 14px;

@@ -27,9 +27,34 @@ enum CompletionDestination {
     Practice,
 }
 
-fn focus_target_for_phase(completed: bool, phase: Option<SessionPhase>) -> &'static str {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PracticeCounts {
+    total: u32,
+    due: u32,
+    new_count: u32,
+}
+
+impl PracticeCounts {
+    const fn has_pending(self) -> bool {
+        self.due > 0 || self.new_count > 0
+    }
+
+    const fn has_any(self) -> bool {
+        self.total > 0
+    }
+}
+
+fn focus_target_for_phase(
+    completed: bool,
+    can_practice_again: bool,
+    phase: Option<SessionPhase>,
+) -> &'static str {
     if completed {
-        return "session-complete-cta";
+        return if can_practice_again {
+            "session-complete-primary"
+        } else {
+            "session-complete-secondary"
+        };
     }
     match phase {
         Some(SessionPhase::Prompt) => "session-reveal",
@@ -40,10 +65,19 @@ fn focus_target_for_phase(completed: bool, phase: Option<SessionPhase>) -> &'sta
 
 fn focus_cycle_ids_for_phase(
     completed: bool,
+    can_practice_again: bool,
     phase: Option<SessionPhase>,
 ) -> &'static [&'static str] {
     if completed {
-        return &["session-quit", "session-complete-cta"];
+        return if can_practice_again {
+            &[
+                "session-quit",
+                "session-complete-primary",
+                "session-complete-secondary",
+            ]
+        } else {
+            &["session-quit", "session-complete-secondary"]
+        };
     }
     match phase {
         Some(SessionPhase::Prompt) => &["session-quit", "session-reveal"],
@@ -79,8 +113,9 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let mut did_focus = use_signal(|| false);
     let mut last_focus_phase = use_signal(|| None::<SessionPhase>);
     let mut last_focus_completed = use_signal(|| false);
+    let mut last_focus_can_practice = use_signal(|| true);
     let mut completion = use_signal(|| None::<CompletionDestination>);
-    let due_resource = {
+    let counts_resource = {
         let card_service = card_service.clone();
         let tag_name = tag_name.clone();
         use_resource(move || {
@@ -92,17 +127,25 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                         .list_tag_practice_stats(deck_id)
                         .await
                         .map_err(|_| ViewError::Unknown)?;
-                    let due = stats
+                    let counts = stats
                         .iter()
                         .find(|item| item.name == *tag)
-                        .map_or(0, |item| item.due);
-                    Ok::<_, ViewError>(due)
+                        .map_or_else(PracticeCounts::default, |item| PracticeCounts {
+                            total: item.total,
+                            due: item.due,
+                            new_count: item.new,
+                        });
+                    Ok::<_, ViewError>(counts)
                 } else {
                     let stats = card_service
                         .deck_practice_stats(deck_id)
                         .await
                         .map_err(|_| ViewError::Unknown)?;
-                    Ok::<_, ViewError>(stats.due)
+                    Ok::<_, ViewError>(PracticeCounts {
+                        total: stats.total,
+                        due: stats.due,
+                        new_count: stats.new,
+                    })
                 }
             }
         })
@@ -143,17 +186,30 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     });
 
     let state = view_state_from_resource(&resource);
+    let practice_counts = counts_resource
+        .value()
+        .read()
+        .as_ref()
+        .and_then(|value| value.as_ref().ok())
+        .copied();
+    let can_practice_again = practice_counts.map_or(true, PracticeCounts::has_pending);
+    let has_any_cards = practice_counts.map_or(false, PracticeCounts::has_any);
 
     use_effect(move || {
         let phase = vm.read().as_ref().map(SessionVm::phase);
         let completed = completion.read().is_some();
-        if did_focus() && last_focus_phase() == phase && last_focus_completed() == completed {
+        if did_focus()
+            && last_focus_phase() == phase
+            && last_focus_completed() == completed
+            && last_focus_can_practice() == can_practice_again
+        {
             return;
         }
         did_focus.set(true);
         last_focus_phase.set(phase);
         last_focus_completed.set(completed);
-        let target = focus_target_for_phase(completed, phase);
+        last_focus_can_practice.set(can_practice_again);
+        let target = focus_target_for_phase(completed, can_practice_again, phase);
         let js = format!(
             "document.getElementById({target:?})?.focus();",
         );
@@ -162,11 +218,13 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
 
     let dispatch_intent = {
         let session_loop = session_loop.clone();
+        let counts_resource = counts_resource;
         use_callback(move |intent: SessionIntent| {
             let mut error = error;
             let mut vm = vm;
             let mut last_action = last_action;
             let mut completion = completion;
+            let mut counts_resource = counts_resource;
 
             match intent {
                 SessionIntent::Reveal => {
@@ -207,6 +265,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                                             CompletionDestination::Summary,
                                         );
                                         completion.set(Some(destination));
+                                        counts_resource.restart();
                                     }
                                 }
                             }
@@ -242,6 +301,16 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
             }
         }
     });
+    let on_restart = {
+        let mut resource = resource;
+        let mut counts_resource = counts_resource;
+        let mut completion = completion;
+        use_callback(move |()| {
+            completion.set(None);
+            resource.restart();
+            counts_resource.restart();
+        })
+    };
 
     let on_key = {
         use_callback(move |evt: KeyboardEvent| {
@@ -250,7 +319,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                 let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
                 let phase = vm.read().as_ref().map(SessionVm::phase);
                 let completed = completion.read().is_some();
-                let ids = focus_cycle_ids_for_phase(completed, phase);
+                let ids = focus_cycle_ids_for_phase(completed, can_practice_again, phase);
                 let ids_js = ids
                     .iter()
                     .map(|id| format!("{id:?}"))
@@ -335,12 +404,21 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
         || "Streak: 0 🔥".to_string(),
         |vm| format!("Streak: {} 🔥", vm.streak()),
     );
-    let due_label = due_resource
-        .value()
-        .read()
-        .as_ref()
-        .and_then(|value| value.as_ref().ok())
+    let due_label = practice_counts
+        .map(|counts| counts.due)
         .map_or_else(|| "Due: --".to_string(), |due| format!("Due: {due}"));
+    let empty_session_message = if has_any_cards {
+        "All caught up. No cards due right now."
+    } else {
+        "No cards available yet. Add some cards first."
+    };
+    let empty_session_cta = if has_any_cards {
+        ("Back to Practice", Route::Practice {})
+    } else {
+        ("Add Cards", Route::Editor {})
+    };
+    let completion_note = (!can_practice_again)
+        .then_some("All caught up. No cards due right now.");
     let deck_label = deck_label_resource
         .value()
         .read()
@@ -388,12 +466,24 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                                 p { "Loading..." }
                             },
                             ViewState::Error(err) => rsx! {
-                                p { "{err.message()}" }
-                                button {
-                                    class: "btn btn-secondary",
-                                    r#type: "button",
-                                    onclick: move |_| retry_action.call(()),
-                                    "Retry"
+                                if err == ViewError::EmptySession {
+                                    p { "{empty_session_message}" }
+                                    button {
+                                        class: "btn btn-secondary",
+                                        r#type: "button",
+                                        onclick: move |_| {
+                                            let _ = navigator.push(empty_session_cta.1.clone());
+                                        },
+                                        "{empty_session_cta.0}"
+                                    }
+                                } else {
+                                    p { "{err.message()}" }
+                                    button {
+                                        class: "btn btn-secondary",
+                                        r#type: "button",
+                                        onclick: move |_| retry_action.call(()),
+                                        "Retry"
+                                    }
                                 }
                             },
                             ViewState::Ready(()) => rsx! {
@@ -448,7 +538,12 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                     }
                     if let Some(destination) = completion_state {
                         footer { class: "session-modal__footer session-modal__footer--complete",
-                            CompletionCta { destination }
+                            CompletionActions {
+                                destination,
+                                on_restart,
+                                can_practice_again,
+                                completion_note,
+                            }
                         }
                     } else {
                         footer { class: "session-modal__footer",
@@ -486,7 +581,12 @@ fn GradeButton(
 }
 
 #[component]
-fn CompletionCta(destination: CompletionDestination) -> Element {
+fn CompletionActions(
+    destination: CompletionDestination,
+    on_restart: EventHandler<()>,
+    can_practice_again: bool,
+    completion_note: Option<&'static str>,
+) -> Element {
     let navigator = use_navigator();
     let (label, route) = match destination {
         CompletionDestination::Summary(summary_id) => ("View Summary", Route::Summary { summary_id }),
@@ -494,14 +594,27 @@ fn CompletionCta(destination: CompletionDestination) -> Element {
     };
 
     rsx! {
-        button {
-            class: "session-complete__cta",
-            id: "session-complete-cta",
-            r#type: "button",
-            onclick: move |_| {
-                let _ = navigator.push(route.clone());
-            },
-            "{label}"
+        div { class: "session-complete__actions",
+            button {
+                class: "session-complete__cta",
+                id: "session-complete-primary",
+                r#type: "button",
+                disabled: !can_practice_again,
+                onclick: move |_| on_restart.call(()),
+                "Practice Again"
+            }
+            button {
+                class: "session-complete__cta session-complete__cta--secondary",
+                id: "session-complete-secondary",
+                r#type: "button",
+                onclick: move |_| {
+                    let _ = navigator.push(route.clone());
+                },
+                "{label}"
+            }
+            if let Some(note) = completion_note {
+                p { class: "session-complete__note", "{note}" }
+            }
         }
     }
 }

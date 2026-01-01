@@ -277,6 +277,10 @@ async fn session_view_smoke_completion_footer() {
         "missing completion state in {html}"
     );
     assert!(
+        html.contains("Practice Again"),
+        "missing completion primary CTA in {html}"
+    );
+    assert!(
         html.contains("View Summary"),
         "missing completion CTA in {html}"
     );
