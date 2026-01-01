@@ -74,6 +74,23 @@ pub struct NewDeckRecord {
     pub micro_session_size: u32,
 }
 
+/// Aggregate card counts for a deck at a given time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeckPracticeCounts {
+    pub total: u32,
+    pub due: u32,
+    pub new: u32,
+}
+
+/// Aggregate card counts for a tag scoped to a deck.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagPracticeCounts {
+    pub name: TagName,
+    pub total: u32,
+    pub due: u32,
+    pub new: u32,
+}
+
 impl NewDeckRecord {
     #[must_use]
     pub fn from_deck(deck: &Deck) -> Self {
@@ -286,6 +303,28 @@ pub trait CardRepository: Send + Sync {
     ///
     /// Returns `StorageError` on connection or serialization failure.
     async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
+
+    /// Count total, new, and due cards for a deck at the given time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn deck_practice_counts(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+    ) -> Result<DeckPracticeCounts, StorageError>;
+
+    /// Count total, new, and due cards for each tag in a deck at the given time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn list_tag_practice_counts(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<TagPracticeCounts>, StorageError>;
 
     /// List cards for a deck that match any of the provided tags.
     ///
@@ -693,6 +732,100 @@ impl CardRepository for InMemoryRepository {
         });
         cards.truncate(limit_usize(limit));
         Ok(cards)
+    }
+
+    async fn deck_practice_counts(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+    ) -> Result<DeckPracticeCounts, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut total = 0u32;
+        let mut due = 0u32;
+        let mut new = 0u32;
+
+        for card in guard.cards.values().filter(|c| c.deck_id() == deck_id) {
+            total = total.saturating_add(1);
+            if card.review_count() == 0 {
+                new = new.saturating_add(1);
+            } else if card.next_review_at() <= now {
+                due = due.saturating_add(1);
+            }
+        }
+
+        Ok(DeckPracticeCounts { total, due, new })
+    }
+
+    async fn list_tag_practice_counts(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<TagPracticeCounts>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut tags: Vec<Tag> = guard
+            .tags
+            .values()
+            .filter(|tag| tag.deck_id() == deck_id)
+            .cloned()
+            .collect();
+        tags.sort_by(|a, b| {
+            a.name()
+                .as_str()
+                .cmp(b.name().as_str())
+                .then_with(|| a.id().value().cmp(&b.id().value()))
+        });
+
+        let mut counts: HashMap<TagId, DeckPracticeCounts> = HashMap::new();
+        for tag in &tags {
+            counts.insert(
+                tag.id(),
+                DeckPracticeCounts {
+                    total: 0,
+                    due: 0,
+                    new: 0,
+                },
+            );
+        }
+
+        for card in guard.cards.values().filter(|c| c.deck_id() == deck_id) {
+            if let Some(tag_ids) = guard.card_tags.get(&card.id()) {
+                for tag_id in tag_ids {
+                    if let Some(entry) = counts.get_mut(tag_id) {
+                        entry.total = entry.total.saturating_add(1);
+                        if card.review_count() == 0 {
+                            entry.new = entry.new.saturating_add(1);
+                        } else if card.next_review_at() <= now {
+                            entry.due = entry.due.saturating_add(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(tags.len());
+        for tag in tags {
+            let counts = counts.get(&tag.id()).copied().unwrap_or(DeckPracticeCounts {
+                total: 0,
+                due: 0,
+                new: 0,
+            });
+            out.push(TagPracticeCounts {
+                name: tag.name().clone(),
+                total: counts.total,
+                due: counts.due,
+                new: counts.new,
+            });
+        }
+
+        Ok(out)
     }
 
     async fn list_cards_by_tags(

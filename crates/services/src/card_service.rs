@@ -161,23 +161,13 @@ impl CardService {
         &self,
         deck_id: DeckId,
     ) -> Result<DeckPracticeStats, CardServiceError> {
-        let cards = self.cards.list_cards(deck_id, u32::MAX).await?;
         let now = self.clock.now();
-
-        let mut total = 0u32;
-        let mut due = 0u32;
-        let mut new = 0u32;
-
-        for card in cards {
-            total = total.saturating_add(1);
-            if card.is_new() {
-                new = new.saturating_add(1);
-            } else if card.is_due(now) {
-                due = due.saturating_add(1);
-            }
-        }
-
-        Ok(DeckPracticeStats { total, due, new })
+        let counts = self.cards.deck_practice_counts(deck_id, now).await?;
+        Ok(DeckPracticeStats {
+            total: counts.total,
+            due: counts.due,
+            new: counts.new,
+        })
     }
 
     /// Compute practice-ready tag counts for a deck.
@@ -189,37 +179,20 @@ impl CardService {
         &self,
         deck_id: DeckId,
     ) -> Result<Vec<TagPracticeStats>, CardServiceError> {
-        let tags = self.cards.list_tags_for_deck(deck_id).await?;
         let now = self.clock.now();
-        let mut out = Vec::new();
-
-        for tag in tags {
-            let cards = self
-                .cards
-                .list_cards_by_tags(deck_id, std::slice::from_ref(tag.name()))
-                .await?;
-
-            let mut total = 0u32;
-            let mut due = 0u32;
-            let mut new = 0u32;
-
-            for card in cards {
-                total = total.saturating_add(1);
-                if card.is_new() {
-                    new = new.saturating_add(1);
-                } else if card.is_due(now) {
-                    due = due.saturating_add(1);
-                }
-            }
-
-            out.push(TagPracticeStats {
-                name: tag.name().clone(),
-                total,
-                due,
-                new,
-            });
-        }
-
+        let counts = self
+            .cards
+            .list_tag_practice_counts(deck_id, now)
+            .await?;
+        let out = counts
+            .into_iter()
+            .map(|item| TagPracticeStats {
+                name: item.name,
+                total: item.total,
+                due: item.due,
+                new: item.new,
+            })
+            .collect();
         Ok(out)
     }
 

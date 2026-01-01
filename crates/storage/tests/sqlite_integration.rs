@@ -3,10 +3,12 @@ use learn_core::model::Card;
 use learn_core::model::content::ContentDraft;
 use learn_core::model::{
     CardId, CardPhase, DeckId, DeckSettings, MediaId, ReviewGrade, ReviewLog, SessionSummary,
+    TagName,
 };
 use learn_core::time::fixed_now;
 use storage::repository::{
-    CardRepository, DeckRepository, ReviewLogRecord, ReviewLogRepository, SessionSummaryRepository,
+    CardRepository, DeckRepository, DeckPracticeCounts, ReviewLogRecord, ReviewLogRepository,
+    SessionSummaryRepository,
 };
 use storage::sqlite::SqliteRepository;
 
@@ -205,6 +207,79 @@ async fn sqlite_persists_session_summary() {
     assert_eq!(stored.good(), 1);
     assert_eq!(stored.again(), 1);
     assert_eq!(stored.hard(), 1);
+}
+
+#[tokio::test]
+async fn sqlite_counts_practice_stats() {
+    let repo = SqliteRepository::connect("sqlite:file:memdb_counts?mode=memory&cache=shared")
+        .await
+        .expect("connect");
+    repo.migrate().await.expect("migrate");
+
+    let deck = learn_core::model::Deck::new(
+        DeckId::new(1),
+        "Test",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    repo.upsert_deck(&deck).await.unwrap();
+
+    let now = fixed_now();
+    let card1 = build_card(1, deck.id());
+    repo.upsert_card(&card1).await.unwrap();
+
+    let mut card2 = build_card(2, deck.id());
+    let outcome_due =
+        learn_core::model::ReviewOutcome::new(now - Duration::hours(1), 1.0, 2.0, 0.0, 1.0);
+    card2.apply_review_with_phase(ReviewGrade::Good, &outcome_due, now);
+    repo.upsert_card(&card2).await.unwrap();
+
+    let mut card3 = build_card(3, deck.id());
+    let outcome_future =
+        learn_core::model::ReviewOutcome::new(now + Duration::hours(4), 1.0, 2.0, 0.0, 1.0);
+    card3.apply_review_with_phase(ReviewGrade::Good, &outcome_future, now);
+    repo.upsert_card(&card3).await.unwrap();
+
+    let tag_language = TagName::new("Language").unwrap();
+    let tag_grammar = TagName::new("Grammar").unwrap();
+    repo.set_tags_for_card(deck.id(), card1.id(), &[tag_language.clone()])
+        .await
+        .unwrap();
+    repo.set_tags_for_card(deck.id(), card2.id(), &[tag_language.clone(), tag_grammar.clone()])
+        .await
+        .unwrap();
+    repo.set_tags_for_card(deck.id(), card3.id(), &[tag_grammar.clone()])
+        .await
+        .unwrap();
+
+    let counts = repo.deck_practice_counts(deck.id(), now).await.unwrap();
+    assert_eq!(
+        counts,
+        DeckPracticeCounts {
+            total: 3,
+            due: 1,
+            new: 1,
+        }
+    );
+
+    let tag_counts = repo.list_tag_practice_counts(deck.id(), now).await.unwrap();
+    let language = tag_counts
+        .iter()
+        .find(|item| item.name == tag_language)
+        .unwrap();
+    assert_eq!(language.total, 2);
+    assert_eq!(language.new, 1);
+    assert_eq!(language.due, 1);
+
+    let grammar = tag_counts
+        .iter()
+        .find(|item| item.name == tag_grammar)
+        .unwrap();
+    assert_eq!(grammar.total, 2);
+    assert_eq!(grammar.new, 0);
+    assert_eq!(grammar.due, 1);
 }
 
 #[tokio::test]

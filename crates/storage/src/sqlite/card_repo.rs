@@ -1,12 +1,24 @@
 use std::collections::HashMap;
 
 use learn_core::model::{Card, CardId, DeckId, Tag, TagName};
+use sqlx::Row;
 
 use super::{
     SqliteRepository,
     mapping::{card_id_from_i64, map_card_row, map_tag_row, media_id_to_i64},
 };
-use crate::repository::{CardRepository, NewCardRecord, StorageError};
+use crate::repository::{
+    CardRepository, DeckPracticeCounts, NewCardRecord, StorageError, TagPracticeCounts,
+};
+
+fn u32_from_i64(field: &'static str, value: i64) -> Result<u32, StorageError> {
+    u32::try_from(value)
+        .map_err(|_| StorageError::Serialization(format!("invalid {field}: {value}")))
+}
+
+fn ser(error: sqlx::Error) -> StorageError {
+    StorageError::Serialization(error.to_string())
+}
 
 #[async_trait::async_trait]
 impl CardRepository for SqliteRepository {
@@ -281,6 +293,107 @@ impl CardRepository for SqliteRepository {
             cards.push(map_card_row(&row)?);
         }
         Ok(cards)
+    }
+
+    async fn deck_practice_counts(
+        &self,
+        deck_id: DeckId,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<DeckPracticeCounts, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let row = sqlx::query(
+            r"
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN review_count = 0 THEN 1 ELSE 0 END), 0) AS new_count,
+                COALESCE(
+                    SUM(CASE WHEN review_count > 0 AND next_review_at <= ?2 THEN 1 ELSE 0 END),
+                    0
+                ) AS due_count
+            FROM cards
+            WHERE deck_id = ?1
+            ",
+        )
+        .bind(deck)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let total = u32_from_i64("total", row.try_get::<i64, _>("total").map_err(ser)?)?;
+        let new = u32_from_i64(
+            "new_count",
+            row.try_get::<i64, _>("new_count").map_err(ser)?,
+        )?;
+        let due = u32_from_i64(
+            "due_count",
+            row.try_get::<i64, _>("due_count").map_err(ser)?,
+        )?;
+
+        Ok(DeckPracticeCounts { total, due, new })
+    }
+
+    async fn list_tag_practice_counts(
+        &self,
+        deck_id: DeckId,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<TagPracticeCounts>, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let rows = sqlx::query(
+            r"
+            SELECT
+                tags.name AS name,
+                COALESCE(COUNT(cards.id), 0) AS total,
+                COALESCE(SUM(CASE WHEN cards.review_count = 0 THEN 1 ELSE 0 END), 0) AS new_count,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN cards.review_count > 0 AND cards.next_review_at <= ?2 THEN 1
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS due_count
+            FROM tags
+            LEFT JOIN card_tags ON card_tags.tag_id = tags.id
+            LEFT JOIN cards ON cards.id = card_tags.card_id
+            WHERE tags.deck_id = ?1
+            GROUP BY tags.id
+            ORDER BY tags.name ASC, tags.id ASC
+            ",
+        )
+        .bind(deck)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let name_raw: String = row.try_get("name").map_err(ser)?;
+            let name = TagName::new(name_raw)
+                .map_err(|e| StorageError::Serialization(e.to_string()))?;
+            let total = u32_from_i64(
+                "total",
+                row.try_get::<i64, _>("total").map_err(ser)?,
+            )?;
+            let new = u32_from_i64(
+                "new_count",
+                row.try_get::<i64, _>("new_count").map_err(ser)?,
+            )?;
+            let due = u32_from_i64(
+                "due_count",
+                row.try_get::<i64, _>("due_count").map_err(ser)?,
+            )?;
+
+            out.push(TagPracticeCounts { name, total, due, new });
+        }
+
+        Ok(out)
     }
 
     async fn list_cards_by_tags(
