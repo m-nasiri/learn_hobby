@@ -30,6 +30,14 @@ pub enum DeleteState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResetDeckState {
+    Idle,
+    Resetting,
+    Success,
+    Error(ViewError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveMenuState {
     Closed,
     Open,
@@ -95,6 +103,7 @@ pub struct EditorState {
     pub new_deck_name: Signal<String>,
     pub new_deck_state: Signal<SaveState>,
     pub show_deck_menu: Signal<bool>,
+    pub show_deck_actions: Signal<bool>,
     pub is_renaming_deck: Signal<bool>,
     pub rename_deck_name: Signal<String>,
     pub rename_deck_state: Signal<SaveState>,
@@ -112,6 +121,8 @@ pub struct EditorState {
     pub duplicate_check_state: Signal<DuplicateCheckState>,
     pub show_duplicate_modal: Signal<bool>,
     pub pending_duplicate_practice: Signal<bool>,
+    pub show_reset_deck_modal: Signal<bool>,
+    pub reset_deck_state: Signal<ResetDeckState>,
     pub prompt_text: Signal<String>,
     pub answer_text: Signal<String>,
     pub prompt_render_html: Signal<String>,
@@ -141,6 +152,7 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let new_deck_name = use_signal(String::new);
     let new_deck_state = use_signal(|| SaveState::Idle);
     let show_deck_menu = use_signal(|| false);
+    let show_deck_actions = use_signal(|| false);
     let is_renaming_deck = use_signal(|| false);
     let rename_deck_name = use_signal(String::new);
     let rename_deck_state = use_signal(|| SaveState::Idle);
@@ -158,6 +170,8 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let duplicate_check_state = use_signal(|| DuplicateCheckState::Idle);
     let show_duplicate_modal = use_signal(|| false);
     let pending_duplicate_practice = use_signal(|| false);
+    let show_reset_deck_modal = use_signal(|| false);
+    let reset_deck_state = use_signal(|| ResetDeckState::Idle);
 
     let deck_service_for_resource = services.deck_service.clone();
     let decks_resource = use_resource(move || {
@@ -371,6 +385,7 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         new_deck_name,
         new_deck_state,
         show_deck_menu,
+        show_deck_actions,
         is_renaming_deck,
         rename_deck_name,
         rename_deck_state,
@@ -388,6 +403,8 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         duplicate_check_state,
         show_duplicate_modal,
         pending_duplicate_practice,
+        show_reset_deck_modal,
+        reset_deck_state,
         prompt_text,
         answer_text,
         prompt_render_html,

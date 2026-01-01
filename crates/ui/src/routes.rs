@@ -13,6 +13,8 @@ pub enum Route {
         #[route("/", HomeView)] Home {},
         #[route("/practice", PracticeView)] Practice {},
         #[route("/session/:deck_id", SessionDeckRoute)] Session { deck_id: u64 },
+        #[route("/session/:deck_id/all", SessionAllRoute)]
+        SessionAll { deck_id: u64 },
         #[route("/session/:deck_id/tag/:tag", SessionTagRoute)]
         SessionTag { deck_id: u64, tag: String },
         #[route("/editor", EditorView)] Editor {},
@@ -60,12 +62,17 @@ fn Layout() -> Element {
 
 #[component]
 fn SessionDeckRoute(deck_id: u64) -> Element {
-    rsx! { SessionView { deck_id, tag: None } }
+    rsx! { SessionView { deck_id, tag: None, mode: crate::vm::SessionStartMode::Due } }
+}
+
+#[component]
+fn SessionAllRoute(deck_id: u64) -> Element {
+    rsx! { SessionView { deck_id, tag: None, mode: crate::vm::SessionStartMode::All } }
 }
 
 #[component]
 fn SessionTagRoute(deck_id: u64, tag: String) -> Element {
-    rsx! { SessionView { deck_id, tag: Some(tag) } }
+    rsx! { SessionView { deck_id, tag: Some(tag), mode: crate::vm::SessionStartMode::Due } }
 }
 
 #[component]

@@ -8,7 +8,10 @@ use learn_core::model::{DeckId, ReviewGrade, TagName};
 use crate::context::AppContext;
 use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
-use crate::vm::{SessionIntent, SessionOutcome, SessionPhase, SessionVm, sanitize_html, start_session};
+use crate::vm::{
+    SessionIntent, SessionOutcome, SessionPhase, SessionStartMode, SessionVm, sanitize_html,
+    start_session,
+};
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -93,7 +96,7 @@ fn focus_cycle_ids_for_phase(
 }
 
 #[component]
-pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
+pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) -> Element {
     let ctx = use_context::<AppContext>();
     let navigator = use_navigator();
     let deck_id = DeckId::new(deck_id);
@@ -178,7 +181,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
             if invalid_tag {
                 return Err(ViewError::Unknown);
             }
-            let started = start_session(&session_loop, deck_id, tag_name).await?;
+            let started = start_session(&session_loop, deck_id, tag_name, mode).await?;
             vm.set(Some(started));
             error.set(None);
             Ok::<_, ViewError>(())

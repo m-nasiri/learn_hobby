@@ -1,18 +1,22 @@
 use dioxus::prelude::*;
 
-use super::super::state::DeleteState;
+use super::super::state::{DeleteState, ResetDeckState};
 
 #[component]
 pub fn EditorOverlays(
     show_deck_overlay: bool,
     show_delete_modal: bool,
     delete_state: DeleteState,
+    show_reset_deck_modal: bool,
+    reset_deck_state: ResetDeckState,
     show_duplicate_modal: bool,
     show_save_overlay: bool,
     show_unsaved_modal: bool,
     on_deck_overlay_close: Callback<()>,
     on_delete_close: Callback<()>,
     on_delete_confirm: Callback<()>,
+    on_reset_close: Callback<()>,
+    on_reset_confirm: Callback<()>,
     on_duplicate_close: Callback<()>,
     on_duplicate_confirm: Callback<()>,
     on_save_overlay_close: Callback<()>,
@@ -50,6 +54,38 @@ pub fn EditorOverlays(
                             disabled: delete_state == DeleteState::Deleting,
                             onclick: move |_| on_delete_confirm.call(()),
                             "Delete"
+                        }
+                    }
+                }
+            }
+        }
+        if show_reset_deck_modal {
+            div {
+                class: "editor-modal-overlay",
+                onclick: move |_| on_reset_close.call(()),
+                div {
+                    class: "editor-modal",
+                    onclick: move |evt| evt.stop_propagation(),
+                    h3 { class: "editor-modal-title", "Reset deck learning?" }
+                    p { class: "editor-modal-body",
+                        "This resets scheduling for every card in this deck. Card text stays the same."
+                    }
+                    if let ResetDeckState::Error(err) = reset_deck_state {
+                        p { class: "editor-modal-error", "{err.message()}" }
+                    }
+                    div { class: "editor-modal-actions",
+                        button {
+                            class: "btn editor-modal-cancel",
+                            r#type: "button",
+                            onclick: move |_| on_reset_close.call(()),
+                            "Cancel"
+                        }
+                        button {
+                            class: "btn editor-modal-confirm",
+                            r#type: "button",
+                            disabled: reset_deck_state == ResetDeckState::Resetting,
+                            onclick: move |_| on_reset_confirm.call(()),
+                            "Reset"
                         }
                     }
                 }

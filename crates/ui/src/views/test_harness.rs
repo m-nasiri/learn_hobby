@@ -100,7 +100,7 @@ fn Root() -> Element {
         ViewKind::Practice => rsx! { PracticeView {} },
         ViewKind::History => rsx! { HistoryView {} },
         ViewKind::Summary(summary_id) => rsx! { SummaryView { summary_id } },
-        ViewKind::Session(deck_id) => rsx! { SessionView { deck_id, tag: None } },
+        ViewKind::Session(deck_id) => rsx! { SessionView { deck_id, tag: None, mode: crate::vm::SessionStartMode::Due } },
     }
 }
 

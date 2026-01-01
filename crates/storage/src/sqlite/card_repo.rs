@@ -295,6 +295,36 @@ impl CardRepository for SqliteRepository {
         Ok(cards)
     }
 
+    async fn reset_deck_learning(
+        &self,
+        deck_id: DeckId,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+
+        let result = sqlx::query(
+            r"
+            UPDATE cards
+            SET
+                phase = 'new',
+                next_review_at = ?2,
+                last_review_at = NULL,
+                review_count = 0,
+                stability = NULL,
+                difficulty = NULL
+            WHERE deck_id = ?1
+            ",
+        )
+        .bind(deck)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+
     async fn deck_practice_counts(
         &self,
         deck_id: DeckId,

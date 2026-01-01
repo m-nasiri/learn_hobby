@@ -73,6 +73,26 @@ impl SessionLoopService {
         Ok(session)
     }
 
+    /// Start a new session including all cards in the deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError` for storage or session start failures.
+    pub async fn start_session_all_cards(
+        &self,
+        deck_id: DeckId,
+    ) -> Result<SessionService, SessionError> {
+        let now = self.clock.now();
+        let (_deck, session) = SessionQueries::start_from_storage_all_cards(
+            deck_id,
+            self.decks.as_ref(),
+            self.cards.as_ref(),
+            now,
+        )
+        .await?;
+        Ok(session)
+    }
+
     /// Start a new session for the given deck filtered by tags.
     ///
     /// # Errors

@@ -45,6 +45,9 @@ struct EditorActionHandlers {
     toggle_save_menu: Callback<()>,
     close_save_menu: Callback<()>,
     close_delete_modal: Callback<()>,
+    open_reset_deck_modal: Callback<()>,
+    close_reset_deck_modal: Callback<()>,
+    confirm_reset_deck: Callback<()>,
     close_duplicate_modal: Callback<()>,
     confirm_duplicate: Callback<()>,
     delete: Callback<()>,
@@ -79,6 +82,9 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         new_card_action,
     );
     let open_delete_modal_action = menus::build_open_delete_modal_action(&state);
+    let open_reset_deck_modal_action = decks::build_open_reset_deck_modal_action(&state);
+    let close_reset_deck_modal_action = decks::build_close_reset_deck_modal_action(&state);
+    let confirm_reset_deck_action = decks::build_confirm_reset_deck_action(&state, &services);
     let toggle_save_menu_action = menus::build_toggle_save_menu_action(&state);
     let close_save_menu_action = menus::build_close_save_menu_action(&state);
     let close_delete_modal_action = menus::build_close_delete_modal_action(&state);
@@ -107,6 +113,9 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         confirm_discard: confirm_discard_action,
         cancel_discard: cancel_discard_action,
         open_delete_modal: open_delete_modal_action,
+        open_reset_deck_modal: open_reset_deck_modal_action,
+        close_reset_deck_modal: close_reset_deck_modal_action,
+        confirm_reset_deck: confirm_reset_deck_action,
         toggle_save_menu: toggle_save_menu_action,
         close_save_menu: close_save_menu_action,
         close_delete_modal: close_delete_modal_action,
@@ -154,6 +163,9 @@ fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
         EditorIntent::ConfirmDiscard => handlers.confirm_discard.call(()),
         EditorIntent::CancelDiscard => handlers.cancel_discard.call(()),
         EditorIntent::OpenDeleteModal => handlers.open_delete_modal.call(()),
+        EditorIntent::OpenResetDeckModal => handlers.open_reset_deck_modal.call(()),
+        EditorIntent::CloseResetDeckModal => handlers.close_reset_deck_modal.call(()),
+        EditorIntent::ConfirmResetDeck => handlers.confirm_reset_deck.call(()),
         EditorIntent::ToggleSaveMenu => handlers.toggle_save_menu.call(()),
         EditorIntent::CloseSaveMenu => handlers.close_save_menu.call(()),
         EditorIntent::CloseDeleteModal => handlers.close_delete_modal.call(()),

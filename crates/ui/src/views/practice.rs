@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
+use learn_core::model::DeckId;
 
 use crate::context::AppContext;
 use crate::routes::Route;
@@ -11,6 +12,13 @@ struct PracticeData {
     deck_cards: Vec<PracticeDeckCardVm>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResetState {
+    Idle,
+    Resetting,
+    Error(ViewError),
+}
+
 #[component]
 pub fn PracticeView() -> Element {
     let ctx = use_context::<AppContext>();
@@ -18,10 +26,14 @@ pub fn PracticeView() -> Element {
     let deck_service = ctx.deck_service();
     let card_service = ctx.card_service();
     let mut search = use_signal(String::new);
+    let mut open_menu = use_signal(|| None::<u64>);
+    let mut reset_target = use_signal(|| None::<u64>);
+    let mut reset_state = use_signal(|| ResetState::Idle);
 
+    let card_service_for_resource = card_service.clone();
     let resource = use_resource(move || {
         let deck_service = deck_service.clone();
-        let card_service = card_service.clone();
+        let card_service = card_service_for_resource.clone();
         async move {
             let decks = deck_service
                 .list_decks(64)
@@ -97,6 +109,9 @@ pub fn PracticeView() -> Element {
                         let tag_pills = deck.tag_pills.clone();
                         let extra_tag = deck.extra_tag_label.clone();
                         let avatar = deck.avatar.clone();
+                        let mut open_menu = open_menu;
+                        let mut reset_target = reset_target;
+                        let mut reset_state = reset_state;
                         let tag_buttons = tag_pills.iter().map(|tag| {
                             let tag_label = tag.name.clone();
                             let due_label = tag.due_label.clone();
@@ -131,13 +146,52 @@ pub fn PracticeView() -> Element {
                                             }
                                         }
                                     }
-                                    button {
-                                        class: "btn btn-primary practice-deck-action",
-                                        r#type: "button",
-                                        onclick: move |_| {
-                                            let _ = nav.push(Route::Session { deck_id });
-                                        },
-                                        "Practice"
+                                    div { class: "practice-action",
+                                        button {
+                                            class: "btn btn-primary practice-deck-action",
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                if open_menu() == Some(deck_id) {
+                                                    open_menu.set(None);
+                                                } else {
+                                                    open_menu.set(Some(deck_id));
+                                                }
+                                            },
+                                            span { "Practice" }
+                                            span { class: "practice-deck-action-caret" }
+                                        }
+                                        if open_menu() == Some(deck_id) {
+                                            div { class: "practice-action-menu",
+                                                button {
+                                                    class: "practice-action-item",
+                                                    r#type: "button",
+                                                    onclick: move |_| {
+                                                        open_menu.set(None);
+                                                        let _ = nav.push(Route::Session { deck_id });
+                                                    },
+                                                    "Practice Due Cards"
+                                                }
+                                                button {
+                                                    class: "practice-action-item",
+                                                    r#type: "button",
+                                                    onclick: move |_| {
+                                                        open_menu.set(None);
+                                                        let _ = nav.push(Route::SessionAll { deck_id });
+                                                    },
+                                                    "Practice All Cards"
+                                                }
+                                                button {
+                                                    class: "practice-action-item practice-action-item--danger",
+                                                    r#type: "button",
+                                                    onclick: move |_| {
+                                                        open_menu.set(None);
+                                                        reset_state.set(ResetState::Idle);
+                                                        reset_target.set(Some(deck_id));
+                                                    },
+                                                    "Reset Learning Progress"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 if !tag_pills.is_empty() || extra_tag.is_some() {
@@ -189,6 +243,68 @@ pub fn PracticeView() -> Element {
                             } else {
                                 div { class: "practice-deck-grid",
                                     {deck_cards}
+                                }
+                            }
+                        }
+                        if open_menu().is_some() {
+                            div {
+                                class: "practice-menu-overlay",
+                                onclick: move |_| open_menu.set(None),
+                            }
+                        }
+                        if let Some(deck_id) = reset_target() {
+                            div {
+                                class: "practice-modal-overlay",
+                                onclick: move |_| {
+                                    reset_target.set(None);
+                                    reset_state.set(ResetState::Idle);
+                                },
+                                div {
+                                    class: "practice-modal",
+                                    onclick: move |evt| evt.stop_propagation(),
+                                    h3 { class: "practice-modal-title", "Reset deck learning?" }
+                                    p { class: "practice-modal-body",
+                                        "This resets scheduling for every card in this deck."
+                                    }
+                                    if let ResetState::Error(err) = reset_state() {
+                                        p { class: "practice-modal-error", "{err.message()}" }
+                                    }
+                                    div { class: "practice-modal-actions",
+                                        button {
+                                            class: "btn editor-modal-cancel",
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                reset_target.set(None);
+                                                reset_state.set(ResetState::Idle);
+                                            },
+                                            "Cancel"
+                                        }
+                                        button {
+                                            class: "btn editor-modal-confirm",
+                                            r#type: "button",
+                                            disabled: reset_state() == ResetState::Resetting,
+                                            onclick: move |_| {
+                                                let mut reset_state = reset_state;
+                                                let mut reset_target = reset_target;
+                                                let mut resource = resource;
+                                                let card_service = card_service.clone();
+                                                spawn(async move {
+                                                    reset_state.set(ResetState::Resetting);
+                                                    match card_service.reset_deck_learning(DeckId::new(deck_id)).await {
+                                                        Ok(_) => {
+                                                            reset_state.set(ResetState::Idle);
+                                                            reset_target.set(None);
+                                                            resource.restart();
+                                                        }
+                                                        Err(_) => {
+                                                            reset_state.set(ResetState::Error(ViewError::Unknown));
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                            "Reset"
+                                        }
+                                    }
                                 }
                             }
                         }

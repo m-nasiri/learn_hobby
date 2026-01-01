@@ -15,7 +15,9 @@ pub use session_summary_vm::{
     SessionSummaryCardVm, SessionSummaryDetailVm, map_session_summary_cards,
     map_session_summary_detail,
 };
-pub use session_vm::{SessionIntent, SessionOutcome, SessionPhase, SessionVm, start_session};
+pub use session_vm::{
+    SessionIntent, SessionOutcome, SessionPhase, SessionStartMode, SessionVm, start_session,
+};
 pub use markdown_vm::{
     MarkdownAction, MarkdownField, html_to_markdown, looks_like_html, looks_like_markdown,
     markdown_to_html, normalize_markdown, sanitize_html, strip_html_tags,

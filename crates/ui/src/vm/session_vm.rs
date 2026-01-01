@@ -10,6 +10,12 @@ pub enum SessionIntent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionStartMode {
+    Due,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionPhase {
     Prompt,
     Answer,
@@ -120,9 +126,12 @@ pub async fn start_session(
     session_loop: &SessionLoopService,
     deck_id: DeckId,
     tag: Option<TagName>,
+    mode: SessionStartMode,
 ) -> Result<SessionVm, ViewError> {
     let session_result = if let Some(tag) = tag {
         session_loop.start_session_with_tags(deck_id, &[tag]).await
+    } else if mode == SessionStartMode::All {
+        session_loop.start_session_all_cards(deck_id).await
     } else {
         session_loop.start_session(deck_id).await
     };

@@ -7,7 +7,8 @@ use learn_core::model::DeckSettings;
 use crate::views::ViewError;
 
 use super::super::state::{
-    DeleteState, EditorServices, EditorState, PendingAction, SaveMenuState, SaveState,
+    DeleteState, EditorServices, EditorState, PendingAction, ResetDeckState, SaveMenuState,
+    SaveState,
 };
 
 pub(super) fn build_create_deck_action(
@@ -30,6 +31,7 @@ pub(super) fn build_create_deck_action(
         let mut last_selected_card = state.last_selected_card;
         let mut is_create_mode = state.is_create_mode;
         let mut show_deck_menu = state.show_deck_menu;
+        let mut show_deck_actions = state.show_deck_actions;
         let mut is_renaming_deck = state.is_renaming_deck;
         let mut rename_deck_state = state.rename_deck_state;
         let mut rename_deck_error = state.rename_deck_error;
@@ -59,6 +61,7 @@ pub(super) fn build_create_deck_action(
                     new_deck_name.set(String::new());
                     show_new_deck.set(false);
                     show_deck_menu.set(false);
+                    show_deck_actions.set(false);
                     is_renaming_deck.set(false);
                     rename_deck_state.set(SaveState::Idle);
                     rename_deck_error.set(None);
@@ -149,6 +152,7 @@ pub(super) fn build_rename_actions(
         let mut rename_deck_state = state_for_begin.rename_deck_state;
         let mut rename_deck_error = state_for_begin.rename_deck_error;
         let mut show_deck_menu = state_for_begin.show_deck_menu;
+        let mut show_deck_actions = state_for_begin.show_deck_actions;
         let mut show_new_deck = state_for_begin.show_new_deck;
         let mut new_deck_state = state_for_begin.new_deck_state;
 
@@ -156,6 +160,7 @@ pub(super) fn build_rename_actions(
         rename_deck_state.set(SaveState::Idle);
         rename_deck_error.set(None);
         show_deck_menu.set(false);
+        show_deck_actions.set(false);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         is_renaming_deck.set(true);
@@ -189,6 +194,7 @@ pub(super) fn build_apply_select_deck_action(state: &EditorState) -> Callback<le
         let mut pending_action = state.pending_action;
         let mut focus_prompt = state.focus_prompt;
         let mut show_deck_menu = state.show_deck_menu;
+        let mut show_deck_actions = state.show_deck_actions;
         let mut new_deck_name = state.new_deck_name;
         let mut is_renaming_deck = state.is_renaming_deck;
         let mut rename_deck_state = state.rename_deck_state;
@@ -214,6 +220,7 @@ pub(super) fn build_apply_select_deck_action(state: &EditorState) -> Callback<le
         reset_duplicate_state.borrow_mut()();
         focus_prompt.set(false);
         show_deck_menu.set(false);
+        show_deck_actions.set(false);
         new_deck_name.set(String::new());
         is_renaming_deck.set(false);
         rename_deck_state.set(SaveState::Idle);
@@ -238,6 +245,64 @@ pub(super) fn build_request_select_deck_action(
             return;
         }
         apply_select_deck_action.call(deck_id);
+    })
+}
+
+pub(super) fn build_open_reset_deck_modal_action(state: &EditorState) -> Callback<()> {
+    let state = state.clone();
+    use_callback(move |()| {
+        let mut show_reset_deck_modal = state.show_reset_deck_modal;
+        let mut reset_deck_state = state.reset_deck_state;
+        let mut show_deck_actions = state.show_deck_actions;
+        let mut show_deck_menu = state.show_deck_menu;
+        let mut is_renaming_deck = state.is_renaming_deck;
+        let mut rename_deck_state = state.rename_deck_state;
+        let mut rename_deck_error = state.rename_deck_error;
+        show_deck_actions.set(false);
+        show_deck_menu.set(false);
+        is_renaming_deck.set(false);
+        rename_deck_state.set(SaveState::Idle);
+        rename_deck_error.set(None);
+        reset_deck_state.set(ResetDeckState::Idle);
+        show_reset_deck_modal.set(true);
+    })
+}
+
+pub(super) fn build_close_reset_deck_modal_action(state: &EditorState) -> Callback<()> {
+    let state = state.clone();
+    use_callback(move |()| {
+        let mut show_reset_deck_modal = state.show_reset_deck_modal;
+        let mut reset_deck_state = state.reset_deck_state;
+        show_reset_deck_modal.set(false);
+        reset_deck_state.set(ResetDeckState::Idle);
+    })
+}
+
+pub(super) fn build_confirm_reset_deck_action(
+    state: &EditorState,
+    services: &EditorServices,
+) -> Callback<()> {
+    let state = state.clone();
+    let card_service = services.card_service.clone();
+    use_callback(move |()| {
+        let card_service = card_service.clone();
+        let mut show_reset_deck_modal = state.show_reset_deck_modal;
+        let mut reset_deck_state = state.reset_deck_state;
+        let mut cards_resource = state.cards_resource;
+        let deck_id = *state.selected_deck.read();
+        spawn(async move {
+            reset_deck_state.set(ResetDeckState::Resetting);
+            match card_service.reset_deck_learning(deck_id).await {
+                Ok(_) => {
+                    reset_deck_state.set(ResetDeckState::Success);
+                    show_reset_deck_modal.set(false);
+                    cards_resource.restart();
+                }
+                Err(_) => {
+                    reset_deck_state.set(ResetDeckState::Error(ViewError::Unknown));
+                }
+            }
+        });
     })
 }
 

@@ -35,11 +35,14 @@ pub fn EditorView() -> Element {
     let mut delete_state = state.delete_state;
     let duplicate_check_state = state.duplicate_check_state;
     let mut show_deck_menu = state.show_deck_menu;
+    let mut show_deck_actions = state.show_deck_actions;
     let mut is_renaming_deck = state.is_renaming_deck;
     let mut show_delete_modal = state.show_delete_modal;
     let show_duplicate_modal = state.show_duplicate_modal;
     let show_unsaved_modal = state.show_unsaved_modal;
     let save_menu_state = state.save_menu_state;
+    let show_reset_deck_modal = state.show_reset_deck_modal;
+    let reset_deck_state = state.reset_deck_state;
     let mut show_new_deck = state.show_new_deck;
     let mut new_deck_state = state.new_deck_state;
     let mut new_deck_name = state.new_deck_name;
@@ -79,9 +82,11 @@ pub fn EditorView() -> Element {
 
     let deck_overlay_close = {
         let mut show_deck_menu = show_deck_menu;
+        let mut show_deck_actions = show_deck_actions;
         let is_renaming_deck = is_renaming_deck;
         use_callback(move |()| {
             show_deck_menu.set(false);
+            show_deck_actions.set(false);
             if is_renaming_deck() {
                 dispatch.call(EditorIntent::CancelRename);
             }
@@ -304,15 +309,19 @@ pub fn EditorView() -> Element {
     rsx! {
         div { class: "page page--editor", tabindex: "0", onkeydown: dispatcher.on_key,
             EditorOverlays {
-                show_deck_overlay: show_deck_menu() || is_renaming_deck(),
+                show_deck_overlay: show_deck_menu() || show_deck_actions() || is_renaming_deck(),
                 show_delete_modal: show_delete_modal(),
                 delete_state: delete_state(),
+                show_reset_deck_modal: show_reset_deck_modal(),
+                reset_deck_state: reset_deck_state(),
                 show_duplicate_modal: show_duplicate_modal(),
                 show_save_overlay: save_menu_state() == SaveMenuState::Open,
                 show_unsaved_modal: show_unsaved_modal(),
                 on_deck_overlay_close: deck_overlay_close,
                 on_delete_close: on_delete_close,
                 on_delete_confirm: on_delete_confirm,
+                on_reset_close: move |_| dispatch.call(EditorIntent::CloseResetDeckModal),
+                on_reset_confirm: move |_| dispatch.call(EditorIntent::ConfirmResetDeck),
                 on_duplicate_close: on_duplicate_close,
                 on_duplicate_confirm: on_duplicate_confirm,
                 on_save_overlay_close: on_save_overlay_close,
@@ -390,11 +399,25 @@ pub fn EditorView() -> Element {
                                             title: "Select deck",
                                             onclick: move |_| {
                                                 show_deck_menu.set(!show_deck_menu());
+                                                show_deck_actions.set(false);
                                                 is_renaming_deck.set(false);
                                                 rename_deck_state.set(SaveState::Idle);
                                                 rename_deck_error.set(None);
                                             },
                                             span { class: "editor-deck-caret" }
+                                        }
+                                        button {
+                                            class: "editor-deck-actions-button",
+                                            r#type: "button",
+                                            title: "Deck actions",
+                                            onclick: move |_| {
+                                                show_deck_actions.set(!show_deck_actions());
+                                                show_deck_menu.set(false);
+                                                is_renaming_deck.set(false);
+                                                rename_deck_state.set(SaveState::Idle);
+                                                rename_deck_error.set(None);
+                                            },
+                                            "⋯"
                                         }
                                     }
                                     if let Some(error) = rename_deck_error() {
@@ -436,6 +459,19 @@ pub fn EditorView() -> Element {
                                                     show_delete_modal.set(false);
                                                 },
                                                 "+ New deck..."
+                                            }
+                                        }
+                                    }
+                                    if show_deck_actions() {
+                                        div { class: "editor-deck-actions-popover",
+                                            button {
+                                                class: "editor-deck-action",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    show_deck_actions.set(false);
+                                                    dispatch.call(EditorIntent::OpenResetDeckModal);
+                                                },
+                                                "Reset deck learning..."
                                             }
                                         }
                                     }

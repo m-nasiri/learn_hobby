@@ -304,6 +304,19 @@ pub trait CardRepository: Send + Sync {
     /// Returns `StorageError` on connection or serialization failure.
     async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
 
+    /// Reset learning state for all cards in a deck.
+    ///
+    /// Resets phase to `New`, clears review metadata, and sets `next_review_at` to `now`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn reset_deck_learning(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+    ) -> Result<u64, StorageError>;
+
     /// Count total, new, and due cards for a deck at the given time.
     ///
     /// # Errors
@@ -732,6 +745,49 @@ impl CardRepository for InMemoryRepository {
         });
         cards.truncate(limit_usize(limit));
         Ok(cards)
+    }
+
+    async fn reset_deck_learning(
+        &self,
+        deck_id: DeckId,
+        now: DateTime<Utc>,
+    ) -> Result<u64, StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let ids: Vec<CardId> = guard
+            .cards
+            .values()
+            .filter(|card| card.deck_id() == deck_id)
+            .map(|card| card.id())
+            .collect();
+        let mut updated = 0_u64;
+        for id in ids {
+            let Some(card) = guard.cards.get(&id) else {
+                continue;
+            };
+            let prompt = card.prompt().clone();
+            let answer = card.answer().clone();
+            let created_at = card.created_at();
+            let reset = Card::from_persisted(
+                id,
+                deck_id,
+                prompt,
+                answer,
+                created_at,
+                now,
+                None,
+                CardPhase::New,
+                0,
+                0.0,
+                0.0,
+            )
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+            guard.cards.insert(id, reset);
+            updated = updated.saturating_add(1);
+        }
+        Ok(updated)
     }
 
     async fn deck_practice_counts(

@@ -43,13 +43,28 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns `SessionError::Empty` if no cards are provided.
-    pub fn new(
+    pub fn new(deck: &Deck, cards: Vec<Card>, started_at: DateTime<Utc>) -> Result<Self, SessionError> {
+        Self::new_with_limit(deck, cards, started_at, Some(deck.settings().micro_session_size()))
+    }
+
+    pub(crate) fn new_all(
+        deck: &Deck,
+        cards: Vec<Card>,
+        started_at: DateTime<Utc>,
+    ) -> Result<Self, SessionError> {
+        Self::new_with_limit(deck, cards, started_at, None)
+    }
+
+    fn new_with_limit(
         deck: &Deck,
         mut cards: Vec<Card>,
         started_at: DateTime<Utc>,
+        limit: Option<u32>,
     ) -> Result<Self, SessionError> {
-        let limit = usize::try_from(deck.settings().micro_session_size()).unwrap_or(usize::MAX);
-        cards.truncate(limit);
+        if let Some(limit) = limit {
+            let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+            cards.truncate(limit);
+        }
 
         if cards.is_empty() {
             return Err(SessionError::Empty);

@@ -65,6 +65,27 @@ impl SessionQueries {
         Ok((deck, session))
     }
 
+    /// Create a session from all cards in a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Empty` if no cards are available, or
+    /// `SessionError::Storage` on repository failures.
+    pub async fn start_from_storage_all_cards(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        now: DateTime<Utc>,
+    ) -> Result<(Deck, SessionService), SessionError> {
+        let deck = decks
+            .get_deck(deck_id)
+            .await?
+            .ok_or(storage::repository::StorageError::NotFound)?;
+        let cards = cards.list_cards(deck_id, u32::MAX).await?;
+        let session = SessionService::new_all(&deck, cards, now)?;
+        Ok((deck, session))
+    }
+
     /// Create a session from storage filtered by tags.
     ///
     /// # Errors

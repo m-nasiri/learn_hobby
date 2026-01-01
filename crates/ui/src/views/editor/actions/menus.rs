@@ -56,6 +56,7 @@ pub(super) fn build_open_delete_modal_action(state: &EditorState) -> Callback<()
         let reset_duplicate_state = Rc::clone(&reset_duplicate_state);
         let mut show_delete_modal = state.show_delete_modal;
         let mut show_deck_menu = state.show_deck_menu;
+        let mut show_deck_actions = state.show_deck_actions;
         let mut is_renaming_deck = state.is_renaming_deck;
         let mut rename_deck_state = state.rename_deck_state;
         let mut rename_deck_error = state.rename_deck_error;
@@ -65,6 +66,7 @@ pub(super) fn build_open_delete_modal_action(state: &EditorState) -> Callback<()
         let selected_card_id = (state.selected_card_id)();
         if selected_card_id.is_some() {
             show_deck_menu.set(false);
+            show_deck_actions.set(false);
             is_renaming_deck.set(false);
             rename_deck_state.set(SaveState::Idle);
             rename_deck_error.set(None);

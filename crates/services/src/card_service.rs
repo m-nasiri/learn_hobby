@@ -152,6 +152,17 @@ impl CardService {
         Ok(cards)
     }
 
+    /// Reset learning state for all cards in a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` on persistence failures.
+    pub async fn reset_deck_learning(&self, deck_id: DeckId) -> Result<u64, CardServiceError> {
+        let now = self.clock.now();
+        let updated = self.cards.reset_deck_learning(deck_id, now).await?;
+        Ok(updated)
+    }
+
     /// Compute practice-ready card counts for a deck.
     ///
     /// # Errors
@@ -513,5 +524,42 @@ mod tests {
         assert_eq!(stats[0].total, 2);
         assert_eq!(stats[0].new, 1);
         assert_eq!(stats[0].due, 1);
+    }
+
+    #[tokio::test]
+    async fn reset_deck_learning_clears_review_state() {
+        let repo = InMemoryRepository::new();
+        let deck_id = DeckId::new(1);
+        let now = fixed_now();
+
+        let mut reviewed = build_card(1, deck_id, now);
+        reviewed.apply_review(
+            &ReviewOutcome::new(
+                now + Duration::hours(1),
+                2.0,
+                3.0,
+                2.5,
+                2.8,
+            ),
+            now - Duration::hours(2),
+        );
+        repo.upsert_card(&reviewed).await.expect("reviewed card");
+
+        let service = CardService::new(Clock::Fixed(now), Arc::new(repo));
+        service
+            .reset_deck_learning(deck_id)
+            .await
+            .expect("reset");
+
+        let cards = service
+            .list_cards(deck_id, 10)
+            .await
+            .expect("list cards");
+        assert_eq!(cards.len(), 1);
+        let card = &cards[0];
+        assert_eq!(card.phase(), learn_core::model::CardPhase::New);
+        assert_eq!(card.review_count(), 0);
+        assert_eq!(card.last_review_at(), None);
+        assert_eq!(card.next_review_at(), now);
     }
 }
