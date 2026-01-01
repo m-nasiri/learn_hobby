@@ -246,6 +246,43 @@ async fn session_view_smoke_reveal_and_grade() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn session_view_smoke_completion_footer() {
+    let mut harness = setup_view_harness(ViewKind::Session(0), "Default").await;
+    let deck_id = harness.deck_id;
+    let card_service = harness.card_service.clone();
+
+    card_service
+        .create_card(
+            deck_id,
+            ContentDraft::text_only("What is Rust?"),
+            ContentDraft::text_only("A systems language."),
+        )
+        .await
+        .expect("create card");
+
+    harness.rebuild();
+    harness.drive_async().await;
+
+    let handles = harness.session_handles.as_ref().expect("session handles");
+    let dispatch = handles.dispatch();
+
+    dispatch.call(SessionIntent::Reveal);
+    harness.drive_async().await;
+    dispatch.call(SessionIntent::Grade(ReviewGrade::Good));
+    harness.drive_async().await;
+
+    let html = harness.render();
+    assert!(
+        html.contains("Session complete"),
+        "missing completion state in {html}"
+    );
+    assert!(
+        html.contains("View Summary"),
+        "missing completion CTA in {html}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn session_view_smoke_empty_state() {
     let mut harness = setup_view_harness(ViewKind::Session(0), "Default").await;
     harness.rebuild();

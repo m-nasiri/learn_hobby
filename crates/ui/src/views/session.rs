@@ -202,9 +202,10 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                                 match outcome {
                                     SessionOutcome::Continue => {}
                                     SessionOutcome::Completed { summary_id } => {
-                                        let destination = summary_id
-                                            .map(CompletionDestination::Summary)
-                                            .unwrap_or(CompletionDestination::Practice);
+                                        let destination = summary_id.map_or(
+                                            CompletionDestination::Practice,
+                                            CompletionDestination::Summary,
+                                        );
                                         completion.set(Some(destination));
                                     }
                                 }
@@ -257,7 +258,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                     .join(", ");
                 let delta = if shift { -1 } else { 1 };
                 let js = format!(
-                    r#"(function() {{
+                    r"(function() {{
                         const ids = [{ids_js}];
                         if (!ids.length) return;
                         const active = document.activeElement && document.activeElement.id;
@@ -267,7 +268,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                         const next = ids[idx];
                         const el = document.getElementById(next);
                         if (el) el.focus();
-                    }})();"#,
+                    }})();",
                 );
                 let _ = eval(&js);
                 return;
