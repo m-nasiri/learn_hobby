@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use learn_core::model::{Deck, DeckId, SessionSummary};
+use learn_core::model::{Deck, DeckId, SessionSummary, TagName};
 use storage::repository::{
     CardRepository, DeckRepository, SessionSummaryRepository, SessionSummaryRow,
 };
@@ -61,6 +61,53 @@ impl SessionQueries {
     ) -> Result<(Deck, SessionService), SessionError> {
         let (deck, plan) =
             Self::build_plan_from_storage(deck_id, decks, cards, now, shuffle_new).await?;
+        let session = SessionService::new(&deck, plan.cards, now)?;
+        Ok((deck, session))
+    }
+
+    /// Create a session from storage filtered by tags.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Empty` if no cards are available, or
+    /// `SessionError::Storage` on repository failures.
+    pub async fn start_from_storage_with_tags(
+        deck_id: DeckId,
+        decks: &dyn DeckRepository,
+        cards: &dyn CardRepository,
+        now: DateTime<Utc>,
+        shuffle_new: bool,
+        tag_names: &[TagName],
+    ) -> Result<(Deck, SessionService), SessionError> {
+        if tag_names.is_empty() {
+            return Self::start_from_storage(deck_id, decks, cards, now, shuffle_new).await;
+        }
+
+        let deck = decks
+            .get_deck(deck_id)
+            .await?
+            .ok_or(storage::repository::StorageError::NotFound)?;
+
+        let tagged_cards = cards.list_cards_by_tags(deck_id, tag_names).await?;
+        let mut due = Vec::new();
+        let mut new_cards = Vec::new();
+
+        for card in tagged_cards {
+            if card.is_new() {
+                new_cards.push(card);
+            } else if card.is_due(now) {
+                due.push(card);
+            }
+        }
+
+        if due.is_empty() && new_cards.is_empty() {
+            return Err(SessionError::Empty);
+        }
+
+        let plan = SessionBuilder::new(&deck)
+            .with_shuffle_new(shuffle_new)
+            .build(due, new_cards);
+
         let session = SessionService::new(&deck, plan.cards, now)?;
         Ok((deck, session))
     }
@@ -185,7 +232,7 @@ impl SessionQueries {
 mod tests {
     use super::*;
 
-    use learn_core::model::{CardId, ReviewGrade, ReviewLog, SessionSummary};
+    use learn_core::model::{CardId, ReviewGrade, ReviewLog, SessionSummary, TagName};
     use learn_core::time::fixed_now;
     use storage::repository::{CardRepository, DeckRepository, InMemoryRepository};
 
@@ -251,6 +298,48 @@ mod tests {
         assert_eq!(loaded.id(), deck.id());
         assert_eq!(plan.total(), session.total_cards());
         assert!(plan.total() > 0);
+    }
+
+    #[tokio::test]
+    async fn start_from_storage_with_tags_filters_cards() {
+        let repo = InMemoryRepository::new();
+        let deck = build_deck();
+        repo.upsert_deck(&deck).await.unwrap();
+
+        let card1 = build_card(1);
+        repo.upsert_card(&card1).await.unwrap();
+        let tag = TagName::new("Language").unwrap();
+        repo.set_tags_for_card(deck.id(), card1.id(), &[tag.clone()])
+            .await
+            .unwrap();
+
+        let now = fixed_now();
+        let (_loaded, session) = SessionQueries::start_from_storage_with_tags(
+            deck.id(),
+            &repo,
+            &repo,
+            now,
+            false,
+            &[tag],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(session.total_cards(), 1);
+
+        let other_tag = TagName::new("Other").unwrap();
+        let err = SessionQueries::start_from_storage_with_tags(
+            deck.id(),
+            &repo,
+            &repo,
+            now,
+            false,
+            &[other_tag],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, SessionError::Empty));
     }
 
     #[tokio::test]

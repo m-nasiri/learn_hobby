@@ -1,22 +1,16 @@
 use chrono::Duration;
 use dioxus::prelude::ReadableExt;
-use learn_core::model::{CardId, Deck, DeckId, ReviewGrade, ReviewLog, SessionSummary};
 use learn_core::model::content::ContentDraft;
+use learn_core::model::{CardId, Deck, DeckId, ReviewGrade, ReviewLog, SessionSummary, TagName};
 use learn_core::time::fixed_now;
 use services::{Clock, SessionLoopService};
 use storage::repository::{
-    DeckRepository,
-    InMemoryRepository,
-    NewDeckRecord,
-    SessionSummaryRepository,
-    Storage,
+    DeckRepository, InMemoryRepository, NewDeckRecord, SessionSummaryRepository, Storage,
     StorageError,
 };
 
 use super::test_harness::{
-    ViewKind,
-    setup_view_harness,
-    setup_view_harness_with_session_loop,
+    ViewKind, setup_view_harness, setup_view_harness_with_session_loop,
     setup_view_harness_with_summary_repo,
 };
 use crate::vm::{SessionIntent, SessionPhase, SessionVm};
@@ -55,6 +49,29 @@ async fn home_view_smoke_renders_recent_count() {
     assert!(html.contains(&expected), "missing {expected} in {html}");
     let deck_label = format!("Current deck: {deck_id:?}");
     assert!(html.contains(&deck_label), "missing {deck_label} in {html}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn practice_view_smoke_renders_decks_and_tags() {
+    let mut harness = setup_view_harness(ViewKind::Practice, "Default").await;
+    let deck_id = harness.deck_id;
+    let card_service = harness.card_service.clone();
+
+    let tag = TagName::new("Language").expect("tag");
+    card_service
+        .create_card_with_tags(
+            deck_id,
+            ContentDraft::text_only("What is Rust?"),
+            ContentDraft::text_only("A systems language."),
+            &[tag],
+        )
+        .await
+        .expect("create card");
+
+    harness.rebuild();
+    let html = harness.render();
+    assert!(html.contains("Language"), "missing tag label in {html}");
+    assert!(html.contains("Default"), "missing deck name in {html}");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -158,16 +175,15 @@ impl DeckRepository for FailingDeckRepo {
 #[tokio::test(flavor = "current_thread")]
 async fn home_view_smoke_renders_error_state() {
     let repo = std::sync::Arc::new(FailingSummaryRepo);
-    let mut harness = setup_view_harness_with_summary_repo(
-        ViewKind::Home,
-        "Default",
-        Storage::in_memory(),
-        repo,
-    )
-    .await;
+    let mut harness =
+        setup_view_harness_with_summary_repo(ViewKind::Home, "Default", Storage::in_memory(), repo)
+            .await;
     harness.rebuild();
     let html = harness.render();
-    assert!(html.contains("Something went wrong"), "missing error in {html}");
+    assert!(
+        html.contains("Something went wrong"),
+        "missing error in {html}"
+    );
     assert!(html.contains("Retry"), "missing retry in {html}");
 }
 
@@ -236,7 +252,10 @@ async fn session_view_smoke_empty_state() {
     harness.drive_async().await;
 
     let html = harness.render();
-    assert!(html.contains("No cards available"), "missing empty state in {html}");
+    assert!(
+        html.contains("No cards available"),
+        "missing empty state in {html}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -262,6 +281,9 @@ async fn session_view_smoke_renders_error_state() {
     harness.drive_async().await;
 
     let html = harness.render();
-    assert!(html.contains("Something went wrong"), "missing error in {html}");
+    assert!(
+        html.contains("Something went wrong"),
+        "missing error in {html}"
+    );
     assert!(html.contains("Retry"), "missing retry in {html}");
 }

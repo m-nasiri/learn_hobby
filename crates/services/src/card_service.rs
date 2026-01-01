@@ -15,6 +15,23 @@ pub struct CardService {
     cards: Arc<dyn CardRepository>,
 }
 
+/// Aggregate counts for a deck in the practice view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeckPracticeStats {
+    pub total: u32,
+    pub due: u32,
+    pub new: u32,
+}
+
+/// Aggregate counts for a tag scoped to a deck.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagPracticeStats {
+    pub name: TagName,
+    pub total: u32,
+    pub due: u32,
+    pub new: u32,
+}
+
 fn dedup_tags(tags: &[TagName]) -> Vec<TagName> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -133,6 +150,77 @@ impl CardService {
     ) -> Result<Vec<Card>, CardServiceError> {
         let cards = self.cards.list_cards(deck_id, limit).await?;
         Ok(cards)
+    }
+
+    /// Compute practice-ready card counts for a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn deck_practice_stats(
+        &self,
+        deck_id: DeckId,
+    ) -> Result<DeckPracticeStats, CardServiceError> {
+        let cards = self.cards.list_cards(deck_id, u32::MAX).await?;
+        let now = self.clock.now();
+
+        let mut total = 0u32;
+        let mut due = 0u32;
+        let mut new = 0u32;
+
+        for card in cards {
+            total = total.saturating_add(1);
+            if card.is_new() {
+                new = new.saturating_add(1);
+            } else if card.is_due(now) {
+                due = due.saturating_add(1);
+            }
+        }
+
+        Ok(DeckPracticeStats { total, due, new })
+    }
+
+    /// Compute practice-ready tag counts for a deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn list_tag_practice_stats(
+        &self,
+        deck_id: DeckId,
+    ) -> Result<Vec<TagPracticeStats>, CardServiceError> {
+        let tags = self.cards.list_tags_for_deck(deck_id).await?;
+        let now = self.clock.now();
+        let mut out = Vec::new();
+
+        for tag in tags {
+            let cards = self
+                .cards
+                .list_cards_by_tags(deck_id, std::slice::from_ref(tag.name()))
+                .await?;
+
+            let mut total = 0u32;
+            let mut due = 0u32;
+            let mut new = 0u32;
+
+            for card in cards {
+                total = total.saturating_add(1);
+                if card.is_new() {
+                    new = new.saturating_add(1);
+                } else if card.is_due(now) {
+                    due = due.saturating_add(1);
+                }
+            }
+
+            out.push(TagPracticeStats {
+                name: tag.name().clone(),
+                total,
+                due,
+                new,
+            });
+        }
+
+        Ok(out)
     }
 
     /// List cards for a deck with sorting and filtering.
@@ -341,5 +429,116 @@ impl CardService {
     ) -> Result<(), CardServiceError> {
         self.cards.delete_card(deck_id, card_id).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::Duration;
+    use learn_core::model::{Card, CardId, ContentDraft, DeckId, ReviewOutcome, TagName};
+    use learn_core::time::fixed_now;
+    use storage::repository::{CardRepository, InMemoryRepository};
+
+    fn build_content(text: &str, now: chrono::DateTime<chrono::Utc>) -> learn_core::model::Content {
+        ContentDraft::text_only(text)
+            .validate(now, None, None)
+            .expect("valid content")
+    }
+
+    fn build_card(id: u64, deck_id: DeckId, now: chrono::DateTime<chrono::Utc>) -> Card {
+        let prompt = build_content("Q", now);
+        let answer = build_content("A", now);
+        Card::new(CardId::new(id), deck_id, prompt, answer, now, now).expect("card")
+    }
+
+    #[tokio::test]
+    async fn deck_practice_stats_counts_due_new_total() {
+        let repo = InMemoryRepository::new();
+        let deck_id = DeckId::new(1);
+        let now = fixed_now();
+
+        let mut due_card = build_card(1, deck_id, now);
+        due_card.apply_review(
+            &ReviewOutcome::new(
+                now - Duration::hours(2),
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+            ),
+            now - Duration::days(1),
+        );
+        repo.upsert_card(&due_card).await.expect("due card");
+
+        let mut future_card = build_card(2, deck_id, now);
+        future_card.apply_review(
+            &ReviewOutcome::new(
+                now + Duration::hours(5),
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+            ),
+            now - Duration::days(1),
+        );
+        repo.upsert_card(&future_card).await.expect("future card");
+
+        let new_card = build_card(3, deck_id, now);
+        repo.upsert_card(&new_card).await.expect("new card");
+
+        let service = CardService::new(Clock::Fixed(now), Arc::new(repo));
+        let stats = service
+            .deck_practice_stats(deck_id)
+            .await
+            .expect("stats");
+
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.new, 1);
+        assert_eq!(stats.due, 1);
+    }
+
+    #[tokio::test]
+    async fn tag_practice_stats_counts_due_new_total() {
+        let repo = InMemoryRepository::new();
+        let deck_id = DeckId::new(1);
+        let now = fixed_now();
+
+        let mut due_card = build_card(1, deck_id, now);
+        due_card.apply_review(
+            &ReviewOutcome::new(
+                now - Duration::hours(1),
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+            ),
+            now - Duration::days(1),
+        );
+        repo.upsert_card(&due_card).await.expect("due card");
+
+        let new_card = build_card(2, deck_id, now);
+        repo.upsert_card(&new_card).await.expect("new card");
+
+        let tag = TagName::new("Language").expect("tag");
+        repo.set_tags_for_card(deck_id, due_card.id(), &[tag.clone()])
+            .await
+            .expect("tag due");
+        repo.set_tags_for_card(deck_id, new_card.id(), &[tag.clone()])
+            .await
+            .expect("tag new");
+
+        let service = CardService::new(Clock::Fixed(now), Arc::new(repo));
+        let stats = service
+            .list_tag_practice_stats(deck_id)
+            .await
+            .expect("tag stats");
+
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].name, tag);
+        assert_eq!(stats[0].total, 2);
+        assert_eq!(stats[0].new, 1);
+        assert_eq!(stats[0].due, 1);
     }
 }

@@ -13,7 +13,9 @@ pub use sessions as session;
 pub use error::{CardServiceError, DeckServiceError, ReviewServiceError, SessionError};
 pub use error::AppServicesError;
 pub use app_services::AppServices;
-pub use card_service::{CardListFilter, CardListSort, CardService};
+pub use card_service::{
+    CardListFilter, CardListSort, CardService, DeckPracticeStats, TagPracticeStats,
+};
 pub use deck_service::DeckService;
 pub use review_service::{PersistedReview, ReviewResult, ReviewService};
 

@@ -5,6 +5,7 @@ mod session_vm;
 mod markdown_vm;
 mod time_fmt;
 mod editor_vm;
+mod practice_vm;
 
 pub use deck_vm::{DeckOptionVm, map_deck_options};
 pub use card_vm::{
@@ -20,3 +21,4 @@ pub use markdown_vm::{
     markdown_to_html, normalize_markdown, sanitize_html, strip_html_tags,
 };
 pub use editor_vm::{EditorVm, build_editor_vm};
+pub use practice_vm::{PracticeDeckCardVm, PracticeTagPillVm, map_practice_deck_card};

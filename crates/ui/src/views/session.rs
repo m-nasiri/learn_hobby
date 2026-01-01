@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use keyboard_types::{Code, Key};
 
-use learn_core::model::{DeckId, ReviewGrade};
+use learn_core::model::{DeckId, ReviewGrade, TagName};
 
 use crate::context::AppContext;
 use crate::routes::Route;
@@ -22,11 +22,21 @@ enum LastAction {
 }
 
 #[component]
-pub fn SessionView(deck_id: u64) -> Element {
+pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let ctx = use_context::<AppContext>();
     let navigator = use_navigator();
     let deck_id = DeckId::new(deck_id);
     let session_loop = ctx.session_loop();
+    let parsed_tag = tag.as_deref().map(|value| TagName::new(value.to_string()));
+    let (tag_name, invalid_tag) = match parsed_tag {
+        Some(Ok(tag)) => (Some(tag), false),
+        Some(Err(_)) => (None, true),
+        None => (None, false),
+    };
+    let subtitle = match tag.as_deref() {
+        Some(tag) => format!("Practicing tag: {tag}."),
+        None => "Review due cards in a short session.".to_string(),
+    };
 
     let error = use_signal(|| None::<ViewError>);
     let vm = use_signal(|| None::<SessionVm>);
@@ -36,13 +46,17 @@ pub fn SessionView(deck_id: u64) -> Element {
     let session_loop_for_resource = session_loop.clone();
     let resource = use_resource(move || {
         let session_loop = session_loop_for_resource.clone();
+        let tag_name = tag_name.clone();
         let mut error = error;
         let mut vm = vm;
         let mut last_action = last_action;
 
         async move {
             last_action.set(Some(LastAction::StartSession));
-            let started = start_session(&session_loop, deck_id).await?;
+            if invalid_tag {
+                return Err(ViewError::Unknown);
+            }
+            let started = start_session(&session_loop, deck_id, tag_name).await?;
             vm.set(Some(started));
             error.set(None);
             Ok::<_, ViewError>(())
@@ -202,7 +216,7 @@ pub fn SessionView(deck_id: u64) -> Element {
         div { class: "page", id: "session-root", tabindex: "0", onkeydown: on_key,
             header { class: "view-header",
                 h2 { class: "view-title", "Practice" }
-                p { class: "view-subtitle", "Review due cards in a short session." }
+                p { class: "view-subtitle", "{subtitle}" }
             }
             div { class: "view-divider" }
             p { class: "view-hint", "Shortcuts: Space to reveal, 1–4 to grade, Esc to exit." }

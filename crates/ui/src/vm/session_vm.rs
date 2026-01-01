@@ -1,4 +1,4 @@
-use learn_core::model::{DeckId, ReviewGrade};
+use learn_core::model::{DeckId, ReviewGrade, TagName};
 use services::{SessionLoopService, SessionService};
 
 use crate::views::ViewError;
@@ -90,8 +90,15 @@ impl SessionVm {
 pub async fn start_session(
     session_loop: &SessionLoopService,
     deck_id: DeckId,
+    tag: Option<TagName>,
 ) -> Result<SessionVm, ViewError> {
-    let session = match session_loop.start_session(deck_id).await {
+    let session_result = if let Some(tag) = tag {
+        session_loop.start_session_with_tags(deck_id, &[tag]).await
+    } else {
+        session_loop.start_session(deck_id).await
+    };
+
+    let session = match session_result {
         Ok(session) => session,
         Err(services::SessionError::Empty) => return Err(ViewError::EmptySession),
         Err(_) => return Err(ViewError::Unknown),

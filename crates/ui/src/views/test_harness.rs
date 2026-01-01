@@ -12,7 +12,7 @@ use services::{
 use storage::repository::{SessionSummaryRepository, Storage};
 
 use crate::context::{UiApp, build_app_context};
-use crate::views::{HistoryView, HomeView, SummaryView, SessionView};
+use crate::views::{HistoryView, HomeView, PracticeView, SummaryView, SessionView};
 use crate::views::session::SessionTestHandles;
 
 #[derive(Clone)]
@@ -53,6 +53,7 @@ impl UiApp for TestApp {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
     Home,
+    Practice,
     History,
     Summary(i64),
     Session(u64),
@@ -96,9 +97,10 @@ fn Root() -> Element {
     let view = use_context::<ViewKind>();
     match view {
         ViewKind::Home => rsx! { HomeView {} },
+        ViewKind::Practice => rsx! { PracticeView {} },
         ViewKind::History => rsx! { HistoryView {} },
         ViewKind::Summary(summary_id) => rsx! { SummaryView { summary_id } },
-        ViewKind::Session(deck_id) => rsx! { SessionView { deck_id } },
+        ViewKind::Session(deck_id) => rsx! { SessionView { deck_id, tag: None } },
     }
 }
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use learn_core::model::{DeckId, ReviewGrade};
+use learn_core::model::{DeckId, ReviewGrade, TagName};
 use storage::repository::{
     CardRepository, DeckRepository, ReviewPersistence, SessionSummaryRepository,
 };
@@ -68,6 +68,29 @@ impl SessionLoopService {
             self.cards.as_ref(),
             now,
             self.shuffle_new,
+        )
+        .await?;
+        Ok(session)
+    }
+
+    /// Start a new session for the given deck filtered by tags.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError` for storage or session start failures.
+    pub async fn start_session_with_tags(
+        &self,
+        deck_id: DeckId,
+        tag_names: &[TagName],
+    ) -> Result<SessionService, SessionError> {
+        let now = self.clock.now();
+        let (_deck, session) = SessionQueries::start_from_storage_with_tags(
+            deck_id,
+            self.decks.as_ref(),
+            self.cards.as_ref(),
+            now,
+            self.shuffle_new,
+            tag_names,
         )
         .await?;
         Ok(session)
