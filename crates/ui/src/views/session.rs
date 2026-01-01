@@ -27,21 +27,45 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let navigator = use_navigator();
     let deck_id = DeckId::new(deck_id);
     let session_loop = ctx.session_loop();
+    let card_service = ctx.card_service();
     let parsed_tag = tag.as_deref().map(|value| TagName::new(value.to_string()));
     let (tag_name, invalid_tag) = match parsed_tag {
         Some(Ok(tag)) => (Some(tag), false),
         Some(Err(_)) => (None, true),
         None => (None, false),
     };
-    let subtitle = match tag.as_deref() {
-        Some(tag) => format!("Practicing tag: {tag}."),
-        None => "Review due cards in a short session.".to_string(),
-    };
 
     let error = use_signal(|| None::<ViewError>);
     let vm = use_signal(|| None::<SessionVm>);
     let last_action = use_signal(|| None::<LastAction>);
     let mut did_focus = use_signal(|| false);
+    let due_resource = {
+        let card_service = card_service.clone();
+        let tag_name = tag_name.clone();
+        use_resource(move || {
+            let card_service = card_service.clone();
+            let tag_name = tag_name.clone();
+            async move {
+                if let Some(tag) = tag_name.as_ref() {
+                    let stats = card_service
+                        .list_tag_practice_stats(deck_id)
+                        .await
+                        .map_err(|_| ViewError::Unknown)?;
+                    let due = stats
+                        .iter()
+                        .find(|item| item.name == *tag)
+                        .map_or(0, |item| item.due);
+                    Ok::<_, ViewError>(due)
+                } else {
+                    let stats = card_service
+                        .deck_practice_stats(deck_id)
+                        .await
+                        .map_err(|_| ViewError::Unknown)?;
+                    Ok::<_, ViewError>(stats.due)
+                }
+            }
+        })
+    };
 
     let session_loop_for_resource = session_loop.clone();
     let resource = use_resource(move || {
@@ -160,7 +184,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
         use_callback(move |evt: KeyboardEvent| {
             if evt.data.key() == Key::Escape {
                 evt.prevent_default();
-                navigator.push(Route::Home {});
+                navigator.push(Route::Practice {});
                 return;
             }
 
@@ -211,72 +235,103 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let card_prompt_html = card_prompt.map(sanitize_html);
     let card_answer_html = card_answer.map(sanitize_html);
     let phase = vm_guard.as_ref().map(SessionVm::phase);
+    let progress_label = vm_guard.as_ref().map_or_else(
+        || "0 / 0 Cards".to_string(),
+        |vm| format!("{} / {} Cards", vm.current_index(), vm.total_cards()),
+    );
+    let streak_label = vm_guard.as_ref().map_or_else(
+        || "Streak: 0 🔥".to_string(),
+        |vm| format!("Streak: {} 🔥", vm.streak()),
+    );
+    let due_label = due_resource
+        .value()
+        .read()
+        .as_ref()
+        .and_then(|value| value.as_ref().ok())
+        .map_or_else(|| "Due: --".to_string(), |due| format!("Due: {due}"));
 
     rsx! {
-        div { class: "page", id: "session-root", tabindex: "0", onkeydown: on_key,
-            header { class: "view-header",
-                h2 { class: "view-title", "Practice" }
-                p { class: "view-subtitle", "{subtitle}" }
-            }
-            div { class: "view-divider" }
-            p { class: "view-hint", "Shortcuts: Space to reveal, 1–4 to grade, Esc to exit." }
-            match state {
-                ViewState::Idle => rsx! {
-                    p { "Idle" }
-                },
-                ViewState::Loading => rsx! {
-                    p { "Loading..." }
-                },
-                ViewState::Error(err) => rsx! {
-                    p { "{err.message()}" }
-                    button {
-                        class: "btn btn-secondary",
-                        r#type: "button",
-                        onclick: move |_| retry_action.call(()),
-                        "Retry"
-                    }
-                },
-                ViewState::Ready(()) => rsx! {
-                    if let Some(err) = *error.read() {
-                        p { "{err.message()}" }
+        div { class: "page session-page", id: "session-root", tabindex: "0", onkeydown: on_key,
+            div { class: "session-overlay",
+                div { class: "session-modal",
+                    header { class: "session-modal__header",
+                        h2 { class: "session-modal__title", "Practice Session" }
                         button {
-                            class: "btn btn-secondary",
+                            class: "session-modal__quit",
                             r#type: "button",
-                            onclick: move |_| retry_action.call(()),
-                            "Retry"
+                            onclick: move |_| {
+                                let _ = navigator.push(Route::Practice {});
+                            },
+                            "Quit"
                         }
                     }
-                    if let Some(prompt_html) = card_prompt_html {
-                        div { class: "session-card",
-                            p { class: "session-label", "Prompt" }
-                            div { class: "session-text", dangerous_inner_html: "{prompt_html}" }
-                            match phase {
-                                Some(SessionPhase::Prompt) => rsx! {
+                    div { class: "session-modal__body",
+                        match state {
+                            ViewState::Idle => rsx! {
+                                p { "Idle" }
+                            },
+                            ViewState::Loading => rsx! {
+                                p { "Loading..." }
+                            },
+                            ViewState::Error(err) => rsx! {
+                                p { "{err.message()}" }
+                                button {
+                                    class: "btn btn-secondary",
+                                    r#type: "button",
+                                    onclick: move |_| retry_action.call(()),
+                                    "Retry"
+                                }
+                            },
+                            ViewState::Ready(()) => rsx! {
+                                if let Some(err) = *error.read() {
+                                    p { "{err.message()}" }
                                     button {
-                                        class: "btn btn-primary session-reveal",
-                                        onclick: move |_| dispatch_intent.call(SessionIntent::Reveal),
-                                        "Reveal answer"
+                                        class: "btn btn-secondary",
+                                        r#type: "button",
+                                        onclick: move |_| retry_action.call(()),
+                                        "Retry"
                                     }
-                                },
-                                Some(SessionPhase::Answer) => rsx! {
-                                    p { class: "session-label", "Answer" }
-                                    if let Some(answer_html) = card_answer_html.clone() {
-                                        div { class: "session-text", dangerous_inner_html: "{answer_html}" }
+                                }
+                                if let Some(prompt_html) = card_prompt_html {
+                                    div { class: "session-question",
+                                        div { class: "session-text", dangerous_inner_html: "{prompt_html}" }
                                     }
-                                    div { class: "session-grades",
-                                        GradeButton { label: "Again", grade: ReviewGrade::Again, on_intent: dispatch_intent }
-                                        GradeButton { label: "Hard", grade: ReviewGrade::Hard, on_intent: dispatch_intent }
-                                        GradeButton { label: "Good", grade: ReviewGrade::Good, on_intent: dispatch_intent }
-                                        GradeButton { label: "Easy", grade: ReviewGrade::Easy, on_intent: dispatch_intent }
+                                    match phase {
+                                        Some(SessionPhase::Prompt) => rsx! {
+                                            button {
+                                                class: "session-reveal-btn",
+                                                onclick: move |_| dispatch_intent.call(SessionIntent::Reveal),
+                                                "Show Answer"
+                                            }
+                                        },
+                                        Some(SessionPhase::Answer) => rsx! {
+                                            if let Some(answer_html) = card_answer_html.clone() {
+                                                div { class: "session-answer",
+                                                    div { class: "session-text", dangerous_inner_html: "{answer_html}" }
+                                                }
+                                            }
+                                            p { class: "session-remember", "How well did you remember?" }
+                                            div { class: "session-grades",
+                                                GradeButton { label: "Again", grade: ReviewGrade::Again, on_intent: dispatch_intent }
+                                                GradeButton { label: "Hard", grade: ReviewGrade::Hard, on_intent: dispatch_intent }
+                                                GradeButton { label: "Good", grade: ReviewGrade::Good, on_intent: dispatch_intent }
+                                                GradeButton { label: "Easy", grade: ReviewGrade::Easy, on_intent: dispatch_intent }
+                                            }
+                                        },
+                                        None => rsx! {},
                                     }
-                                },
-                                None => rsx! {},
-                            }
+                                } else {
+                                    p { "No cards available." }
+                                }
+                            },
                         }
-                    } else {
-                        p { "No cards available." }
                     }
-                },
+                    footer { class: "session-modal__footer",
+                        span { class: "session-footer__item", "{progress_label}" }
+                        span { class: "session-footer__item", "{streak_label}" }
+                        span { class: "session-footer__item", "{due_label}" }
+                    }
+                }
             }
         }
     }
@@ -288,9 +343,15 @@ fn GradeButton(
     grade: ReviewGrade,
     on_intent: EventHandler<SessionIntent>,
 ) -> Element {
+    let variant = match grade {
+        ReviewGrade::Again => "session-grade session-grade--again",
+        ReviewGrade::Hard => "session-grade session-grade--hard",
+        ReviewGrade::Good => "session-grade session-grade--good",
+        ReviewGrade::Easy => "session-grade session-grade--easy",
+    };
     rsx! {
         button {
-            class: "btn btn-secondary grade-button",
+            class: "{variant}",
             onclick: move |_| on_intent.call(SessionIntent::Grade(grade)),
             "{label}"
         }

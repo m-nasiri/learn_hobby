@@ -59,6 +59,35 @@ impl SessionVm {
         self.session.current_card().is_some()
     }
 
+    #[must_use]
+    pub fn total_cards(&self) -> usize {
+        self.session.total_cards()
+    }
+
+    #[must_use]
+    pub fn answered_count(&self) -> usize {
+        self.session.answered_count()
+    }
+
+    #[must_use]
+    pub fn current_index(&self) -> usize {
+        if self.session.current_card().is_some() {
+            self.session.answered_count().saturating_add(1)
+        } else {
+            self.session.answered_count()
+        }
+    }
+
+    #[must_use]
+    pub fn streak(&self) -> usize {
+        self.session
+            .results()
+            .iter()
+            .rev()
+            .take_while(|review| review.result.applied.log.grade != ReviewGrade::Again)
+            .count()
+    }
+
     /// # Errors
     ///
     /// Returns `ViewError::Unknown` for service failures.

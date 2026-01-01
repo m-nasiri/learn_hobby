@@ -98,7 +98,6 @@ pub fn PracticeView() -> Element {
                         let extra_tag = deck.extra_tag_label.clone();
                         let avatar = deck.avatar.clone();
                         let tag_buttons = tag_pills.iter().map(|tag| {
-                            let nav = nav;
                             let tag_label = tag.name.clone();
                             let due_label = tag.due_label.clone();
                             rsx! {

@@ -16,7 +16,7 @@ fn u32_from_i64(field: &'static str, value: i64) -> Result<u32, StorageError> {
         .map_err(|_| StorageError::Serialization(format!("invalid {field}: {value}")))
 }
 
-fn ser(error: sqlx::Error) -> StorageError {
+fn ser(error: &sqlx::Error) -> StorageError {
     StorageError::Serialization(error.to_string())
 }
 
@@ -322,14 +322,14 @@ impl CardRepository for SqliteRepository {
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
 
-        let total = u32_from_i64("total", row.try_get::<i64, _>("total").map_err(ser)?)?;
+        let total = u32_from_i64("total", row.try_get::<i64, _>("total").map_err(|e| ser(&e))?)?;
         let new = u32_from_i64(
             "new_count",
-            row.try_get::<i64, _>("new_count").map_err(ser)?,
+            row.try_get::<i64, _>("new_count").map_err(|e| ser(&e))?,
         )?;
         let due = u32_from_i64(
             "due_count",
-            row.try_get::<i64, _>("due_count").map_err(ser)?,
+            row.try_get::<i64, _>("due_count").map_err(|e| ser(&e))?,
         )?;
 
         Ok(DeckPracticeCounts { total, due, new })
@@ -374,20 +374,20 @@ impl CardRepository for SqliteRepository {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let name_raw: String = row.try_get("name").map_err(ser)?;
+            let name_raw: String = row.try_get("name").map_err(|e| ser(&e))?;
             let name = TagName::new(name_raw)
                 .map_err(|e| StorageError::Serialization(e.to_string()))?;
             let total = u32_from_i64(
                 "total",
-                row.try_get::<i64, _>("total").map_err(ser)?,
+                row.try_get::<i64, _>("total").map_err(|e| ser(&e))?,
             )?;
             let new = u32_from_i64(
                 "new_count",
-                row.try_get::<i64, _>("new_count").map_err(ser)?,
+                row.try_get::<i64, _>("new_count").map_err(|e| ser(&e))?,
             )?;
             let due = u32_from_i64(
                 "due_count",
-                row.try_get::<i64, _>("due_count").map_err(ser)?,
+                row.try_get::<i64, _>("due_count").map_err(|e| ser(&e))?,
             )?;
 
             out.push(TagPracticeCounts { name, total, due, new });
