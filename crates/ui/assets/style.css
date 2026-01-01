@@ -543,6 +543,22 @@ a {
   white-space: nowrap;
 }
 
+.history-item__mistakes {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.history-item__mistakes:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--ink-1);
+}
+
 .history-item__action {
   min-height: 36px;
   padding: 8px 16px;

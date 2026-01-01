@@ -284,6 +284,7 @@ fn SummaryCard(
     let navigator = use_navigator();
     let avatar = deck_label.chars().next().unwrap_or('D').to_string();
     let is_open = open_menu() == Some(card.id);
+    let has_mistakes = (card.again + card.hard) > 0;
     rsx! {
         li { class: "history-item",
             div { class: "history-item__main",
@@ -307,6 +308,17 @@ fn SummaryCard(
             div { class: "history-item__actions",
                 span { class: "history-item__date", "{card.completed_at_str}" }
                 span { class: "history-item__due", "{due_label}" }
+                if has_mistakes {
+                    button {
+                        class: "history-item__mistakes",
+                        r#type: "button",
+                        title: "Practice cards marked Again/Hard in this session",
+                        onclick: move |_| {
+                            let _ = navigator.push(Route::SessionMistakes { deck_id });
+                        },
+                        "See mistakes"
+                    }
+                }
                 div { class: "history-action",
                     button {
                         class: "btn btn-primary history-item__action",
