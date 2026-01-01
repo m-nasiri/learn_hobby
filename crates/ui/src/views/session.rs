@@ -21,7 +21,16 @@ enum LastAction {
     Answer(ReviewGrade),
 }
 
-fn focus_target_for_phase(phase: Option<SessionPhase>) -> &'static str {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletionDestination {
+    Summary(i64),
+    Practice,
+}
+
+fn focus_target_for_phase(completed: bool, phase: Option<SessionPhase>) -> &'static str {
+    if completed {
+        return "session-complete-cta";
+    }
     match phase {
         Some(SessionPhase::Prompt) => "session-reveal",
         Some(SessionPhase::Answer) => "session-grade-again",
@@ -29,7 +38,13 @@ fn focus_target_for_phase(phase: Option<SessionPhase>) -> &'static str {
     }
 }
 
-fn focus_cycle_ids_for_phase(phase: Option<SessionPhase>) -> &'static [&'static str] {
+fn focus_cycle_ids_for_phase(
+    completed: bool,
+    phase: Option<SessionPhase>,
+) -> &'static [&'static str] {
+    if completed {
+        return &["session-quit", "session-complete-cta"];
+    }
     match phase {
         Some(SessionPhase::Prompt) => &["session-quit", "session-reveal"],
         Some(SessionPhase::Answer) => &[
@@ -63,6 +78,8 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let last_action = use_signal(|| None::<LastAction>);
     let mut did_focus = use_signal(|| false);
     let mut last_focus_phase = use_signal(|| None::<SessionPhase>);
+    let mut last_focus_completed = use_signal(|| false);
+    let mut completion = use_signal(|| None::<CompletionDestination>);
     let due_resource = {
         let card_service = card_service.clone();
         let tag_name = tag_name.clone();
@@ -114,6 +131,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
 
         async move {
             last_action.set(Some(LastAction::StartSession));
+            completion.set(None);
             if invalid_tag {
                 return Err(ViewError::Unknown);
             }
@@ -128,12 +146,14 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
 
     use_effect(move || {
         let phase = vm.read().as_ref().map(SessionVm::phase);
-        if did_focus() && last_focus_phase() == phase {
+        let completed = completion.read().is_some();
+        if did_focus() && last_focus_phase() == phase && last_focus_completed() == completed {
             return;
         }
         did_focus.set(true);
         last_focus_phase.set(phase);
-        let target = focus_target_for_phase(phase);
+        last_focus_completed.set(completed);
+        let target = focus_target_for_phase(completed, phase);
         let js = format!(
             "document.getElementById({target:?})?.focus();",
         );
@@ -143,10 +163,10 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let dispatch_intent = {
         let session_loop = session_loop.clone();
         use_callback(move |intent: SessionIntent| {
-            let navigator = navigator;
             let mut error = error;
             let mut vm = vm;
             let mut last_action = last_action;
+            let mut completion = completion;
 
             match intent {
                 SessionIntent::Reveal => {
@@ -182,11 +202,10 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                                 match outcome {
                                     SessionOutcome::Continue => {}
                                     SessionOutcome::Completed { summary_id } => {
-                                        if let Some(summary_id) = summary_id {
-                                            navigator.push(Route::Summary { summary_id });
-                                        } else {
-                                            navigator.push(Route::History {});
-                                        }
+                                        let destination = summary_id
+                                            .map(CompletionDestination::Summary)
+                                            .unwrap_or(CompletionDestination::Practice);
+                                        completion.set(Some(destination));
                                     }
                                 }
                             }
@@ -229,7 +248,8 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                 evt.prevent_default();
                 let shift = evt.data.modifiers().contains(Modifiers::SHIFT);
                 let phase = vm.read().as_ref().map(SessionVm::phase);
-                let ids = focus_cycle_ids_for_phase(phase);
+                let completed = completion.read().is_some();
+                let ids = focus_cycle_ids_for_phase(completed, phase);
                 let ids_js = ids
                     .iter()
                     .map(|id| format!("{id:?}"))
@@ -305,6 +325,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
     let card_prompt_html = card_prompt.map(sanitize_html);
     let card_answer_html = card_answer.map(sanitize_html);
     let phase = vm_guard.as_ref().map(SessionVm::phase);
+    let completion_state = *completion.read();
     let progress_label = vm_guard.as_ref().map_or_else(
         || "0 / 0 Cards".to_string(),
         |vm| format!("{} / {} Cards", vm.current_index(), vm.total_cards()),
@@ -384,7 +405,12 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                                         "Retry"
                                     }
                                 }
-                                if let Some(prompt_html) = card_prompt_html {
+                                if completion_state.is_some() {
+                                    div { class: "session-complete",
+                                        h3 { class: "session-complete__title", "Session complete" }
+                                        p { class: "session-complete__subtitle", "Nice work. You finished this practice." }
+                                    }
+                                } else if let Some(prompt_html) = card_prompt_html {
                                     div { class: "session-question",
                                         div { class: "session-text", dangerous_inner_html: "{prompt_html}" }
                                     }
@@ -419,10 +445,16 @@ pub fn SessionView(deck_id: u64, tag: Option<String>) -> Element {
                             },
                         }
                     }
-                    footer { class: "session-modal__footer",
-                        span { class: "session-footer__item", "{progress_label}" }
-                        span { class: "session-footer__item", "{streak_label}" }
-                        span { class: "session-footer__item", "{due_label}" }
+                    if let Some(destination) = completion_state {
+                        footer { class: "session-modal__footer session-modal__footer--complete",
+                            CompletionCta { destination }
+                        }
+                    } else {
+                        footer { class: "session-modal__footer",
+                            span { class: "session-footer__item", "{progress_label}" }
+                            span { class: "session-footer__item", "{streak_label}" }
+                            span { class: "session-footer__item", "{due_label}" }
+                        }
                     }
                 }
             }
@@ -447,6 +479,27 @@ fn GradeButton(
             class: "{variant.0}",
             id: "{variant.1}",
             onclick: move |_| on_intent.call(SessionIntent::Grade(grade)),
+            "{label}"
+        }
+    }
+}
+
+#[component]
+fn CompletionCta(destination: CompletionDestination) -> Element {
+    let navigator = use_navigator();
+    let (label, route) = match destination {
+        CompletionDestination::Summary(summary_id) => ("View Summary", Route::Summary { summary_id }),
+        CompletionDestination::Practice => ("Back to Practice", Route::Practice {}),
+    };
+
+    rsx! {
+        button {
+            class: "session-complete__cta",
+            id: "session-complete-cta",
+            r#type: "button",
+            onclick: move |_| {
+                let _ = navigator.push(route.clone());
+            },
             "{label}"
         }
     }
