@@ -170,6 +170,7 @@ pub fn HistoryView() -> Element {
                                 onclick: move |_| show_mistakes_only.set(!show_mistakes_only()),
                                 "Mistakes only"
                             }
+                            span { class: "history-filter-note", "Mistakes = Again/Hard grades" }
                         }
                         if visible_cards.is_empty() {
                             p { class: "history-empty", "{empty_message}" }

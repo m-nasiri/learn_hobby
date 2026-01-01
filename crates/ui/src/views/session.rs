@@ -81,12 +81,18 @@ fn focus_cycle_ids_for_phase(
                 "session-quit",
                 "session-complete-primary",
                 "session-complete-all",
+                "session-complete-mistakes",
                 "session-complete-secondary",
             ]
         } else if can_practice_all {
-            &["session-quit", "session-complete-all", "session-complete-secondary"]
+            &[
+                "session-quit",
+                "session-complete-all",
+                "session-complete-mistakes",
+                "session-complete-secondary",
+            ]
         } else {
-            &["session-quit", "session-complete-secondary"]
+            &["session-quit", "session-complete-mistakes", "session-complete-secondary"]
         };
     }
     match phase {
@@ -625,6 +631,15 @@ fn CompletionActions(
                     let _ = navigator.push(Route::SessionAll { deck_id });
                 },
                 "Practice All Cards"
+            }
+            button {
+                class: "session-complete__cta session-complete__cta--secondary",
+                id: "session-complete-mistakes",
+                r#type: "button",
+                onclick: move |_| {
+                    let _ = navigator.push(Route::SessionMistakes { deck_id });
+                },
+                "Re-practice Mistakes"
             }
             button {
                 class: "session-complete__cta session-complete__cta--ghost",
