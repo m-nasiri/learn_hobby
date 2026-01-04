@@ -3,7 +3,8 @@ use dioxus_router::{Link, Outlet, Routable, use_navigator, use_route};
 
 use crate::context::AppContext;
 use crate::views::{
-    EditorView, HistoryView, HomeView, PracticeView, SessionView, SettingsView, SummaryView,
+    EditorView, GeneralSettingsView, HistoryView, HomeView, PracticeView, SessionView, SettingsView,
+    SummaryView,
 };
 
 #[derive(Clone, Routable, PartialEq)]
@@ -86,7 +87,7 @@ fn SessionTagRoute(deck_id: u64, tag: String) -> Element {
 
 #[component]
 fn SettingsRoute() -> Element {
-    rsx! { SettingsView { deck_id: None } }
+    rsx! { GeneralSettingsView {} }
 }
 
 #[component]
