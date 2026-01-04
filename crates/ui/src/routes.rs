@@ -22,7 +22,9 @@ pub enum Route {
         #[route("/editor", EditorView)] Editor {},
         #[route("/history", HistoryView)] History {},
         #[route("/history/:summary_id", SummaryView)] Summary { summary_id: i64 },
-        #[route("/settings", SettingsView)] Settings {},
+        #[route("/settings", SettingsRoute)] Settings {},
+        #[route("/settings/deck/:deck_id", DeckSettingsRoute)]
+        SettingsDeck { deck_id: u64 },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -80,6 +82,16 @@ fn SessionMistakesRoute(deck_id: u64) -> Element {
 #[component]
 fn SessionTagRoute(deck_id: u64, tag: String) -> Element {
     rsx! { SessionView { deck_id, tag: Some(tag), mode: crate::vm::SessionStartMode::Due } }
+}
+
+#[component]
+fn SettingsRoute() -> Element {
+    rsx! { SettingsView { deck_id: None } }
+}
+
+#[component]
+fn DeckSettingsRoute(deck_id: u64) -> Element {
+    rsx! { SettingsView { deck_id: Some(deck_id) } }
 }
 
 #[component]

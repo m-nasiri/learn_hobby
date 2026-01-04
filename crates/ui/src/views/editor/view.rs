@@ -1,7 +1,9 @@
 use dioxus::document::eval;
 use dioxus::prelude::*;
+use dioxus_router::use_navigator;
 
 use crate::context::AppContext;
+use crate::routes::Route;
 use crate::vm::MarkdownField;
 use crate::views::{ViewState, view_state_from_resource};
 
@@ -16,6 +18,7 @@ use crate::vm::build_editor_vm;
 #[component]
 pub fn EditorView() -> Element {
     let ctx = use_context::<AppContext>();
+    let navigator = use_navigator();
     let services = EditorServices {
         deck_service: ctx.deck_service(),
         card_service: ctx.card_service(),
@@ -464,6 +467,16 @@ pub fn EditorView() -> Element {
                                     }
                                     if show_deck_actions() {
                                         div { class: "editor-deck-actions-popover",
+                                            button {
+                                                class: "editor-deck-action",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    let deck_id = *state.selected_deck.read();
+                                                    show_deck_actions.set(false);
+                                                    navigator.push(Route::SettingsDeck { deck_id: deck_id.value() });
+                                                },
+                                                "Deck settings..."
+                                            }
                                             button {
                                                 class: "editor-deck-action",
                                                 r#type: "button",

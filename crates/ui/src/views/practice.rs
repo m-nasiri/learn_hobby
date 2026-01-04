@@ -190,6 +190,15 @@ pub fn PracticeView() -> Element {
                                                 "Re-practice Mistakes"
                                             }
                                             button {
+                                                class: "practice-action-item",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    open_menu.set(None);
+                                                    let _ = nav.push(Route::SettingsDeck { deck_id });
+                                                },
+                                                "Deck settings..."
+                                            }
+                                            button {
                                                 class: "practice-action-item practice-action-item--danger",
                                                 r#type: "button",
                                                 onclick: move |_| {

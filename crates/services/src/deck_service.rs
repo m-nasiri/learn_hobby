@@ -79,14 +79,35 @@ impl DeckService {
             .await?
             .ok_or(storage::repository::StorageError::NotFound)?;
 
-        let updated = Deck::new(
-            deck.id(),
+        self.update_deck(
+            deck_id,
             name,
             deck.description().map(str::to_owned),
             deck.settings().clone(),
-            deck.created_at(),
-        )?;
+        )
+        .await
+    }
 
+    /// Update deck name, description, and settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeckServiceError::Deck` if validation fails.
+    /// Returns `DeckServiceError::Storage` if repository access fails.
+    pub async fn update_deck(
+        &self,
+        deck_id: DeckId,
+        name: String,
+        description: Option<String>,
+        settings: DeckSettings,
+    ) -> Result<(), DeckServiceError> {
+        let deck = self
+            .decks
+            .get_deck(deck_id)
+            .await?
+            .ok_or(storage::repository::StorageError::NotFound)?;
+
+        let updated = Deck::new(deck.id(), name, description, settings, deck.created_at())?;
         self.decks.upsert_deck(&updated).await?;
         Ok(())
     }
