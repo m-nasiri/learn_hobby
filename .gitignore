@@ -1,3 +1,5 @@
 /target
 dev.sql*
 .DS_Store
+/agent_
+AGENTS.md

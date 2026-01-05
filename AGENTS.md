@@ -1,7 +1,34 @@
+# Agent Instructions (Codex)
+
+## Planning-with-Files workflow (MANDATORY)
+
+For any task that is more than a trivial edit (>= 3 steps, research, refactor, multi-file change):
+1) Read `agent_/task_plan.md` FIRST.
+2) If missing or outdated, create/update it before coding.
+3) Use `agent_/notes.md` for findings, decisions, URLs, commands tried, errors, and rationale.
+4) Write/maintain final output in `agent_/deliverable.md` (or a file named by the user).
+5) After each meaningful action, update `agent_/task_plan.md` checkboxes and the "Status" section.
+6) Never keep long research in chat context - persist it in `agent_/notes.md`.
+
+### Operating rules
+- Always keep the goal and current phase visible in `agent_/task_plan.md`.
+- Log failures and fixes (what broke, how you verified) in `agent_/notes.md`.
+- Before major decisions, re-open `agent_/task_plan.md` and confirm alignment.
+- Prefer small, verifiable increments; run tests/linters when available.
+
+## Definition: ExecPlan
+When the user says "ExecPlan", you MUST:
+- Produce/refresh `agent_/task_plan.md` with phases + acceptance criteria first
+- Then proceed phase-by-phase, updating files as you go.
+
 # Repository Guidelines
 
 ## Agent-Specific Instructions
-- At the start of any new session, read `guideline.md` first.
+- For non-trivial tasks, follow the Planning-with-Files workflow above.
+- At the start of any new session, read `agent_/guideline.md` first.
+- For product/UX decisions, consult `agent_/product_guidelines.md`.
+- For testing policy, consult `agent_/testing_guidelines.md`.
+- For UI sequencing, consult `agent_/ui_roadmap.md`.
 
 ## Project-Level System Prompt
 
@@ -69,7 +96,7 @@
   - `crates/storage`: persistence, SQLite adapters, repository traits.
   - `crates/services`: orchestration and business workflows.
   - `crates/ui`: Dioxus UI shell (lightweight for now).
-- Root files: `Cargo.toml` (workspace), `Cargo.lock`, and `guideline.md` (architecture rules).
+- Root files: `Cargo.toml` (workspace) and `Cargo.lock`. Architecture rules live in `agent_/guideline.md`.
 - Tests live next to code in `mod tests` blocks and in `crates/storage/tests/` for integration.
 
 ## Build, Test, and Development Commands
@@ -99,5 +126,5 @@
 - PRs should include: summary, test results, and any relevant screenshots/logs if UI/storage behavior changes.
 
 ## Architecture & Invariants
-- Read and follow `guideline.md` for layering rules, invariants, and design patterns.
+- Read and follow `agent_/guideline.md` for layering rules, invariants, and design patterns.
 - Non-negotiables: no SQL outside `crates/storage`, no clocks outside services, and no stringly-typed APIs for known variants.
