@@ -35,6 +35,7 @@ pub struct DeckSettings {
     new_cards_per_day: u32,
     review_limit_per_day: u32,
     micro_session_size: u32,
+    protect_overload: bool,
 }
 
 impl DeckSettings {
@@ -44,12 +45,14 @@ impl DeckSettings {
     /// - 5 new cards per day (manageable goal)
     /// - 30 reviews per day limit (prevents overwhelm)
     /// - 5 cards per micro-session (quick wins)
+    /// - protect overload enabled (keeps daily load calm)
     #[must_use]
     pub fn default_for_adhd() -> Self {
         Self {
             new_cards_per_day: 5,
             review_limit_per_day: 30,
             micro_session_size: 5,
+            protect_overload: true,
         }
     }
 
@@ -62,6 +65,7 @@ impl DeckSettings {
         new_cards_per_day: u32,
         review_limit_per_day: u32,
         micro_session_size: u32,
+        protect_overload: bool,
     ) -> Result<Self, DeckError> {
         if micro_session_size == 0 {
             return Err(DeckError::InvalidMicroSessionSize);
@@ -77,6 +81,7 @@ impl DeckSettings {
             new_cards_per_day,
             review_limit_per_day,
             micro_session_size,
+            protect_overload,
         })
     }
 
@@ -94,6 +99,12 @@ impl DeckSettings {
     #[must_use]
     pub fn micro_session_size(&self) -> u32 {
         self.micro_session_size
+    }
+
+    /// When true, enforce review limits to avoid overload.
+    #[must_use]
+    pub fn protect_overload(&self) -> bool {
+        self.protect_overload
     }
 }
 
@@ -189,7 +200,7 @@ mod tests {
 
     #[test]
     fn settings_new_rejects_zero_micro_session() {
-        let err = DeckSettings::new(5, 30, 0).unwrap_err();
+        let err = DeckSettings::new(5, 30, 0, true).unwrap_err();
         assert_eq!(err, DeckError::InvalidMicroSessionSize);
     }
 
@@ -199,6 +210,7 @@ mod tests {
         assert_eq!(settings.new_cards_per_day(), 5);
         assert_eq!(settings.review_limit_per_day(), 30);
         assert_eq!(settings.micro_session_size(), 5);
+        assert!(settings.protect_overload());
     }
 
     #[test]

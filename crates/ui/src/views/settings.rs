@@ -19,6 +19,7 @@ struct DeckSettingsSnapshot {
     new_cards_per_day: u32,
     review_limit_per_day: u32,
     micro_session_size: u32,
+    protect_overload: bool,
 }
 
 impl DeckSettingsSnapshot {
@@ -31,6 +32,7 @@ impl DeckSettingsSnapshot {
             new_cards_per_day: settings.new_cards_per_day(),
             review_limit_per_day: settings.review_limit_per_day(),
             micro_session_size: settings.micro_session_size(),
+            protect_overload: settings.protect_overload(),
         }
     }
 
@@ -43,6 +45,7 @@ impl DeckSettingsSnapshot {
             new_cards_per_day: settings.new_cards_per_day(),
             review_limit_per_day: settings.review_limit_per_day(),
             micro_session_size: settings.micro_session_size(),
+            protect_overload: settings.protect_overload(),
         }
     }
 }
@@ -54,6 +57,7 @@ struct DeckSettingsForm {
     new_cards_per_day: String,
     review_limit_per_day: String,
     micro_session_size: String,
+    protect_overload: bool,
     fsrs_target_retention: String,
     fsrs_optimize_after: String,
     lapse_min_interval: String,
@@ -70,6 +74,7 @@ impl DeckSettingsForm {
             new_cards_per_day: snapshot.new_cards_per_day.to_string(),
             review_limit_per_day: snapshot.review_limit_per_day.to_string(),
             micro_session_size: snapshot.micro_session_size.to_string(),
+            protect_overload: snapshot.protect_overload,
             fsrs_target_retention: "0.85".to_string(),
             fsrs_optimize_after: "100".to_string(),
             lapse_min_interval: "1d".to_string(),
@@ -96,6 +101,7 @@ impl DeckSettingsForm {
             new_cards_per_day,
             review_limit_per_day,
             micro_session_size,
+            protect_overload: self.protect_overload,
         })
     }
 }
@@ -184,7 +190,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let mut search = use_signal(String::new);
     let expanded_section = use_signal(|| Some(SettingsSection::DailyLimits));
     let mut fsrs_optimization_enabled = use_signal(|| true);
-    let mut protect_overload = use_signal(|| true);
     let mut preserve_stability_on_lapse = use_signal(|| true);
     let mut bury_related_cards = use_signal(|| true);
     let mut bury_siblings_until_next_day = use_signal(|| true);
@@ -306,6 +311,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
             next.new_cards_per_day = defaults.new_cards_per_day().to_string();
             next.review_limit_per_day = defaults.review_limit_per_day().to_string();
             next.micro_session_size = defaults.micro_session_size().to_string();
+            next.protect_overload = defaults.protect_overload();
             form.set(next);
             errors.set(DeckSettingsErrors::default());
             save_state.set(SaveState::Idle);
@@ -566,8 +572,13 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{protect_overload()}",
-                                                        onclick: move |_| protect_overload.set(!protect_overload()),
+                                                        aria_checked: "{form_value.protect_overload}",
+                                                        onclick: move |_| {
+                                                            let mut next = form();
+                                                            next.protect_overload = !next.protect_overload;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
+                                                        },
                                                     }
                                                 }
                                             }
@@ -1288,7 +1299,12 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
         return Err(errors);
     }
 
-    let settings = DeckSettings::new(new_cards_per_day, review_limit_per_day, micro_session_size)
+    let settings = DeckSettings::new(
+        new_cards_per_day,
+        review_limit_per_day,
+        micro_session_size,
+        form.protect_overload,
+    )
         .map_err(|err| {
             let mut errors = DeckSettingsErrors::default();
             match err {

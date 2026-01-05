@@ -216,5 +216,31 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 2).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN protect_overload INTEGER NOT NULL DEFAULT 1 CHECK (protect_overload IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(2_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

@@ -138,4 +138,32 @@ mod tests {
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().name(), "Test");
     }
+
+    #[tokio::test]
+    async fn update_deck_persists_daily_limits() {
+        let repo = InMemoryRepository::new();
+        let clock = Clock::Fixed(fixed_now());
+        let service = DeckService::new(clock, std::sync::Arc::new(repo));
+
+        let deck_id = service
+            .create_deck(
+                "Daily Limits".to_string(),
+                None,
+                DeckSettings::default_for_adhd(),
+            )
+            .await
+            .unwrap();
+
+        let updated_settings = DeckSettings::new(12, 55, 5, false).unwrap();
+        service
+            .update_deck(deck_id, "Daily Limits".to_string(), None, updated_settings)
+            .await
+            .unwrap();
+
+        let refreshed = service.get_deck(deck_id).await.unwrap().unwrap();
+        assert_eq!(refreshed.settings().new_cards_per_day(), 12);
+        assert_eq!(refreshed.settings().review_limit_per_day(), 55);
+        assert_eq!(refreshed.settings().micro_session_size(), 5);
+        assert!(!refreshed.settings().protect_overload());
+    }
 }

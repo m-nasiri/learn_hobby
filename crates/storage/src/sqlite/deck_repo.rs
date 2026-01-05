@@ -18,11 +18,12 @@ impl DeckRepository for SqliteRepository {
         let new_cards = i64::from(deck.new_cards_per_day);
         let review_limit = i64::from(deck.review_limit_per_day);
         let micro = i64::from(deck.micro_session_size);
+        let protect_overload = if deck.protect_overload { 1 } else { 0 };
 
         let res = sqlx::query(
             r"
-            INSERT INTO decks (name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO decks (name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
         )
         .bind(deck.name)
@@ -31,6 +32,7 @@ impl DeckRepository for SqliteRepository {
         .bind(new_cards)
         .bind(review_limit)
         .bind(micro)
+        .bind(protect_overload)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
@@ -46,17 +48,19 @@ impl DeckRepository for SqliteRepository {
         let new_cards = i64::from(deck.settings().new_cards_per_day());
         let review_limit = i64::from(deck.settings().review_limit_per_day());
         let micro = i64::from(deck.settings().micro_session_size());
+        let protect_overload = if deck.settings().protect_overload() { 1 } else { 0 };
 
         sqlx::query(
             r"
-            INSERT INTO decks (id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO decks (id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
                 new_cards_per_day = excluded.new_cards_per_day,
                 review_limit_per_day = excluded.review_limit_per_day,
-                micro_session_size = excluded.micro_session_size
+                micro_session_size = excluded.micro_session_size,
+                protect_overload = excluded.protect_overload
             ",
         )
         .bind(i64::try_from(id).map_err(|_| StorageError::Serialization("id overflow".into()))?)
@@ -66,6 +70,7 @@ impl DeckRepository for SqliteRepository {
         .bind(new_cards)
         .bind(review_limit)
         .bind(micro)
+        .bind(protect_overload)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
@@ -76,7 +81,7 @@ impl DeckRepository for SqliteRepository {
     async fn get_deck(&self, id: learn_core::model::DeckId) -> Result<Option<Deck>, StorageError> {
         let row = sqlx::query(
             r"
-            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size
+            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload
             FROM decks WHERE id = ?1
             ",
         )
@@ -96,7 +101,7 @@ impl DeckRepository for SqliteRepository {
     async fn list_decks(&self, limit: u32) -> Result<Vec<Deck>, StorageError> {
         let rows = sqlx::query(
             r"
-            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size
+            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload
             FROM decks
             ORDER BY id ASC
             LIMIT ?1
@@ -123,6 +128,7 @@ fn deck_from_row(row: &SqliteRow) -> Result<Deck, StorageError> {
             .map_err(|_| StorageError::Serialization("review_limit_per_day overflow".into()))?,
         u32::try_from(row.try_get::<i64, _>("micro_session_size").map_err(ser)?)
             .map_err(|_| StorageError::Serialization("micro_session_size overflow".into()))?,
+        row.try_get::<i64, _>("protect_overload").map_err(ser)? != 0,
     )
     .map_err(|e| StorageError::Serialization(e.to_string()))?;
 

@@ -63,7 +63,11 @@ impl<'a> SessionBuilder<'a> {
     ) -> SessionPlan {
         let settings = self.deck.settings();
         let micro_cap = usize::try_from(settings.micro_session_size()).unwrap_or(usize::MAX);
-        let due_cap = usize::try_from(settings.review_limit_per_day()).unwrap_or(usize::MAX);
+        let due_cap = if settings.protect_overload() {
+            usize::try_from(settings.review_limit_per_day()).unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
         let new_cap = usize::try_from(settings.new_cards_per_day()).unwrap_or(usize::MAX);
 
         let mut due: Vec<Card> = due_cards.into_iter().collect();
@@ -138,6 +142,10 @@ mod tests {
         .unwrap()
     }
 
+    fn build_deck_with_settings(settings: learn_core::model::DeckSettings) -> Deck {
+        Deck::new(DeckId::new(1), "Test", None, settings, fixed_now()).unwrap()
+    }
+
     fn build_due_card(id: u64, reviewed_days_ago: i64) -> Card {
         let mut card = build_card(id);
         let scheduler = Scheduler::new().unwrap();
@@ -180,5 +188,17 @@ mod tests {
         let deck = build_deck();
         let plan = SessionBuilder::new(&deck).build(due_cards, new_cards);
         assert!(plan.cards.len() <= deck.settings().micro_session_size() as usize);
+    }
+
+    #[test]
+    fn builder_ignores_review_limit_when_overload_protection_off() {
+        let settings = learn_core::model::DeckSettings::new(5, 1, 10, false).unwrap();
+        let deck = build_deck_with_settings(settings);
+        let due_cards = vec![build_due_card(1, 2), build_due_card(2, 2), build_due_card(3, 2)];
+
+        let plan = SessionBuilder::new(&deck).build(due_cards, Vec::new());
+
+        assert!(plan.due_selected > 1);
+        assert_eq!(plan.due_selected, plan.cards.len());
     }
 }
