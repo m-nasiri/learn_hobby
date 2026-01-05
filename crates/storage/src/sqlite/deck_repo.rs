@@ -18,18 +18,22 @@ impl DeckRepository for SqliteRepository {
         let new_cards = i64::from(deck.new_cards_per_day);
         let review_limit = i64::from(deck.review_limit_per_day);
         let micro = i64::from(deck.micro_session_size);
-        let protect_overload = if deck.protect_overload { 1 } else { 0 };
-        let preserve_stability_on_lapse = if deck.preserve_stability_on_lapse { 1 } else { 0 };
+        let protect_overload = i64::from(i32::from(deck.protect_overload));
+        let preserve_stability_on_lapse = i64::from(i32::from(deck.preserve_stability_on_lapse));
         let lapse_min_interval_secs = i64::from(deck.lapse_min_interval_secs);
+        let fsrs_target_retention = f64::from(deck.fsrs_target_retention);
+        let fsrs_optimize_enabled = i64::from(i32::from(deck.fsrs_optimize_enabled));
+        let fsrs_optimize_after = i64::from(deck.fsrs_optimize_after);
 
         let res = sqlx::query(
             r"
             INSERT INTO decks (
                 name, description, created_at, new_cards_per_day, review_limit_per_day,
                 micro_session_size, protect_overload, preserve_stability_on_lapse,
-                lapse_min_interval_secs
+                lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
+                fsrs_optimize_after
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ",
         )
         .bind(deck.name)
@@ -41,6 +45,9 @@ impl DeckRepository for SqliteRepository {
         .bind(protect_overload)
         .bind(preserve_stability_on_lapse)
         .bind(lapse_min_interval_secs)
+        .bind(fsrs_target_retention)
+        .bind(fsrs_optimize_enabled)
+        .bind(fsrs_optimize_after)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
@@ -56,22 +63,23 @@ impl DeckRepository for SqliteRepository {
         let new_cards = i64::from(deck.settings().new_cards_per_day());
         let review_limit = i64::from(deck.settings().review_limit_per_day());
         let micro = i64::from(deck.settings().micro_session_size());
-        let protect_overload = if deck.settings().protect_overload() { 1 } else { 0 };
-        let preserve_stability_on_lapse = if deck.settings().preserve_stability_on_lapse() {
-            1
-        } else {
-            0
-        };
+        let protect_overload = i64::from(i32::from(deck.settings().protect_overload()));
+        let preserve_stability_on_lapse =
+            i64::from(i32::from(deck.settings().preserve_stability_on_lapse()));
         let lapse_min_interval_secs = i64::from(deck.settings().lapse_min_interval_secs());
+        let fsrs_target_retention = f64::from(deck.settings().fsrs_target_retention());
+        let fsrs_optimize_enabled = i64::from(i32::from(deck.settings().fsrs_optimize_enabled()));
+        let fsrs_optimize_after = i64::from(deck.settings().fsrs_optimize_after());
 
         sqlx::query(
             r"
             INSERT INTO decks (
                 id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                 micro_session_size, protect_overload, preserve_stability_on_lapse,
-                lapse_min_interval_secs
+                lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
+                fsrs_optimize_after
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -80,7 +88,10 @@ impl DeckRepository for SqliteRepository {
                 micro_session_size = excluded.micro_session_size,
                 protect_overload = excluded.protect_overload,
                 preserve_stability_on_lapse = excluded.preserve_stability_on_lapse,
-                lapse_min_interval_secs = excluded.lapse_min_interval_secs
+                lapse_min_interval_secs = excluded.lapse_min_interval_secs,
+                fsrs_target_retention = excluded.fsrs_target_retention,
+                fsrs_optimize_enabled = excluded.fsrs_optimize_enabled,
+                fsrs_optimize_after = excluded.fsrs_optimize_after
             ",
         )
         .bind(i64::try_from(id).map_err(|_| StorageError::Serialization("id overflow".into()))?)
@@ -93,6 +104,9 @@ impl DeckRepository for SqliteRepository {
         .bind(protect_overload)
         .bind(preserve_stability_on_lapse)
         .bind(lapse_min_interval_secs)
+        .bind(fsrs_target_retention)
+        .bind(fsrs_optimize_enabled)
+        .bind(fsrs_optimize_after)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
@@ -105,7 +119,8 @@ impl DeckRepository for SqliteRepository {
             r"
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                    micro_session_size, protect_overload, preserve_stability_on_lapse,
-                   lapse_min_interval_secs
+                   lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
+                   fsrs_optimize_after
             FROM decks WHERE id = ?1
             ",
         )
@@ -127,7 +142,8 @@ impl DeckRepository for SqliteRepository {
             r"
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                    micro_session_size, protect_overload, preserve_stability_on_lapse,
-                   lapse_min_interval_secs
+                   lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
+                   fsrs_optimize_after
             FROM decks
             ORDER BY id ASC
             LIMIT ?1
@@ -160,6 +176,18 @@ fn deck_from_row(row: &SqliteRow) -> Result<Deck, StorageError> {
             != 0,
         u32::try_from(row.try_get::<i64, _>("lapse_min_interval_secs").map_err(ser)?)
             .map_err(|_| StorageError::Serialization("lapse_min_interval_secs overflow".into()))?,
+        {
+            let retention = row.try_get::<f32, _>("fsrs_target_retention").map_err(ser)?;
+            if !retention.is_finite() || retention <= 0.0 || retention > 1.0 {
+                return Err(StorageError::Serialization(
+                    "fsrs_target_retention invalid".into(),
+                ));
+            }
+            retention
+        },
+        row.try_get::<i64, _>("fsrs_optimize_enabled").map_err(ser)? != 0,
+        u32::try_from(row.try_get::<i64, _>("fsrs_optimize_after").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("fsrs_optimize_after overflow".into()))?,
     )
     .map_err(|e| StorageError::Serialization(e.to_string()))?;
 

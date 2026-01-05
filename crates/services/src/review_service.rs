@@ -40,16 +40,16 @@ pub fn compute_elapsed_days(
 fn apply_lapse_min_interval(
     applied: &mut AppliedReview,
     reviewed_at: DateTime<Utc>,
-    min_interval_days: u32,
+    min_interval_secs: u32,
 ) {
-    if min_interval_days == 0 {
+    if min_interval_secs == 0 {
         return;
     }
-    let min_days = f64::from(min_interval_days);
+    let min_days = f64::from(min_interval_secs) / SECONDS_PER_DAY;
     if applied.outcome.scheduled_days < min_days {
         applied.outcome.scheduled_days = min_days;
         applied.outcome.next_review =
-            reviewed_at + chrono::Duration::days(i64::from(min_interval_days));
+            reviewed_at + chrono::Duration::seconds(i64::from(min_interval_secs));
     }
 }
 
@@ -65,9 +65,10 @@ impl ReviewService {
     ///
     /// Returns `ReviewServiceError::Scheduler` if scheduler initialization fails.
     pub fn new() -> Result<Self, ReviewServiceError> {
+        let retention = DeckSettings::default_for_adhd().fsrs_target_retention();
         Ok(Self {
             clock: Clock::default(),
-            scheduler: Scheduler::new()?,
+            scheduler: Scheduler::try_with_retention(retention)?,
         })
     }
 
@@ -127,13 +128,25 @@ impl ReviewService {
         }
 
         let elapsed_days = compute_elapsed_days(card.last_review_at(), reviewed_at);
-        let mut applied = self.scheduler.apply_review(
-            card.id(),
-            previous_state.as_ref(),
-            grade,
-            reviewed_at,
-            elapsed_days,
-        )?;
+        let retention = settings.fsrs_target_retention();
+        let mut applied = if (self.scheduler.retention() - retention).abs() < f32::EPSILON {
+            self.scheduler.apply_review(
+                card.id(),
+                previous_state.as_ref(),
+                grade,
+                reviewed_at,
+                elapsed_days,
+            )?
+        } else {
+            let scheduler = Scheduler::try_with_retention(retention)?;
+            scheduler.apply_review(
+                card.id(),
+                previous_state.as_ref(),
+                grade,
+                reviewed_at,
+                elapsed_days,
+            )?
+        };
 
         if is_lapse {
             apply_lapse_min_interval(
@@ -272,6 +285,30 @@ mod tests {
     }
 
     #[test]
+    fn review_uses_deck_retention_setting() {
+        let now = fixed_now();
+        let mut card = build_card(now);
+        let retention = 0.7;
+        let settings =
+            DeckSettings::new(5, 30, 5, true, true, 86_400, retention, true, 100).unwrap();
+        let service = ReviewService::new().unwrap().with_clock(Clock::Fixed(now));
+
+        let scheduler = Scheduler::try_with_retention(retention).unwrap();
+        let expected = scheduler
+            .apply_review(card.id(), None, ReviewGrade::Good, now, 0.0)
+            .unwrap();
+
+        let result = service
+            .review_card_with_settings(&mut card, ReviewGrade::Good, now, &settings)
+            .unwrap();
+
+        let actual_days = result.applied.outcome.scheduled_days;
+        let expected_days = expected.outcome.scheduled_days;
+        assert!((actual_days - expected_days).abs() < 1e-6);
+        assert_eq!(result.applied.outcome.next_review, expected.outcome.next_review);
+    }
+
+    #[test]
     fn lapse_min_interval_clamps_again_outcome() {
         let now = fixed_now();
         let mut card = build_card(now);
@@ -286,7 +323,8 @@ mod tests {
             .review_card_with_settings(&mut card, ReviewGrade::Good, second_review, &defaults)
             .unwrap();
 
-        let lapse_settings = DeckSettings::new(5, 30, 5, true, true, 3 * 86_400).unwrap();
+        let lapse_settings =
+            DeckSettings::new(5, 30, 5, true, true, 3 * 86_400, 0.85, true, 100).unwrap();
         let lapse_review = now + chrono::Duration::days(2);
         let result = service
             .review_card_with_settings(&mut card, ReviewGrade::Again, lapse_review, &lapse_settings)
@@ -313,7 +351,8 @@ mod tests {
             .review_card_with_settings(&mut card, ReviewGrade::Good, second_review, &defaults)
             .unwrap();
 
-        let lapse_settings = DeckSettings::new(5, 30, 5, true, false, 86_400).unwrap();
+        let lapse_settings =
+            DeckSettings::new(5, 30, 5, true, false, 86_400, 0.85, true, 100).unwrap();
         let result = service
             .review_card_with_settings(&mut card, ReviewGrade::Again, lapse_review, &lapse_settings)
             .unwrap();

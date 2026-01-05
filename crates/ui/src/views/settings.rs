@@ -22,6 +22,9 @@ struct DeckSettingsSnapshot {
     protect_overload: bool,
     preserve_stability_on_lapse: bool,
     lapse_min_interval_secs: u32,
+    fsrs_target_retention: f32,
+    fsrs_optimize_enabled: bool,
+    fsrs_optimize_after: u32,
 }
 
 impl DeckSettingsSnapshot {
@@ -37,6 +40,9 @@ impl DeckSettingsSnapshot {
             protect_overload: settings.protect_overload(),
             preserve_stability_on_lapse: settings.preserve_stability_on_lapse(),
             lapse_min_interval_secs: settings.lapse_min_interval_secs(),
+            fsrs_target_retention: settings.fsrs_target_retention(),
+            fsrs_optimize_enabled: settings.fsrs_optimize_enabled(),
+            fsrs_optimize_after: settings.fsrs_optimize_after(),
         }
     }
 
@@ -52,6 +58,9 @@ impl DeckSettingsSnapshot {
             protect_overload: settings.protect_overload(),
             preserve_stability_on_lapse: settings.preserve_stability_on_lapse(),
             lapse_min_interval_secs: settings.lapse_min_interval_secs(),
+            fsrs_target_retention: settings.fsrs_target_retention(),
+            fsrs_optimize_enabled: settings.fsrs_optimize_enabled(),
+            fsrs_optimize_after: settings.fsrs_optimize_after(),
         }
     }
 }
@@ -67,6 +76,7 @@ struct DeckSettingsForm {
     preserve_stability_on_lapse: bool,
     lapse_min_interval: String,
     fsrs_target_retention: String,
+    fsrs_optimize_enabled: bool,
     fsrs_optimize_after: String,
     max_interval_days: String,
     min_interval_days: String,
@@ -84,8 +94,9 @@ impl DeckSettingsForm {
             protect_overload: snapshot.protect_overload,
             preserve_stability_on_lapse: snapshot.preserve_stability_on_lapse,
             lapse_min_interval: format_lapse_interval(snapshot.lapse_min_interval_secs),
-            fsrs_target_retention: "0.85".to_string(),
-            fsrs_optimize_after: "100".to_string(),
+            fsrs_target_retention: format_retention(snapshot.fsrs_target_retention),
+            fsrs_optimize_enabled: snapshot.fsrs_optimize_enabled,
+            fsrs_optimize_after: snapshot.fsrs_optimize_after.to_string(),
             max_interval_days: "365".to_string(),
             min_interval_days: "1".to_string(),
             fsrs_parameters: "0.2120, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.0010, 1.8722, 0.1666, 0.7960, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542".to_string(),
@@ -103,6 +114,8 @@ impl DeckSettingsForm {
         let micro_session_size = parse_positive_u32(&self.micro_session_size)?;
 
         let lapse_min_interval_secs = parse_lapse_interval_secs(&self.lapse_min_interval)?;
+        let fsrs_target_retention = parse_retention(&self.fsrs_target_retention)?;
+        let fsrs_optimize_after = parse_positive_u32(&self.fsrs_optimize_after)?;
 
         Some(DeckSettingsSnapshot {
             deck_id,
@@ -114,6 +127,9 @@ impl DeckSettingsForm {
             protect_overload: self.protect_overload,
             preserve_stability_on_lapse: self.preserve_stability_on_lapse,
             lapse_min_interval_secs,
+            fsrs_target_retention,
+            fsrs_optimize_enabled: self.fsrs_optimize_enabled,
+            fsrs_optimize_after,
         })
     }
 }
@@ -125,6 +141,8 @@ struct DeckSettingsErrors {
     review_limit_per_day: Option<&'static str>,
     micro_session_size: Option<&'static str>,
     lapse_min_interval: Option<&'static str>,
+    fsrs_target_retention: Option<&'static str>,
+    fsrs_optimize_after: Option<&'static str>,
 }
 
 impl DeckSettingsErrors {
@@ -134,6 +152,8 @@ impl DeckSettingsErrors {
             || self.review_limit_per_day.is_some()
             || self.micro_session_size.is_some()
             || self.lapse_min_interval.is_some()
+            || self.fsrs_target_retention.is_some()
+            || self.fsrs_optimize_after.is_some()
     }
 }
 
@@ -189,7 +209,7 @@ enum ResetState {
 pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let ctx = use_context::<AppContext>();
     let navigator = use_navigator();
-    let deck_id = deck_id.map(DeckId::new).unwrap_or_else(|| ctx.current_deck_id());
+    let deck_id = deck_id.map_or_else(|| ctx.current_deck_id(), DeckId::new);
     let deck_service = ctx.deck_service();
     let deck_service_for_resource = deck_service.clone();
     let card_service = ctx.card_service();
@@ -203,7 +223,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let active_section = use_signal(|| SettingsSection::DailyLimits);
     let mut search = use_signal(String::new);
     let expanded_section = use_signal(|| Some(SettingsSection::DailyLimits));
-    let mut fsrs_optimization_enabled = use_signal(|| true);
     let mut bury_related_cards = use_signal(|| true);
     let mut bury_siblings_until_next_day = use_signal(|| true);
     let mut autoplay_audio = use_signal(|| true);
@@ -239,7 +258,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         if let Some(deck) = deck {
             let should_reset = initial_snapshot()
                 .as_ref()
-                .map_or(true, |snapshot| snapshot.deck_id != deck.id());
+                .is_none_or(|snapshot| snapshot.deck_id != deck.id());
             if should_reset {
                 let snapshot = DeckSettingsSnapshot::from_deck(&deck);
                 initial_snapshot.set(Some(snapshot.clone()));
@@ -258,7 +277,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let has_valid_form = form_snapshot.is_some();
     let is_dirty = current_snapshot
         .as_ref()
-        .map_or(false, |snapshot| form_snapshot.as_ref() != Some(snapshot));
+        .is_some_and(|snapshot| form_snapshot.as_ref() != Some(snapshot));
 
     let status_label = match save_state() {
         SaveState::Saving => Some("Saving..."),
@@ -274,7 +293,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         let mut errors = errors;
         let save_state = save_state;
         let initial_snapshot = initial_snapshot;
-        use_callback(move |_| {
+        use_callback(move |()| {
             let form_value = form();
             match validate_form(&form_value) {
                 Ok(validated) => {
@@ -294,7 +313,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                             )
                             .await
                         {
-                            Ok(_) => {
+                            Ok(()) => {
                                 let snapshot =
                                     DeckSettingsSnapshot::from_validated(deck_id, &validated);
                                 initial_snapshot.set(Some(snapshot.clone()));
@@ -318,27 +337,29 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         let mut form = form;
         let mut errors = errors;
         let mut save_state = save_state;
-        use_callback(move |_| {
+        use_callback(move |()| {
             let defaults = DeckSettings::default_for_adhd();
             let mut next = form();
             next.new_cards_per_day = defaults.new_cards_per_day().to_string();
-            next.review_limit_per_day = defaults.review_limit_per_day().to_string();
-            next.micro_session_size = defaults.micro_session_size().to_string();
-            next.protect_overload = defaults.protect_overload();
-            next.preserve_stability_on_lapse = defaults.preserve_stability_on_lapse();
-            next.lapse_min_interval = format_lapse_interval(defaults.lapse_min_interval_secs());
-            form.set(next);
-            errors.set(DeckSettingsErrors::default());
-            save_state.set(SaveState::Idle);
-        })
+        next.review_limit_per_day = defaults.review_limit_per_day().to_string();
+        next.micro_session_size = defaults.micro_session_size().to_string();
+        next.protect_overload = defaults.protect_overload();
+        next.preserve_stability_on_lapse = defaults.preserve_stability_on_lapse();
+        next.lapse_min_interval = format_lapse_interval(defaults.lapse_min_interval_secs());
+        next.fsrs_target_retention = format_retention(defaults.fsrs_target_retention());
+        next.fsrs_optimize_enabled = defaults.fsrs_optimize_enabled();
+        next.fsrs_optimize_after = defaults.fsrs_optimize_after().to_string();
+        form.set(next);
+        errors.set(DeckSettingsErrors::default());
+        save_state.set(SaveState::Idle);
+    })
     };
 
     let deck_title = form_value.name.trim().to_string();
     let deck_title = if deck_title.is_empty() {
         current_snapshot
             .as_ref()
-            .map(|snapshot| snapshot.name.clone())
-            .unwrap_or_else(|| "Deck".to_string())
+            .map_or_else(|| "Deck".to_string(), |snapshot| snapshot.name.clone())
     } else {
         deck_title
     };
@@ -687,15 +708,25 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                 div { class: "settings-row__field settings-row__field--wide",
                                                     input {
                                                         id: "fsrs-retention",
-                                                        class: "editor-input settings-input",
+                                                        class: if errors_value.fsrs_target_retention.is_some() {
+                                                            "editor-input settings-input editor-input--error"
+                                                        } else {
+                                                            "editor-input settings-input"
+                                                        },
                                                         r#type: "text",
                                                         value: "{form_value.fsrs_target_retention}",
                                                         oninput: move |evt| {
                                                             let mut next = form();
                                                             next.fsrs_target_retention = evt.value();
                                                             form.set(next);
+                                                            let mut next_errors = errors();
+                                                            next_errors.fsrs_target_retention = None;
+                                                            errors.set(next_errors);
                                                             save_state.set(SaveState::Idle);
                                                         },
+                                                    }
+                                                    if let Some(message) = errors_value.fsrs_target_retention {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
@@ -713,9 +744,13 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{fsrs_optimization_enabled()}",
+                                                        aria_checked: "{form_value.fsrs_optimize_enabled}",
                                                         onclick: move |_| {
-                                                            fsrs_optimization_enabled.set(!fsrs_optimization_enabled());
+                                                            let mut next = form();
+                                                            next.fsrs_optimize_enabled =
+                                                                !next.fsrs_optimize_enabled;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
                                                         },
                                                     }
                                                 }
@@ -732,7 +767,11 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                 div { class: "settings-row__field settings-row__field--wide",
                                                     input {
                                                         id: "fsrs-optimize-after",
-                                                        class: "editor-input settings-input",
+                                                        class: if errors_value.fsrs_optimize_after.is_some() {
+                                                            "editor-input settings-input editor-input--error"
+                                                        } else {
+                                                            "editor-input settings-input"
+                                                        },
                                                         r#type: "number",
                                                         min: "0",
                                                         inputmode: "numeric",
@@ -741,13 +780,18 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                             let mut next = form();
                                                             next.fsrs_optimize_after = evt.value();
                                                             form.set(next);
+                                                            let mut next_errors = errors();
+                                                            next_errors.fsrs_optimize_after = None;
+                                                            errors.set(next_errors);
                                                             save_state.set(SaveState::Idle);
                                                         },
+                                                    }
+                                                    if let Some(message) = errors_value.fsrs_optimize_after {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
                                         }
-                                        p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                     SettingsAccordionSection {
                                         label: "Burying",
@@ -1242,11 +1286,7 @@ fn SettingsNavIcon(section: SettingsSection) -> Element {
         SettingsSection::EasyDays => "M12 4v16M4 12h16",
         SettingsSection::Advanced => "M12 2l3 6 6 1-4 4 1 6-6-3-6 3 1-6-4-4 6-1z",
     };
-    let view_box = if matches!(section, SettingsSection::Advanced) {
-        "0 0 24 24"
-    } else {
-        "0 0 24 24"
-    };
+    let view_box = "0 0 24 24";
     rsx! {
         svg {
             view_box: view_box,
@@ -1327,6 +1367,14 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
             errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
             0
         });
+    let fsrs_target_retention = parse_retention(&form.fsrs_target_retention).unwrap_or_else(|| {
+        errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
+        0.0
+    });
+    let fsrs_optimize_after = parse_positive_u32(&form.fsrs_optimize_after).unwrap_or_else(|| {
+        errors.fsrs_optimize_after = Some("Enter a positive number.");
+        0
+    });
 
     if errors.has_any() {
         return Err(errors);
@@ -1339,6 +1387,9 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
         form.protect_overload,
         form.preserve_stability_on_lapse,
         lapse_min_interval_secs,
+        fsrs_target_retention,
+        form.fsrs_optimize_enabled,
+        fsrs_optimize_after,
     )
         .map_err(|err| {
             let mut errors = DeckSettingsErrors::default();
@@ -1354,6 +1405,12 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
                 }
                 learn_core::model::DeckError::InvalidLapseMinInterval => {
                     errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
+                }
+                learn_core::model::DeckError::InvalidFsrsTargetRetention => {
+                    errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
+                }
+                learn_core::model::DeckError::InvalidFsrsOptimizeAfter => {
+                    errors.fsrs_optimize_after = Some("Enter a positive number.");
                 }
                 learn_core::model::DeckError::EmptyName => {
                     errors.name = Some("Deck name is required.");
@@ -1407,15 +1464,28 @@ fn parse_lapse_interval_secs(value: &str) -> Option<u32> {
 }
 
 fn format_lapse_interval(secs: u32) -> String {
-    if secs % 86_400 == 0 {
+    if secs.is_multiple_of(86_400) {
         format!("{}d", secs / 86_400)
-    } else if secs % 3600 == 0 {
+    } else if secs.is_multiple_of(3600) {
         format!("{}h", secs / 3600)
-    } else if secs % 60 == 0 {
+    } else if secs.is_multiple_of(60) {
         format!("{}m", secs / 60)
     } else {
-        format!("{}s", secs)
+        format!("{secs}s")
     }
+}
+
+fn parse_retention(value: &str) -> Option<f32> {
+    let trimmed = value.trim();
+    let parsed = trimmed.parse::<f32>().ok()?;
+    if !parsed.is_finite() || parsed <= 0.0 || parsed > 1.0 {
+        return None;
+    }
+    Some(parsed)
+}
+
+fn format_retention(value: f32) -> String {
+    format!("{value:.2}")
 }
 
 fn normalize_description(value: &str) -> Option<String> {

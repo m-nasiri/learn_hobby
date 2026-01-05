@@ -24,6 +24,12 @@ pub enum DeckError {
 
     #[error("lapse minimum interval must be > 0")]
     InvalidLapseMinInterval,
+
+    #[error("FSRS target retention must be in (0, 1]")]
+    InvalidFsrsTargetRetention,
+
+    #[error("FSRS optimize-after must be > 0")]
+    InvalidFsrsOptimizeAfter,
 }
 
 //
@@ -33,7 +39,7 @@ pub enum DeckError {
 /// Configuration settings for a deck.
 ///
 /// Controls daily limits and session sizes for spaced repetition learning.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeckSettings {
     new_cards_per_day: u32,
     review_limit_per_day: u32,
@@ -41,6 +47,9 @@ pub struct DeckSettings {
     protect_overload: bool,
     preserve_stability_on_lapse: bool,
     lapse_min_interval_secs: u32,
+    fsrs_target_retention: f32,
+    fsrs_optimize_enabled: bool,
+    fsrs_optimize_after: u32,
 }
 
 impl DeckSettings {
@@ -60,6 +69,9 @@ impl DeckSettings {
             protect_overload: true,
             preserve_stability_on_lapse: true,
             lapse_min_interval_secs: 86_400,
+            fsrs_target_retention: 0.85,
+            fsrs_optimize_enabled: true,
+            fsrs_optimize_after: 100,
         }
     }
 
@@ -68,6 +80,7 @@ impl DeckSettings {
     /// # Errors
     ///
     /// Returns error if any parameter is zero.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         new_cards_per_day: u32,
         review_limit_per_day: u32,
@@ -75,6 +88,9 @@ impl DeckSettings {
         protect_overload: bool,
         preserve_stability_on_lapse: bool,
         lapse_min_interval_secs: u32,
+        fsrs_target_retention: f32,
+        fsrs_optimize_enabled: bool,
+        fsrs_optimize_after: u32,
     ) -> Result<Self, DeckError> {
         if micro_session_size == 0 {
             return Err(DeckError::InvalidMicroSessionSize);
@@ -88,6 +104,15 @@ impl DeckSettings {
         if lapse_min_interval_secs == 0 {
             return Err(DeckError::InvalidLapseMinInterval);
         }
+        if !fsrs_target_retention.is_finite()
+            || fsrs_target_retention <= 0.0
+            || fsrs_target_retention > 1.0
+        {
+            return Err(DeckError::InvalidFsrsTargetRetention);
+        }
+        if fsrs_optimize_after == 0 {
+            return Err(DeckError::InvalidFsrsOptimizeAfter);
+        }
 
         Ok(Self {
             new_cards_per_day,
@@ -96,6 +121,9 @@ impl DeckSettings {
             protect_overload,
             preserve_stability_on_lapse,
             lapse_min_interval_secs,
+            fsrs_target_retention,
+            fsrs_optimize_enabled,
+            fsrs_optimize_after,
         })
     }
 
@@ -132,6 +160,21 @@ impl DeckSettings {
     }
 
     #[must_use]
+    pub fn fsrs_target_retention(&self) -> f32 {
+        self.fsrs_target_retention
+    }
+
+    #[must_use]
+    pub fn fsrs_optimize_enabled(&self) -> bool {
+        self.fsrs_optimize_enabled
+    }
+
+    #[must_use]
+    pub fn fsrs_optimize_after(&self) -> u32 {
+        self.fsrs_optimize_after
+    }
+
+    #[must_use]
     pub fn lapse_min_interval(&self) -> chrono::Duration {
         chrono::Duration::seconds(i64::from(self.lapse_min_interval_secs))
     }
@@ -144,7 +187,7 @@ impl DeckSettings {
 /// A collection of flashcards with associated settings.
 ///
 /// Decks organize cards by topic and control learning parameters.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Deck {
     id: DeckId,
     name: String,
@@ -229,7 +272,7 @@ mod tests {
 
     #[test]
     fn settings_new_rejects_zero_micro_session() {
-        let err = DeckSettings::new(5, 30, 0, true, true, 86_400).unwrap_err();
+        let err = DeckSettings::new(5, 30, 0, true, true, 86_400, 0.85, true, 100).unwrap_err();
         assert_eq!(err, DeckError::InvalidMicroSessionSize);
     }
 
@@ -242,6 +285,18 @@ mod tests {
         assert!(settings.protect_overload());
         assert!(settings.preserve_stability_on_lapse());
         assert_eq!(settings.lapse_min_interval_secs(), 86_400);
+        assert!((settings.fsrs_target_retention() - 0.85).abs() < f32::EPSILON);
+        assert!(settings.fsrs_optimize_enabled());
+        assert_eq!(settings.fsrs_optimize_after(), 100);
+    }
+
+    #[test]
+    fn settings_rejects_invalid_retention() {
+        let err = DeckSettings::new(5, 30, 5, true, true, 86_400, 0.0, true, 100).unwrap_err();
+        assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
+
+        let err = DeckSettings::new(5, 30, 5, true, true, 86_400, 1.1, true, 100).unwrap_err();
+        assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
     }
 
     #[test]

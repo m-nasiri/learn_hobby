@@ -316,5 +316,52 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 5).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN fsrs_target_retention REAL NOT NULL DEFAULT 0.85
+                    CHECK (fsrs_target_retention > 0 AND fsrs_target_retention <= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN fsrs_optimize_enabled INTEGER NOT NULL DEFAULT 1
+                    CHECK (fsrs_optimize_enabled IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN fsrs_optimize_after INTEGER NOT NULL DEFAULT 100
+                    CHECK (fsrs_optimize_after >= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(5_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

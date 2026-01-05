@@ -203,6 +203,11 @@ impl Scheduler {
         Self::try_with_retention(optimal_retention)
     }
 
+    #[must_use]
+    pub fn retention(&self) -> f32 {
+        self.optimal_retention
+    }
+
     /// Schedule a brand-new card (no previous state).
     ///
     /// Returns all four possible next states (again/hard/good/easy).
