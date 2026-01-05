@@ -242,5 +242,79 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 3).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN preserve_stability_on_lapse INTEGER NOT NULL DEFAULT 1
+                    CHECK (preserve_stability_on_lapse IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN lapse_min_interval_days INTEGER NOT NULL DEFAULT 1
+                    CHECK (lapse_min_interval_days >= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(3_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
+    if !is_applied(pool, 4).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN lapse_min_interval_secs INTEGER NOT NULL DEFAULT 86400
+                    CHECK (lapse_min_interval_secs >= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                UPDATE decks
+                SET lapse_min_interval_secs = lapse_min_interval_days * 86400
+                WHERE lapse_min_interval_secs = 86400;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(4_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

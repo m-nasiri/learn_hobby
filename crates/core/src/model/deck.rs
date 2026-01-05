@@ -21,6 +21,9 @@ pub enum DeckError {
 
     #[error("review limit per day must be > 0")]
     InvalidReviewLimitPerDay,
+
+    #[error("lapse minimum interval must be > 0")]
+    InvalidLapseMinInterval,
 }
 
 //
@@ -36,6 +39,8 @@ pub struct DeckSettings {
     review_limit_per_day: u32,
     micro_session_size: u32,
     protect_overload: bool,
+    preserve_stability_on_lapse: bool,
+    lapse_min_interval_secs: u32,
 }
 
 impl DeckSettings {
@@ -53,6 +58,8 @@ impl DeckSettings {
             review_limit_per_day: 30,
             micro_session_size: 5,
             protect_overload: true,
+            preserve_stability_on_lapse: true,
+            lapse_min_interval_secs: 86_400,
         }
     }
 
@@ -66,6 +73,8 @@ impl DeckSettings {
         review_limit_per_day: u32,
         micro_session_size: u32,
         protect_overload: bool,
+        preserve_stability_on_lapse: bool,
+        lapse_min_interval_secs: u32,
     ) -> Result<Self, DeckError> {
         if micro_session_size == 0 {
             return Err(DeckError::InvalidMicroSessionSize);
@@ -76,12 +85,17 @@ impl DeckSettings {
         if review_limit_per_day == 0 {
             return Err(DeckError::InvalidReviewLimitPerDay);
         }
+        if lapse_min_interval_secs == 0 {
+            return Err(DeckError::InvalidLapseMinInterval);
+        }
 
         Ok(Self {
             new_cards_per_day,
             review_limit_per_day,
             micro_session_size,
             protect_overload,
+            preserve_stability_on_lapse,
+            lapse_min_interval_secs,
         })
     }
 
@@ -105,6 +119,21 @@ impl DeckSettings {
     #[must_use]
     pub fn protect_overload(&self) -> bool {
         self.protect_overload
+    }
+
+    #[must_use]
+    pub fn preserve_stability_on_lapse(&self) -> bool {
+        self.preserve_stability_on_lapse
+    }
+
+    #[must_use]
+    pub fn lapse_min_interval_secs(&self) -> u32 {
+        self.lapse_min_interval_secs
+    }
+
+    #[must_use]
+    pub fn lapse_min_interval(&self) -> chrono::Duration {
+        chrono::Duration::seconds(i64::from(self.lapse_min_interval_secs))
     }
 }
 
@@ -200,7 +229,7 @@ mod tests {
 
     #[test]
     fn settings_new_rejects_zero_micro_session() {
-        let err = DeckSettings::new(5, 30, 0, true).unwrap_err();
+        let err = DeckSettings::new(5, 30, 0, true, true, 86_400).unwrap_err();
         assert_eq!(err, DeckError::InvalidMicroSessionSize);
     }
 
@@ -211,6 +240,8 @@ mod tests {
         assert_eq!(settings.review_limit_per_day(), 30);
         assert_eq!(settings.micro_session_size(), 5);
         assert!(settings.protect_overload());
+        assert!(settings.preserve_stability_on_lapse());
+        assert_eq!(settings.lapse_min_interval_secs(), 86_400);
     }
 
     #[test]

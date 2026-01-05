@@ -20,6 +20,8 @@ struct DeckSettingsSnapshot {
     review_limit_per_day: u32,
     micro_session_size: u32,
     protect_overload: bool,
+    preserve_stability_on_lapse: bool,
+    lapse_min_interval_secs: u32,
 }
 
 impl DeckSettingsSnapshot {
@@ -33,6 +35,8 @@ impl DeckSettingsSnapshot {
             review_limit_per_day: settings.review_limit_per_day(),
             micro_session_size: settings.micro_session_size(),
             protect_overload: settings.protect_overload(),
+            preserve_stability_on_lapse: settings.preserve_stability_on_lapse(),
+            lapse_min_interval_secs: settings.lapse_min_interval_secs(),
         }
     }
 
@@ -46,6 +50,8 @@ impl DeckSettingsSnapshot {
             review_limit_per_day: settings.review_limit_per_day(),
             micro_session_size: settings.micro_session_size(),
             protect_overload: settings.protect_overload(),
+            preserve_stability_on_lapse: settings.preserve_stability_on_lapse(),
+            lapse_min_interval_secs: settings.lapse_min_interval_secs(),
         }
     }
 }
@@ -58,9 +64,10 @@ struct DeckSettingsForm {
     review_limit_per_day: String,
     micro_session_size: String,
     protect_overload: bool,
+    preserve_stability_on_lapse: bool,
+    lapse_min_interval: String,
     fsrs_target_retention: String,
     fsrs_optimize_after: String,
-    lapse_min_interval: String,
     max_interval_days: String,
     min_interval_days: String,
     fsrs_parameters: String,
@@ -75,9 +82,10 @@ impl DeckSettingsForm {
             review_limit_per_day: snapshot.review_limit_per_day.to_string(),
             micro_session_size: snapshot.micro_session_size.to_string(),
             protect_overload: snapshot.protect_overload,
+            preserve_stability_on_lapse: snapshot.preserve_stability_on_lapse,
+            lapse_min_interval: format_lapse_interval(snapshot.lapse_min_interval_secs),
             fsrs_target_retention: "0.85".to_string(),
             fsrs_optimize_after: "100".to_string(),
-            lapse_min_interval: "1d".to_string(),
             max_interval_days: "365".to_string(),
             min_interval_days: "1".to_string(),
             fsrs_parameters: "0.2120, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.0010, 1.8722, 0.1666, 0.7960, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542".to_string(),
@@ -94,6 +102,8 @@ impl DeckSettingsForm {
         let review_limit_per_day = parse_positive_u32(&self.review_limit_per_day)?;
         let micro_session_size = parse_positive_u32(&self.micro_session_size)?;
 
+        let lapse_min_interval_secs = parse_lapse_interval_secs(&self.lapse_min_interval)?;
+
         Some(DeckSettingsSnapshot {
             deck_id,
             name: name.to_string(),
@@ -102,6 +112,8 @@ impl DeckSettingsForm {
             review_limit_per_day,
             micro_session_size,
             protect_overload: self.protect_overload,
+            preserve_stability_on_lapse: self.preserve_stability_on_lapse,
+            lapse_min_interval_secs,
         })
     }
 }
@@ -112,6 +124,7 @@ struct DeckSettingsErrors {
     new_cards_per_day: Option<&'static str>,
     review_limit_per_day: Option<&'static str>,
     micro_session_size: Option<&'static str>,
+    lapse_min_interval: Option<&'static str>,
 }
 
 impl DeckSettingsErrors {
@@ -120,6 +133,7 @@ impl DeckSettingsErrors {
             || self.new_cards_per_day.is_some()
             || self.review_limit_per_day.is_some()
             || self.micro_session_size.is_some()
+            || self.lapse_min_interval.is_some()
     }
 }
 
@@ -190,7 +204,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let mut search = use_signal(String::new);
     let expanded_section = use_signal(|| Some(SettingsSection::DailyLimits));
     let mut fsrs_optimization_enabled = use_signal(|| true);
-    let mut preserve_stability_on_lapse = use_signal(|| true);
     let mut bury_related_cards = use_signal(|| true);
     let mut bury_siblings_until_next_day = use_signal(|| true);
     let mut autoplay_audio = use_signal(|| true);
@@ -312,6 +325,8 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
             next.review_limit_per_day = defaults.review_limit_per_day().to_string();
             next.micro_session_size = defaults.micro_session_size().to_string();
             next.protect_overload = defaults.protect_overload();
+            next.preserve_stability_on_lapse = defaults.preserve_stability_on_lapse();
+            next.lapse_min_interval = format_lapse_interval(defaults.lapse_min_interval_secs());
             form.set(next);
             errors.set(DeckSettingsErrors::default());
             save_state.set(SaveState::Idle);
@@ -605,10 +620,13 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{preserve_stability_on_lapse()}",
+                                                        aria_checked: "{form_value.preserve_stability_on_lapse}",
                                                         onclick: move |_| {
-                                                            preserve_stability_on_lapse
-                                                                .set(!preserve_stability_on_lapse());
+                                                            let mut next = form();
+                                                            next.preserve_stability_on_lapse =
+                                                                !next.preserve_stability_on_lapse;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
                                                         },
                                                     }
                                                 }
@@ -625,20 +643,30 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                 div { class: "settings-row__field settings-row__field--wide",
                                                     input {
                                                         id: "lapse-min-interval",
-                                                        class: "editor-input settings-input",
+                                                        class: if errors_value.lapse_min_interval.is_some() {
+                                                            "editor-input settings-input editor-input--error"
+                                                        } else {
+                                                            "editor-input settings-input"
+                                                        },
                                                         r#type: "text",
                                                         value: "{form_value.lapse_min_interval}",
                                                         oninput: move |evt| {
                                                             let mut next = form();
                                                             next.lapse_min_interval = evt.value();
                                                             form.set(next);
+                                                            let mut next_errors = errors();
+                                                            next_errors.lapse_min_interval = None;
+                                                            errors.set(next_errors);
                                                             save_state.set(SaveState::Idle);
                                                         },
+                                                    }
+                                                    p { class: "settings-field-hint", "Use 10m, 2h, 1d." }
+                                                    if let Some(message) = errors_value.lapse_min_interval {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
                                         }
-                                        p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                     SettingsAccordionSection {
                                         label: "FSRS",
@@ -1294,6 +1322,11 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
         errors.micro_session_size = Some("Enter a positive number.");
         0
     });
+    let lapse_min_interval_secs = parse_lapse_interval_secs(&form.lapse_min_interval)
+        .unwrap_or_else(|| {
+            errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
+            0
+        });
 
     if errors.has_any() {
         return Err(errors);
@@ -1304,6 +1337,8 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
         review_limit_per_day,
         micro_session_size,
         form.protect_overload,
+        form.preserve_stability_on_lapse,
+        lapse_min_interval_secs,
     )
         .map_err(|err| {
             let mut errors = DeckSettingsErrors::default();
@@ -1316,6 +1351,9 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
                 }
                 learn_core::model::DeckError::InvalidReviewLimitPerDay => {
                     errors.review_limit_per_day = Some("Enter a positive number.");
+                }
+                learn_core::model::DeckError::InvalidLapseMinInterval => {
+                    errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
                 }
                 learn_core::model::DeckError::EmptyName => {
                     errors.name = Some("Deck name is required.");
@@ -1341,6 +1379,43 @@ fn parse_positive_u32(value: &str) -> Option<u32> {
         return None;
     }
     Some(parsed)
+}
+
+fn parse_lapse_interval_secs(value: &str) -> Option<u32> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed.to_ascii_lowercase();
+    let mut chars = normalized.chars();
+    let last = chars.next_back();
+    let (number_part, unit) = match last {
+        Some(unit) if unit.is_ascii_alphabetic() => (&normalized[..normalized.len() - 1], unit),
+        _ => (normalized.as_str(), 'd'),
+    };
+    let amount = number_part.trim().parse::<u32>().ok()?;
+    if amount == 0 {
+        return None;
+    }
+    match unit {
+        's' => Some(amount),
+        'm' => amount.checked_mul(60),
+        'h' => amount.checked_mul(3600),
+        'd' => amount.checked_mul(86_400),
+        _ => None,
+    }
+}
+
+fn format_lapse_interval(secs: u32) -> String {
+    if secs % 86_400 == 0 {
+        format!("{}d", secs / 86_400)
+    } else if secs % 3600 == 0 {
+        format!("{}h", secs / 3600)
+    } else if secs % 60 == 0 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}s", secs)
+    }
 }
 
 fn normalize_description(value: &str) -> Option<String> {

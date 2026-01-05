@@ -192,7 +192,8 @@ mod tests {
 
     #[test]
     fn builder_ignores_review_limit_when_overload_protection_off() {
-        let settings = learn_core::model::DeckSettings::new(5, 1, 10, false).unwrap();
+        let settings =
+            learn_core::model::DeckSettings::new(5, 1, 10, false, true, 86_400).unwrap();
         let deck = build_deck_with_settings(settings);
         let due_cards = vec![build_due_card(1, 2), build_due_card(2, 2), build_due_card(3, 2)];
 

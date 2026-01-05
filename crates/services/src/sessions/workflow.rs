@@ -148,13 +148,20 @@ impl SessionLoopService {
     ) -> Result<SessionAnswerResult, SessionError> {
         let review_service = ReviewService::new()?.with_clock(self.clock);
         let reviewed_at = self.clock.now();
+        let deck_settings = session.deck_settings().clone();
         let Some(card) = session.current_card_mut() else {
             return Err(SessionError::Completed);
         };
 
         let card_id = card.id();
         let (result, _log_id) = review_service
-            .review_card_persisted(card, grade, reviewed_at, self.reviews.as_ref())
+            .review_card_persisted_with_settings(
+                card,
+                grade,
+                reviewed_at,
+                &deck_settings,
+                self.reviews.as_ref(),
+            )
             .await?;
         let review = session
             .record_review_result(card_id, result, reviewed_at)?

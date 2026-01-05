@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::fmt;
-use learn_core::model::{Card, CardId, Deck, DeckId, ReviewGrade, SessionSummary};
+use learn_core::model::{Card, CardId, Deck, DeckId, DeckSettings, ReviewGrade, SessionSummary};
 
 use crate::error::SessionError;
 use crate::review_service::{ReviewResult, ReviewService};
@@ -27,6 +27,7 @@ pub struct SessionReview {
 /// them sequentially, applying grades via `ReviewService`.
 pub struct SessionService {
     deck_id: DeckId,
+    deck_settings: DeckSettings,
     cards: Vec<Card>,
     current: usize,
     results: Vec<SessionReview>,
@@ -72,6 +73,7 @@ impl SessionService {
 
         Ok(Self {
             deck_id: deck.id(),
+            deck_settings: deck.settings().clone(),
             cards,
             current: 0,
             results: Vec::new(),
@@ -84,6 +86,11 @@ impl SessionService {
     #[must_use]
     pub fn deck_id(&self) -> DeckId {
         self.deck_id
+    }
+
+    #[must_use]
+    pub fn deck_settings(&self) -> &DeckSettings {
+        &self.deck_settings
     }
 
     #[must_use]
@@ -171,11 +178,17 @@ impl SessionService {
         grade: ReviewGrade,
         reviewed_at: DateTime<Utc>,
     ) -> Result<&SessionReview, SessionError> {
+        let deck_settings = self.deck_settings.clone();
         let (card_id, result) = {
             let Some(card) = self.current_card_mut() else {
                 return Err(SessionError::Completed);
             };
-            let result = review_service.review_card(card, grade, reviewed_at)?;
+            let result = review_service.review_card_with_settings(
+                card,
+                grade,
+                reviewed_at,
+                &deck_settings,
+            )?;
             (card.id(), result)
         };
 

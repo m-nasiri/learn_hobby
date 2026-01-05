@@ -73,6 +73,8 @@ pub struct NewDeckRecord {
     pub review_limit_per_day: u32,
     pub micro_session_size: u32,
     pub protect_overload: bool,
+    pub preserve_stability_on_lapse: bool,
+    pub lapse_min_interval_secs: u32,
 }
 
 /// Aggregate card counts for a deck at a given time.
@@ -103,6 +105,8 @@ impl NewDeckRecord {
             review_limit_per_day: deck.settings().review_limit_per_day(),
             micro_session_size: deck.settings().micro_session_size(),
             protect_overload: deck.settings().protect_overload(),
+            preserve_stability_on_lapse: deck.settings().preserve_stability_on_lapse(),
+            lapse_min_interval_secs: deck.settings().lapse_min_interval_secs(),
         }
     }
 }
@@ -566,6 +570,8 @@ impl DeckRepository for InMemoryRepository {
             deck.review_limit_per_day,
             deck.micro_session_size,
             deck.protect_overload,
+            deck.preserve_stability_on_lapse,
+            deck.lapse_min_interval_secs,
         )
         .map_err(|e| StorageError::Serialization(e.to_string()))?;
 

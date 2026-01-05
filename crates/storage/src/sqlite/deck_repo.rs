@@ -19,11 +19,17 @@ impl DeckRepository for SqliteRepository {
         let review_limit = i64::from(deck.review_limit_per_day);
         let micro = i64::from(deck.micro_session_size);
         let protect_overload = if deck.protect_overload { 1 } else { 0 };
+        let preserve_stability_on_lapse = if deck.preserve_stability_on_lapse { 1 } else { 0 };
+        let lapse_min_interval_secs = i64::from(deck.lapse_min_interval_secs);
 
         let res = sqlx::query(
             r"
-            INSERT INTO decks (name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO decks (
+                name, description, created_at, new_cards_per_day, review_limit_per_day,
+                micro_session_size, protect_overload, preserve_stability_on_lapse,
+                lapse_min_interval_secs
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ",
         )
         .bind(deck.name)
@@ -33,6 +39,8 @@ impl DeckRepository for SqliteRepository {
         .bind(review_limit)
         .bind(micro)
         .bind(protect_overload)
+        .bind(preserve_stability_on_lapse)
+        .bind(lapse_min_interval_secs)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
@@ -49,18 +57,30 @@ impl DeckRepository for SqliteRepository {
         let review_limit = i64::from(deck.settings().review_limit_per_day());
         let micro = i64::from(deck.settings().micro_session_size());
         let protect_overload = if deck.settings().protect_overload() { 1 } else { 0 };
+        let preserve_stability_on_lapse = if deck.settings().preserve_stability_on_lapse() {
+            1
+        } else {
+            0
+        };
+        let lapse_min_interval_secs = i64::from(deck.settings().lapse_min_interval_secs());
 
         sqlx::query(
             r"
-            INSERT INTO decks (id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO decks (
+                id, name, description, created_at, new_cards_per_day, review_limit_per_day,
+                micro_session_size, protect_overload, preserve_stability_on_lapse,
+                lapse_min_interval_secs
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
                 new_cards_per_day = excluded.new_cards_per_day,
                 review_limit_per_day = excluded.review_limit_per_day,
                 micro_session_size = excluded.micro_session_size,
-                protect_overload = excluded.protect_overload
+                protect_overload = excluded.protect_overload,
+                preserve_stability_on_lapse = excluded.preserve_stability_on_lapse,
+                lapse_min_interval_secs = excluded.lapse_min_interval_secs
             ",
         )
         .bind(i64::try_from(id).map_err(|_| StorageError::Serialization("id overflow".into()))?)
@@ -71,6 +91,8 @@ impl DeckRepository for SqliteRepository {
         .bind(review_limit)
         .bind(micro)
         .bind(protect_overload)
+        .bind(preserve_stability_on_lapse)
+        .bind(lapse_min_interval_secs)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Connection(e.to_string()))?;
@@ -81,7 +103,9 @@ impl DeckRepository for SqliteRepository {
     async fn get_deck(&self, id: learn_core::model::DeckId) -> Result<Option<Deck>, StorageError> {
         let row = sqlx::query(
             r"
-            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload
+            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
+                   micro_session_size, protect_overload, preserve_stability_on_lapse,
+                   lapse_min_interval_secs
             FROM decks WHERE id = ?1
             ",
         )
@@ -101,7 +125,9 @@ impl DeckRepository for SqliteRepository {
     async fn list_decks(&self, limit: u32) -> Result<Vec<Deck>, StorageError> {
         let rows = sqlx::query(
             r"
-            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day, micro_session_size, protect_overload
+            SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
+                   micro_session_size, protect_overload, preserve_stability_on_lapse,
+                   lapse_min_interval_secs
             FROM decks
             ORDER BY id ASC
             LIMIT ?1
@@ -129,6 +155,11 @@ fn deck_from_row(row: &SqliteRow) -> Result<Deck, StorageError> {
         u32::try_from(row.try_get::<i64, _>("micro_session_size").map_err(ser)?)
             .map_err(|_| StorageError::Serialization("micro_session_size overflow".into()))?,
         row.try_get::<i64, _>("protect_overload").map_err(ser)? != 0,
+        row.try_get::<i64, _>("preserve_stability_on_lapse")
+            .map_err(ser)?
+            != 0,
+        u32::try_from(row.try_get::<i64, _>("lapse_min_interval_secs").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("lapse_min_interval_secs overflow".into()))?,
     )
     .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
