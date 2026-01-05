@@ -23,6 +23,7 @@ pub fn EditorDetailPane(
     tag_input_value: String,
     tag_suggestions: Vec<String>,
     card_tags: Vec<String>,
+    daily_limit_warning: Option<String>,
     save_state: SaveState,
     delete_state: DeleteState,
     duplicate_check_state: DuplicateCheckState,
@@ -211,6 +212,9 @@ pub fn EditorDetailPane(
 
             footer { class: "editor-footer",
                 div { class: "editor-status",
+                    if let Some(message) = daily_limit_warning {
+                        span { class: "editor-warning", "{message}" }
+                    }
                     match delete_state {
                         DeleteState::Idle => match duplicate_check_state {
                             DuplicateCheckState::Checking => rsx! { span { "Checking..." } },

@@ -30,8 +30,15 @@ pub fn EditorView() -> Element {
     let decks_state = view_state_from_resource(&state.decks_resource);
     let cards_state = view_state_from_resource(&state.cards_resource);
     let deck_tags_state = view_state_from_resource(&state.deck_tags_resource);
+    let daily_limit_state = view_state_from_resource(&state.daily_limit_resource);
 
-    let vm = build_editor_vm(&state, &decks_state, &cards_state, &deck_tags_state);
+    let vm = build_editor_vm(
+        &state,
+        &decks_state,
+        &cards_state,
+        &deck_tags_state,
+        &daily_limit_state,
+    );
     let deck_label = vm.deck_label.clone();
 
     let save_state = state.save_state;
@@ -577,6 +584,7 @@ pub fn EditorView() -> Element {
                         tag_input_value: vm.tag_input_value.clone(),
                         tag_suggestions: vm.tag_suggestions.clone(),
                         card_tags: vm.card_tags.clone(),
+                        daily_limit_warning: vm.daily_limit_warning.clone(),
                         save_state: save_state(),
                         delete_state: delete_state(),
                         duplicate_check_state: duplicate_check_state(),

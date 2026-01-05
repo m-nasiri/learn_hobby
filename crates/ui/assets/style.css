@@ -2916,6 +2916,13 @@ a {
   min-height: 18px;
   color: rgba(0, 0, 0, 0.6);
   font-size: 0.88rem;
+  display: grid;
+  gap: 4px;
+}
+
+.editor-warning {
+  color: #b66a2c;
+  font-size: 0.82rem;
 }
 
 .editor-actions {

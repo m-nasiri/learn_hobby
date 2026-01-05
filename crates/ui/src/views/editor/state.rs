@@ -6,7 +6,10 @@ use dioxus::prelude::*;
 use learn_core::model::{CardId, DeckId};
 use services::{CardListFilter, CardListSort, CardService, DeckService};
 
-use crate::vm::{CardListItemVm, MarkdownField, map_card_list_items, map_deck_options, strip_html_tags};
+use crate::vm::{
+    CardListItemVm, DailyLimitVm, MarkdownField, map_card_list_items, map_deck_options,
+    strip_html_tags,
+};
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 
 use super::utils::{tag_filter_key, tag_names_from_strings, tags_equal};
@@ -130,6 +133,7 @@ pub struct EditorState {
     pub decks_resource: Resource<Result<Vec<crate::vm::DeckOptionVm>, ViewError>>,
     pub cards_resource: Resource<Result<Vec<CardListItemVm>, ViewError>>,
     pub deck_tags_resource: Resource<Result<Vec<String>, ViewError>>,
+    pub daily_limit_resource: Resource<Result<DailyLimitVm, ViewError>>,
     pub card_tags_resource: CardTagsResource,
     pub clear_editor_fields: VoidAction,
     pub set_editor_fields: SetFieldsAction,
@@ -230,6 +234,39 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
                 .map(|tag| tag.name().as_str().to_string())
                 .collect();
             Ok::<Vec<String>, ViewError>(tags)
+        }
+    });
+
+    let card_service_for_daily = services.card_service.clone();
+    let deck_service_for_daily = services.deck_service.clone();
+    let daily_limit_resource = use_resource(move || {
+        let card_service = card_service_for_daily.clone();
+        let deck_service = deck_service_for_daily.clone();
+        let deck_id = *selected_deck.read();
+        async move {
+            let deck = deck_service
+                .get_deck(deck_id)
+                .await
+                .map_err(|_| ViewError::Unknown)?
+                .ok_or(ViewError::Unknown)?;
+            let created_today = card_service
+                .new_cards_created_today(deck_id)
+                .await
+                .map_err(|_| ViewError::Unknown)?;
+            Ok::<DailyLimitVm, ViewError>(DailyLimitVm {
+                limit: deck.settings().new_cards_per_day(),
+                created_today,
+            })
+        }
+    });
+
+    let mut last_daily_limit_deck = use_signal(|| deck_id);
+    use_effect(move || {
+        let current = *selected_deck.read();
+        if last_daily_limit_deck() != current {
+            last_daily_limit_deck.set(current);
+            let mut daily_limit_resource = daily_limit_resource;
+            daily_limit_resource.restart();
         }
     });
 
@@ -412,6 +449,7 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         decks_resource,
         cards_resource,
         deck_tags_resource,
+        daily_limit_resource,
         card_tags_resource,
         clear_editor_fields,
         set_editor_fields,

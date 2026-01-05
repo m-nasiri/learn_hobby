@@ -306,6 +306,20 @@ pub trait CardRepository: Send + Sync {
     /// Returns `StorageError` on connection or serialization failure.
     async fn list_cards(&self, deck_id: DeckId, limit: u32) -> Result<Vec<Card>, StorageError>;
 
+    /// Count cards created in a time range for a deck.
+    ///
+    /// The range is inclusive of `start` and exclusive of `end`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn count_cards_created_between(
+        &self,
+        deck_id: DeckId,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<u32, StorageError>;
+
     /// Count cards currently in a mistake/relearning state.
     ///
     /// # Errors
@@ -755,6 +769,28 @@ impl CardRepository for InMemoryRepository {
         });
         cards.truncate(limit_usize(limit));
         Ok(cards)
+    }
+
+    async fn count_cards_created_between(
+        &self,
+        deck_id: DeckId,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<u32, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let count = guard
+            .cards
+            .values()
+            .filter(|card| {
+                card.deck_id() == deck_id
+                    && card.created_at() >= start
+                    && card.created_at() < end
+            })
+            .count();
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
     async fn mistakes_count(&self, deck_id: DeckId) -> Result<u32, StorageError> {

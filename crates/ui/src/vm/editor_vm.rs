@@ -6,6 +6,12 @@ use crate::views::ViewState;
 use crate::views::editor::state::{DeleteState, DuplicateCheckState, EditorState, SaveState};
 use crate::views::editor::utils::build_tag_suggestions;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DailyLimitVm {
+    pub limit: u32,
+    pub created_today: u32,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
 pub struct EditorVm {
@@ -29,6 +35,7 @@ pub struct EditorVm {
     pub card_tags: Vec<String>,
     pub prompt_toolbar_disabled: bool,
     pub answer_toolbar_disabled: bool,
+    pub daily_limit_warning: Option<String>,
 }
 
 #[must_use]
@@ -37,6 +44,7 @@ pub fn build_editor_vm(
     decks_state: &ViewState<Vec<DeckOptionVm>>,
     cards_state: &ViewState<Vec<CardListItemVm>>,
     deck_tags_state: &ViewState<Vec<String>>,
+    daily_limit_state: &ViewState<DailyLimitVm>,
 ) -> EditorVm {
     let selected_deck = *state.selected_deck.read();
     let deck_label = deck_label_from_state(decks_state, selected_deck);
@@ -78,6 +86,18 @@ pub fn build_editor_vm(
     let tag_suggestions =
         build_tag_suggestions(&deck_tags, &card_tags, &tag_input_value);
 
+    let daily_limit_warning = match daily_limit_state {
+        ViewState::Ready(limit)
+            if is_create_mode && limit.limit > 0 && limit.created_today >= limit.limit =>
+        {
+            Some(format!(
+                "Today's new card limit reached ({}/{}) — you can still save.",
+                limit.created_today, limit.limit
+            ))
+        }
+        _ => None,
+    };
+
     EditorVm {
         deck_label,
         is_create_mode,
@@ -99,6 +119,7 @@ pub fn build_editor_vm(
         card_tags,
         prompt_toolbar_disabled: !can_edit,
         answer_toolbar_disabled: !can_edit,
+        daily_limit_warning,
     }
 }
 

@@ -163,6 +163,7 @@ fn apply_save_success(
     let mut tag_input = state.tag_input;
     let mut cards_resource = state.cards_resource;
     let mut deck_tags_resource = state.deck_tags_resource;
+    let mut daily_limit_resource = state.daily_limit_resource;
     let mut card_tags_resource = state.card_tags_resource;
     let mut selected_card_id = state.selected_card_id;
     let mut last_selected_card = state.last_selected_card;
@@ -178,6 +179,7 @@ fn apply_save_success(
     tag_input.set(String::new());
     cards_resource.restart();
     deck_tags_resource.restart();
+    daily_limit_resource.restart();
     card_tags_resource.restart();
 
     match ((state.is_create_mode)(), payload.practice) {

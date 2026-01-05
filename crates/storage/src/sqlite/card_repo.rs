@@ -295,6 +295,30 @@ impl CardRepository for SqliteRepository {
         Ok(cards)
     }
 
+    async fn count_cards_created_between(
+        &self,
+        deck_id: DeckId,
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u32, StorageError> {
+        let deck = i64::try_from(deck_id.value())
+            .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+        let count: i64 = sqlx::query_scalar(
+            r"
+            SELECT COUNT(*)
+            FROM cards
+            WHERE deck_id = ?1 AND created_at >= ?2 AND created_at < ?3
+            ",
+        )
+        .bind(deck)
+        .bind(start)
+        .bind(end)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::Connection(e.to_string()))?;
+        u32_from_i64("created_today", count)
+    }
+
     async fn mistakes_count(&self, deck_id: DeckId) -> Result<u32, StorageError> {
         let deck = i64::try_from(deck_id.value())
             .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;

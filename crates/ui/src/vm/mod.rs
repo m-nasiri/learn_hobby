@@ -22,5 +22,5 @@ pub use markdown_vm::{
     MarkdownAction, MarkdownField, html_to_markdown, looks_like_html, looks_like_markdown,
     markdown_to_html, normalize_markdown, sanitize_html, strip_html_tags,
 };
-pub use editor_vm::{EditorVm, build_editor_vm};
+pub use editor_vm::{DailyLimitVm, EditorVm, build_editor_vm};
 pub use practice_vm::{PracticeDeckCardVm, PracticeTagPillVm, map_practice_deck_card};

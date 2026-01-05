@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use chrono::Duration;
+use chrono::{DateTime, Duration, Utc};
 use learn_core::model::{Card, CardError, CardId, CardPhase, ContentDraft, DeckId, Tag, TagName};
 use storage::repository::{CardRepository, NewCardRecord};
 
@@ -126,6 +126,24 @@ impl CardService {
             self.cards.set_tags_for_card(deck_id, card_id, &tags).await?;
         }
         Ok(card_id)
+    }
+
+    /// Count cards created today for a deck (UTC day).
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn new_cards_created_today(
+        &self,
+        deck_id: DeckId,
+    ) -> Result<u32, CardServiceError> {
+        let now = self.clock.now();
+        let (start, end) = day_bounds(now);
+        let count = self
+            .cards
+            .count_cards_created_between(deck_id, start, end)
+            .await?;
+        Ok(count)
     }
 
     /// Persist an existing card update.
@@ -426,6 +444,16 @@ impl CardService {
     }
 }
 
+fn day_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
+    let date = now.date_naive();
+    let start = DateTime::<Utc>::from_naive_utc_and_offset(
+        date.and_hms_opt(0, 0, 0).unwrap(),
+        Utc,
+    );
+    let end = start + Duration::days(1);
+    (start, end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,5 +599,27 @@ mod tests {
         assert_eq!(card.review_count(), 0);
         assert_eq!(card.last_review_at(), None);
         assert_eq!(card.next_review_at(), now);
+    }
+
+    #[tokio::test]
+    async fn new_cards_created_today_counts_only_today() {
+        let repo = InMemoryRepository::new();
+        let deck_id = DeckId::new(1);
+        let now = fixed_now();
+
+        let today_card = build_card(1, deck_id, now);
+        repo.upsert_card(&today_card).await.expect("today card");
+
+        let yesterday = now - Duration::days(1);
+        let old_card = build_card(2, deck_id, yesterday);
+        repo.upsert_card(&old_card).await.expect("old card");
+
+        let service = CardService::new(Clock::Fixed(now), Arc::new(repo));
+        let count = service
+            .new_cards_created_today(deck_id)
+            .await
+            .expect("count");
+
+        assert_eq!(count, 1);
     }
 }
