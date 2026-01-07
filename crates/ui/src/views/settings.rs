@@ -168,7 +168,6 @@ enum SettingsSection {
     DailyLimits,
     Lapses,
     Fsrs,
-    Burying,
     Audio,
     Timers,
     EasyDays,
@@ -181,7 +180,6 @@ impl SettingsSection {
             SettingsSection::DailyLimits => "settings-daily-limits",
             SettingsSection::Lapses => "settings-lapses",
             SettingsSection::Fsrs => "settings-fsrs",
-            SettingsSection::Burying => "settings-burying",
             SettingsSection::Audio => "settings-audio",
             SettingsSection::Timers => "settings-timers",
             SettingsSection::EasyDays => "settings-easy-days",
@@ -223,8 +221,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let active_section = use_signal(|| SettingsSection::DailyLimits);
     let mut search = use_signal(String::new);
     let expanded_section = use_signal(|| Some(SettingsSection::DailyLimits));
-    let mut bury_related_cards = use_signal(|| true);
-    let mut bury_siblings_until_next_day = use_signal(|| true);
     let mut autoplay_audio = use_signal(|| true);
     let mut replay_audio_after_answer = use_signal(|| false);
     let mut audio_delay_ms = use_signal(|| "300".to_string());
@@ -414,12 +410,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                         SettingsNavItem {
                             label: "FSRS",
                             section: SettingsSection::Fsrs,
-                            active: active_section(),
-                            on_select: on_nav_select,
-                        }
-                        SettingsNavItem {
-                            label: "Burying",
-                            section: SettingsSection::Burying,
                             active: active_section(),
                             on_select: on_nav_select,
                         }
@@ -792,59 +782,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                 }
                                             }
                                         }
-                                    }
-                                    SettingsAccordionSection {
-                                        label: "Burying",
-                                        section: SettingsSection::Burying,
-                                        expanded: expanded_section() == Some(SettingsSection::Burying),
-                                        on_toggle: expanded_section,
-                                        help_title: Some("Reduce interference between similar cards."),
-                                        div { class: "settings-card",
-                                            div { class: "settings-row",
-                                                div { class: "settings-row__label",
-                                                    label { "Bury related cards" }
-                                                    span {
-                                                        class: "settings-row__help",
-                                                        title: "Prevents similar cards from appearing on the same day.",
-                                                        "?"
-                                                    }
-                                                }
-                                                div { class: "settings-row__field settings-row__field--toggle",
-                                                    button {
-                                                        class: "settings-toggle",
-                                                        r#type: "button",
-                                                        role: "switch",
-                                                        aria_checked: "{bury_related_cards()}",
-                                                        onclick: move |_| {
-                                                            bury_related_cards.set(!bury_related_cards());
-                                                        },
-                                                    }
-                                                }
-                                            }
-                                            div { class: "settings-row",
-                                                div { class: "settings-row__label",
-                                                    label { "Bury siblings until next day" }
-                                                    span {
-                                                        class: "settings-row__help",
-                                                        title: "Improves clarity and reduces confusion.",
-                                                        "?"
-                                                    }
-                                                }
-                                                div { class: "settings-row__field settings-row__field--toggle",
-                                                    button {
-                                                        class: "settings-toggle",
-                                                        r#type: "button",
-                                                        role: "switch",
-                                                        aria_checked: "{bury_siblings_until_next_day()}",
-                                                        onclick: move |_| {
-                                                            bury_siblings_until_next_day
-                                                                .set(!bury_siblings_until_next_day());
-                                                        },
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                     SettingsAccordionSection {
                                         label: "Audio",
@@ -1280,7 +1217,6 @@ fn SettingsNavIcon(section: SettingsSection) -> Element {
         SettingsSection::DailyLimits => "M4 6h16M4 12h10M4 18h12",
         SettingsSection::Lapses => "M4 8l8 8 8-8",
         SettingsSection::Fsrs => "M4 12h16M12 4v16",
-        SettingsSection::Burying => "M4 7h16M7 7v10",
         SettingsSection::Audio => "M5 9h4l5-4v14l-5-4H5z",
         SettingsSection::Timers => "M12 6v6l4 2",
         SettingsSection::EasyDays => "M12 4v16M4 12h16",
