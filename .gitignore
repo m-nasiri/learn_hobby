@@ -1,5 +1,7 @@
 /target
+/agent_
+/.vscode
+
 dev.sql*
 .DS_Store
-/agent_
 AGENTS.md
