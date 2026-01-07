@@ -289,8 +289,10 @@ mod tests {
         let now = fixed_now();
         let mut card = build_card(now);
         let retention = 0.7;
-        let settings =
-            DeckSettings::new(5, 30, 5, true, true, 86_400, retention, true, 100).unwrap();
+        let settings = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, retention, true, 100,
+        )
+        .unwrap();
         let service = ReviewService::new().unwrap().with_clock(Clock::Fixed(now));
 
         let scheduler = Scheduler::try_with_retention(retention).unwrap();
@@ -323,8 +325,10 @@ mod tests {
             .review_card_with_settings(&mut card, ReviewGrade::Good, second_review, &defaults)
             .unwrap();
 
-        let lapse_settings =
-            DeckSettings::new(5, 30, 5, true, true, 3 * 86_400, 0.85, true, 100).unwrap();
+        let lapse_settings = DeckSettings::new(
+            5, 30, 5, true, true, 3 * 86_400, false, false, false, 25, 20, 0.85, true, 100,
+        )
+        .unwrap();
         let lapse_review = now + chrono::Duration::days(2);
         let result = service
             .review_card_with_settings(&mut card, ReviewGrade::Again, lapse_review, &lapse_settings)
@@ -351,8 +355,10 @@ mod tests {
             .review_card_with_settings(&mut card, ReviewGrade::Good, second_review, &defaults)
             .unwrap();
 
-        let lapse_settings =
-            DeckSettings::new(5, 30, 5, true, false, 86_400, 0.85, true, 100).unwrap();
+        let lapse_settings = DeckSettings::new(
+            5, 30, 5, true, false, 86_400, false, false, false, 25, 20, 0.85, true, 100,
+        )
+        .unwrap();
         let result = service
             .review_card_with_settings(&mut card, ReviewGrade::Again, lapse_review, &lapse_settings)
             .unwrap();

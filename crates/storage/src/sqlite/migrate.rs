@@ -363,5 +363,89 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 7).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN show_timer INTEGER NOT NULL DEFAULT 0
+                    CHECK (show_timer IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN soft_time_reminder INTEGER NOT NULL DEFAULT 0
+                    CHECK (soft_time_reminder IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN auto_advance_cards INTEGER NOT NULL DEFAULT 0
+                    CHECK (auto_advance_cards IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(7_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
+    if !is_applied(pool, 8).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN soft_time_reminder_secs INTEGER NOT NULL DEFAULT 25
+                    CHECK (soft_time_reminder_secs BETWEEN 5 AND 600);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN auto_reveal_secs INTEGER NOT NULL DEFAULT 20
+                    CHECK (auto_reveal_secs BETWEEN 5 AND 600);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(8_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

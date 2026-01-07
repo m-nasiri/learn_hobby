@@ -2,6 +2,7 @@ use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use keyboard_types::{Code, Key, Modifiers};
+use std::time::Duration;
 
 use learn_core::model::{DeckId, ReviewGrade, TagName};
 
@@ -29,6 +30,34 @@ enum CompletionDestination {
     Summary(i64),
     Practice,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TimerSettings {
+    show_timer: bool,
+    soft_time_reminder: bool,
+    auto_advance_cards: bool,
+    soft_time_reminder_secs: u32,
+    auto_reveal_secs: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+struct TimerControl {
+    active: bool,
+    show_timer: bool,
+    soft_time_reminder: bool,
+    auto_advance_cards: bool,
+    soft_time_reminder_secs: u32,
+    auto_reveal_secs: u32,
+    phase: Option<SessionPhase>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TimerKey {
+    completed: bool,
+    index: usize,
+}
+
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PracticeCounts {
@@ -122,6 +151,12 @@ fn focus_cycle_ids_for_phase(
     }
 }
 
+fn format_timer(seconds: u32) -> String {
+    let minutes = seconds / 60;
+    let remainder = seconds % 60;
+    format!("Time: {minutes}:{remainder:02}")
+}
+
 #[component]
 pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) -> Element {
     let ctx = use_context::<AppContext>();
@@ -145,6 +180,10 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     let mut last_focus_completed = use_signal(|| false);
     let mut last_focus_can_practice = use_signal(|| true);
     let mut completion = use_signal(|| None::<CompletionDestination>);
+    let mut timer_seconds = use_signal(|| 0_u32);
+    let mut timer_control = use_signal(TimerControl::default);
+    let mut auto_reveal_fired = use_signal(|| false);
+    let mut timer_key = use_signal(|| None::<TimerKey>);
     let counts_resource = {
         let card_service = card_service.clone();
         let tag_name = tag_name.clone();
@@ -193,7 +232,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
             }
         })
     };
-    let deck_label_resource = {
+    let deck_info_resource = {
         let deck_service = deck_service.clone();
         use_resource(move || {
             let deck_service = deck_service.clone();
@@ -202,7 +241,19 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                     .get_deck(deck_id)
                     .await
                     .map_err(|_| ViewError::Unknown)?;
-                Ok::<_, ViewError>(deck.map(|deck| deck.name().to_string()))
+                Ok::<_, ViewError>(deck.map(|deck| {
+                    let settings = deck.settings();
+                    (
+                        deck.name().to_string(),
+                        TimerSettings {
+                            show_timer: settings.show_timer(),
+                            soft_time_reminder: settings.soft_time_reminder(),
+                            auto_advance_cards: settings.auto_advance_cards(),
+                            soft_time_reminder_secs: settings.soft_time_reminder_secs(),
+                            auto_reveal_secs: settings.auto_reveal_secs(),
+                        },
+                    )
+                }))
             }
         })
     };
@@ -442,10 +493,10 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     let card_answer_html = card_answer.map(sanitize_html);
     let phase = vm_guard.as_ref().map(SessionVm::phase);
     let completion_state = *completion.read();
-    let progress_label = vm_guard.as_ref().map_or_else(
-        || "0 / 0 Cards".to_string(),
-        |vm| format!("{} / {} Cards", vm.current_index(), vm.total_cards()),
-    );
+    let (current_index, total_cards) = vm_guard.as_ref().map_or((0, 0), |vm| {
+        (vm.current_index(), vm.total_cards())
+    });
+    let progress_label = format!("{current_index} / {total_cards} Cards");
     let streak_label = vm_guard.as_ref().map_or_else(
         || "Streak: 0 🔥".to_string(),
         |vm| format!("Streak: {} 🔥", vm.streak()),
@@ -453,6 +504,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     let due_label = practice_counts
         .map(|counts| counts.due)
         .map_or_else(|| "Due: --".to_string(), |due| format!("Due: {due}"));
+    let timer_label = format_timer(timer_seconds());
     let empty_session_message = if has_any_cards {
         "All caught up. No cards due right now."
     } else {
@@ -465,18 +517,82 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     };
     let completion_note = (!completion_flags.can_practice_again)
         .then_some("All caught up. No cards due right now.");
-    let deck_label = deck_label_resource
+    let deck_info = deck_info_resource
         .value()
         .read()
         .as_ref()
         .and_then(|value| value.as_ref().ok())
         .and_then(Clone::clone);
+    let (deck_label, timer_settings) = deck_info.map_or(
+        (None, TimerSettings::default()),
+        |(label, settings)| (Some(label), settings),
+    );
     let context_label = match (deck_label.as_deref(), tag.as_deref()) {
         (Some(deck), Some(tag)) => format!("{deck} · Tag: {tag}"),
         (Some(deck), None) => deck.to_string(),
         (None, Some(tag)) => format!("Tag: {tag}"),
         (None, None) => String::new(),
     };
+    let timer_enabled = timer_settings.show_timer
+        || timer_settings.soft_time_reminder
+        || timer_settings.auto_advance_cards;
+    let timer_active = timer_enabled
+        && matches!(state, ViewState::Ready(()))
+        && completion_state.is_none()
+        && phase == Some(SessionPhase::Prompt);
+    let next_timer_key = TimerKey {
+        completed: completion_state.is_some(),
+        index: current_index,
+    };
+    let show_soft_reminder = timer_settings.soft_time_reminder
+        && timer_active
+        && timer_seconds() >= timer_settings.soft_time_reminder_secs;
+
+    use_effect(move || {
+        let previous = timer_key();
+        if previous != Some(next_timer_key) {
+            timer_seconds.set(0);
+            auto_reveal_fired.set(false);
+            timer_key.set(Some(next_timer_key));
+        }
+        timer_control.set(TimerControl {
+            active: timer_active,
+            show_timer: timer_settings.show_timer,
+            soft_time_reminder: timer_settings.soft_time_reminder,
+            auto_advance_cards: timer_settings.auto_advance_cards,
+            soft_time_reminder_secs: timer_settings.soft_time_reminder_secs,
+            auto_reveal_secs: timer_settings.auto_reveal_secs,
+            phase,
+        });
+    });
+
+    let _timer_loop = {
+        let mut timer_seconds = timer_seconds;
+        let timer_control = timer_control;
+        let mut auto_reveal_fired = auto_reveal_fired;
+        use_future(move || async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let control = timer_control();
+                if !control.active {
+                    continue;
+                }
+                let next = timer_seconds().saturating_add(1);
+                timer_seconds.set(next);
+                if control.auto_advance_cards
+                    && control.phase == Some(SessionPhase::Prompt)
+                    && !auto_reveal_fired()
+                    && next >= control.auto_reveal_secs
+                {
+                    auto_reveal_fired.set(true);
+                    dispatch_intent.call(SessionIntent::Reveal);
+                }
+            }
+        })
+    };
+
+    let control = timer_control();
+    let show_timer = control.show_timer && control.phase == Some(SessionPhase::Prompt);
 
     rsx! {
         div { class: "page session-page", id: "session-root", tabindex: "0", onkeydown: on_key,
@@ -579,6 +695,9 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                                 } else {
                                     p { "No cards available." }
                                 }
+                                if show_soft_reminder {
+                                    p { class: "session-soft-reminder", "Take a breath. You're doing fine." }
+                                }
                             },
                         }
                     }
@@ -599,6 +718,9 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                             span { class: "session-footer__item", "{progress_label}" }
                             span { class: "session-footer__item", "{streak_label}" }
                             span { class: "session-footer__item", "{due_label}" }
+                            if show_timer {
+                                span { class: "session-footer__item session-footer__timer", "{timer_label}" }
+                            }
                         }
                     }
                 }

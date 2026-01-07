@@ -65,6 +65,7 @@ pub struct NewCardRecord {
 
 /// Persisted shape for inserting a brand-new deck (no ID yet).
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct NewDeckRecord {
     pub name: String,
     pub description: Option<String>,
@@ -75,6 +76,11 @@ pub struct NewDeckRecord {
     pub protect_overload: bool,
     pub preserve_stability_on_lapse: bool,
     pub lapse_min_interval_secs: u32,
+    pub show_timer: bool,
+    pub soft_time_reminder: bool,
+    pub auto_advance_cards: bool,
+    pub soft_time_reminder_secs: u32,
+    pub auto_reveal_secs: u32,
     pub fsrs_target_retention: f32,
     pub fsrs_optimize_enabled: bool,
     pub fsrs_optimize_after: u32,
@@ -110,6 +116,11 @@ impl NewDeckRecord {
             protect_overload: deck.settings().protect_overload(),
             preserve_stability_on_lapse: deck.settings().preserve_stability_on_lapse(),
             lapse_min_interval_secs: deck.settings().lapse_min_interval_secs(),
+            show_timer: deck.settings().show_timer(),
+            soft_time_reminder: deck.settings().soft_time_reminder(),
+            auto_advance_cards: deck.settings().auto_advance_cards(),
+            soft_time_reminder_secs: deck.settings().soft_time_reminder_secs(),
+            auto_reveal_secs: deck.settings().auto_reveal_secs(),
             fsrs_target_retention: deck.settings().fsrs_target_retention(),
             fsrs_optimize_enabled: deck.settings().fsrs_optimize_enabled(),
             fsrs_optimize_after: deck.settings().fsrs_optimize_after(),
@@ -578,6 +589,11 @@ impl DeckRepository for InMemoryRepository {
             deck.protect_overload,
             deck.preserve_stability_on_lapse,
             deck.lapse_min_interval_secs,
+            deck.show_timer,
+            deck.soft_time_reminder,
+            deck.auto_advance_cards,
+            deck.soft_time_reminder_secs,
+            deck.auto_reveal_secs,
             deck.fsrs_target_retention,
             deck.fsrs_optimize_enabled,
             deck.fsrs_optimize_after,

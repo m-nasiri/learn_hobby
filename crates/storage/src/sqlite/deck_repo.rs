@@ -21,6 +21,11 @@ impl DeckRepository for SqliteRepository {
         let protect_overload = i64::from(i32::from(deck.protect_overload));
         let preserve_stability_on_lapse = i64::from(i32::from(deck.preserve_stability_on_lapse));
         let lapse_min_interval_secs = i64::from(deck.lapse_min_interval_secs);
+        let show_timer = i64::from(i32::from(deck.show_timer));
+        let soft_time_reminder = i64::from(i32::from(deck.soft_time_reminder));
+        let auto_advance_cards = i64::from(i32::from(deck.auto_advance_cards));
+        let soft_time_reminder_secs = i64::from(deck.soft_time_reminder_secs);
+        let auto_reveal_secs = i64::from(deck.auto_reveal_secs);
         let fsrs_target_retention = f64::from(deck.fsrs_target_retention);
         let fsrs_optimize_enabled = i64::from(i32::from(deck.fsrs_optimize_enabled));
         let fsrs_optimize_after = i64::from(deck.fsrs_optimize_after);
@@ -30,10 +35,11 @@ impl DeckRepository for SqliteRepository {
             INSERT INTO decks (
                 name, description, created_at, new_cards_per_day, review_limit_per_day,
                 micro_session_size, protect_overload, preserve_stability_on_lapse,
-                lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
-                fsrs_optimize_after
+                lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
+                soft_time_reminder_secs, auto_reveal_secs, fsrs_target_retention,
+                fsrs_optimize_enabled, fsrs_optimize_after
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ",
         )
         .bind(deck.name)
@@ -45,6 +51,11 @@ impl DeckRepository for SqliteRepository {
         .bind(protect_overload)
         .bind(preserve_stability_on_lapse)
         .bind(lapse_min_interval_secs)
+        .bind(show_timer)
+        .bind(soft_time_reminder)
+        .bind(auto_advance_cards)
+        .bind(soft_time_reminder_secs)
+        .bind(auto_reveal_secs)
         .bind(fsrs_target_retention)
         .bind(fsrs_optimize_enabled)
         .bind(fsrs_optimize_after)
@@ -67,6 +78,11 @@ impl DeckRepository for SqliteRepository {
         let preserve_stability_on_lapse =
             i64::from(i32::from(deck.settings().preserve_stability_on_lapse()));
         let lapse_min_interval_secs = i64::from(deck.settings().lapse_min_interval_secs());
+        let show_timer = i64::from(i32::from(deck.settings().show_timer()));
+        let soft_time_reminder = i64::from(i32::from(deck.settings().soft_time_reminder()));
+        let auto_advance_cards = i64::from(i32::from(deck.settings().auto_advance_cards()));
+        let soft_time_reminder_secs = i64::from(deck.settings().soft_time_reminder_secs());
+        let auto_reveal_secs = i64::from(deck.settings().auto_reveal_secs());
         let fsrs_target_retention = f64::from(deck.settings().fsrs_target_retention());
         let fsrs_optimize_enabled = i64::from(i32::from(deck.settings().fsrs_optimize_enabled()));
         let fsrs_optimize_after = i64::from(deck.settings().fsrs_optimize_after());
@@ -76,10 +92,11 @@ impl DeckRepository for SqliteRepository {
             INSERT INTO decks (
                 id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                 micro_session_size, protect_overload, preserve_stability_on_lapse,
-                lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
-                fsrs_optimize_after
+                lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
+                soft_time_reminder_secs, auto_reveal_secs, fsrs_target_retention,
+                fsrs_optimize_enabled, fsrs_optimize_after
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -89,6 +106,11 @@ impl DeckRepository for SqliteRepository {
                 protect_overload = excluded.protect_overload,
                 preserve_stability_on_lapse = excluded.preserve_stability_on_lapse,
                 lapse_min_interval_secs = excluded.lapse_min_interval_secs,
+                show_timer = excluded.show_timer,
+                soft_time_reminder = excluded.soft_time_reminder,
+                auto_advance_cards = excluded.auto_advance_cards,
+                soft_time_reminder_secs = excluded.soft_time_reminder_secs,
+                auto_reveal_secs = excluded.auto_reveal_secs,
                 fsrs_target_retention = excluded.fsrs_target_retention,
                 fsrs_optimize_enabled = excluded.fsrs_optimize_enabled,
                 fsrs_optimize_after = excluded.fsrs_optimize_after
@@ -104,6 +126,11 @@ impl DeckRepository for SqliteRepository {
         .bind(protect_overload)
         .bind(preserve_stability_on_lapse)
         .bind(lapse_min_interval_secs)
+        .bind(show_timer)
+        .bind(soft_time_reminder)
+        .bind(auto_advance_cards)
+        .bind(soft_time_reminder_secs)
+        .bind(auto_reveal_secs)
         .bind(fsrs_target_retention)
         .bind(fsrs_optimize_enabled)
         .bind(fsrs_optimize_after)
@@ -119,8 +146,9 @@ impl DeckRepository for SqliteRepository {
             r"
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                    micro_session_size, protect_overload, preserve_stability_on_lapse,
-                   lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
-                   fsrs_optimize_after
+                   lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
+                   soft_time_reminder_secs, auto_reveal_secs, fsrs_target_retention,
+                   fsrs_optimize_enabled, fsrs_optimize_after
             FROM decks WHERE id = ?1
             ",
         )
@@ -142,8 +170,9 @@ impl DeckRepository for SqliteRepository {
             r"
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                    micro_session_size, protect_overload, preserve_stability_on_lapse,
-                   lapse_min_interval_secs, fsrs_target_retention, fsrs_optimize_enabled,
-                   fsrs_optimize_after
+                   lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
+                   soft_time_reminder_secs, auto_reveal_secs, fsrs_target_retention,
+                   fsrs_optimize_enabled, fsrs_optimize_after
             FROM decks
             ORDER BY id ASC
             LIMIT ?1
@@ -176,6 +205,13 @@ fn deck_from_row(row: &SqliteRow) -> Result<Deck, StorageError> {
             != 0,
         u32::try_from(row.try_get::<i64, _>("lapse_min_interval_secs").map_err(ser)?)
             .map_err(|_| StorageError::Serialization("lapse_min_interval_secs overflow".into()))?,
+        row.try_get::<i64, _>("show_timer").map_err(ser)? != 0,
+        row.try_get::<i64, _>("soft_time_reminder").map_err(ser)? != 0,
+        row.try_get::<i64, _>("auto_advance_cards").map_err(ser)? != 0,
+        u32::try_from(row.try_get::<i64, _>("soft_time_reminder_secs").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("soft_time_reminder_secs overflow".into()))?,
+        u32::try_from(row.try_get::<i64, _>("auto_reveal_secs").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("auto_reveal_secs overflow".into()))?,
         {
             let retention = row.try_get::<f32, _>("fsrs_target_retention").map_err(ser)?;
             if !retention.is_finite() || retention <= 0.0 || retention > 1.0 {

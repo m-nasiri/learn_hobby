@@ -154,8 +154,10 @@ mod tests {
             .await
             .unwrap();
 
-        let updated_settings =
-            DeckSettings::new(12, 55, 5, false, true, 86_400, 0.85, true, 100).unwrap();
+        let updated_settings = DeckSettings::new(
+            12, 55, 5, false, true, 86_400, false, false, false, 25, 20, 0.85, true, 100,
+        )
+        .unwrap();
         service
             .update_deck(deck_id, "Daily Limits".to_string(), None, updated_settings)
             .await

@@ -30,6 +30,12 @@ pub enum DeckError {
 
     #[error("FSRS optimize-after must be > 0")]
     InvalidFsrsOptimizeAfter,
+
+    #[error("soft reminder seconds must be between 5 and 600")]
+    InvalidSoftReminderSeconds,
+
+    #[error("auto reveal seconds must be between 5 and 600")]
+    InvalidAutoRevealSeconds,
 }
 
 //
@@ -40,6 +46,7 @@ pub enum DeckError {
 ///
 /// Controls daily limits and session sizes for spaced repetition learning.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DeckSettings {
     new_cards_per_day: u32,
     review_limit_per_day: u32,
@@ -47,6 +54,11 @@ pub struct DeckSettings {
     protect_overload: bool,
     preserve_stability_on_lapse: bool,
     lapse_min_interval_secs: u32,
+    show_timer: bool,
+    soft_time_reminder: bool,
+    auto_advance_cards: bool,
+    soft_time_reminder_secs: u32,
+    auto_reveal_secs: u32,
     fsrs_target_retention: f32,
     fsrs_optimize_enabled: bool,
     fsrs_optimize_after: u32,
@@ -69,6 +81,11 @@ impl DeckSettings {
             protect_overload: true,
             preserve_stability_on_lapse: true,
             lapse_min_interval_secs: 86_400,
+            show_timer: false,
+            soft_time_reminder: false,
+            auto_advance_cards: false,
+            soft_time_reminder_secs: 25,
+            auto_reveal_secs: 20,
             fsrs_target_retention: 0.85,
             fsrs_optimize_enabled: true,
             fsrs_optimize_after: 100,
@@ -80,7 +97,7 @@ impl DeckSettings {
     /// # Errors
     ///
     /// Returns error if any parameter is zero.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     pub fn new(
         new_cards_per_day: u32,
         review_limit_per_day: u32,
@@ -88,6 +105,11 @@ impl DeckSettings {
         protect_overload: bool,
         preserve_stability_on_lapse: bool,
         lapse_min_interval_secs: u32,
+        show_timer: bool,
+        soft_time_reminder: bool,
+        auto_advance_cards: bool,
+        soft_time_reminder_secs: u32,
+        auto_reveal_secs: u32,
         fsrs_target_retention: f32,
         fsrs_optimize_enabled: bool,
         fsrs_optimize_after: u32,
@@ -113,6 +135,12 @@ impl DeckSettings {
         if fsrs_optimize_after == 0 {
             return Err(DeckError::InvalidFsrsOptimizeAfter);
         }
+        if !(5..=600).contains(&soft_time_reminder_secs) {
+            return Err(DeckError::InvalidSoftReminderSeconds);
+        }
+        if !(5..=600).contains(&auto_reveal_secs) {
+            return Err(DeckError::InvalidAutoRevealSeconds);
+        }
 
         Ok(Self {
             new_cards_per_day,
@@ -121,6 +149,11 @@ impl DeckSettings {
             protect_overload,
             preserve_stability_on_lapse,
             lapse_min_interval_secs,
+            show_timer,
+            soft_time_reminder,
+            auto_advance_cards,
+            soft_time_reminder_secs,
+            auto_reveal_secs,
             fsrs_target_retention,
             fsrs_optimize_enabled,
             fsrs_optimize_after,
@@ -157,6 +190,31 @@ impl DeckSettings {
     #[must_use]
     pub fn lapse_min_interval_secs(&self) -> u32 {
         self.lapse_min_interval_secs
+    }
+
+    #[must_use]
+    pub fn show_timer(&self) -> bool {
+        self.show_timer
+    }
+
+    #[must_use]
+    pub fn soft_time_reminder(&self) -> bool {
+        self.soft_time_reminder
+    }
+
+    #[must_use]
+    pub fn auto_advance_cards(&self) -> bool {
+        self.auto_advance_cards
+    }
+
+    #[must_use]
+    pub fn soft_time_reminder_secs(&self) -> u32 {
+        self.soft_time_reminder_secs
+    }
+
+    #[must_use]
+    pub fn auto_reveal_secs(&self) -> u32 {
+        self.auto_reveal_secs
     }
 
     #[must_use]
@@ -272,7 +330,10 @@ mod tests {
 
     #[test]
     fn settings_new_rejects_zero_micro_session() {
-        let err = DeckSettings::new(5, 30, 0, true, true, 86_400, 0.85, true, 100).unwrap_err();
+        let err = DeckSettings::new(
+            5, 30, 0, true, true, 86_400, false, false, false, 25, 20, 0.85, true, 100,
+        )
+        .unwrap_err();
         assert_eq!(err, DeckError::InvalidMicroSessionSize);
     }
 
@@ -285,6 +346,11 @@ mod tests {
         assert!(settings.protect_overload());
         assert!(settings.preserve_stability_on_lapse());
         assert_eq!(settings.lapse_min_interval_secs(), 86_400);
+        assert!(!settings.show_timer());
+        assert!(!settings.soft_time_reminder());
+        assert!(!settings.auto_advance_cards());
+        assert_eq!(settings.soft_time_reminder_secs(), 25);
+        assert_eq!(settings.auto_reveal_secs(), 20);
         assert!((settings.fsrs_target_retention() - 0.85).abs() < f32::EPSILON);
         assert!(settings.fsrs_optimize_enabled());
         assert_eq!(settings.fsrs_optimize_after(), 100);
@@ -292,11 +358,32 @@ mod tests {
 
     #[test]
     fn settings_rejects_invalid_retention() {
-        let err = DeckSettings::new(5, 30, 5, true, true, 86_400, 0.0, true, 100).unwrap_err();
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 0.0, true, 100,
+        )
+        .unwrap_err();
         assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
 
-        let err = DeckSettings::new(5, 30, 5, true, true, 86_400, 1.1, true, 100).unwrap_err();
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1.1, true, 100,
+        )
+        .unwrap_err();
         assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
+    }
+
+    #[test]
+    fn settings_rejects_invalid_timer_bounds() {
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 2, 20, 0.85, true, 100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidSoftReminderSeconds);
+
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 700, 0.85, true, 100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidAutoRevealSeconds);
     }
 
     #[test]

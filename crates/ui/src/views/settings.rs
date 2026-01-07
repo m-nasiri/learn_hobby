@@ -12,6 +12,7 @@ struct DeckSettingsData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 struct DeckSettingsSnapshot {
     deck_id: DeckId,
     name: String,
@@ -22,6 +23,11 @@ struct DeckSettingsSnapshot {
     protect_overload: bool,
     preserve_stability_on_lapse: bool,
     lapse_min_interval_secs: u32,
+    show_timer: bool,
+    soft_time_reminder: bool,
+    auto_advance_cards: bool,
+    soft_time_reminder_secs: u32,
+    auto_reveal_secs: u32,
     fsrs_target_retention: f32,
     fsrs_optimize_enabled: bool,
     fsrs_optimize_after: u32,
@@ -40,6 +46,11 @@ impl DeckSettingsSnapshot {
             protect_overload: settings.protect_overload(),
             preserve_stability_on_lapse: settings.preserve_stability_on_lapse(),
             lapse_min_interval_secs: settings.lapse_min_interval_secs(),
+            show_timer: settings.show_timer(),
+            soft_time_reminder: settings.soft_time_reminder(),
+            auto_advance_cards: settings.auto_advance_cards(),
+            soft_time_reminder_secs: settings.soft_time_reminder_secs(),
+            auto_reveal_secs: settings.auto_reveal_secs(),
             fsrs_target_retention: settings.fsrs_target_retention(),
             fsrs_optimize_enabled: settings.fsrs_optimize_enabled(),
             fsrs_optimize_after: settings.fsrs_optimize_after(),
@@ -58,6 +69,11 @@ impl DeckSettingsSnapshot {
             protect_overload: settings.protect_overload(),
             preserve_stability_on_lapse: settings.preserve_stability_on_lapse(),
             lapse_min_interval_secs: settings.lapse_min_interval_secs(),
+            show_timer: settings.show_timer(),
+            soft_time_reminder: settings.soft_time_reminder(),
+            auto_advance_cards: settings.auto_advance_cards(),
+            soft_time_reminder_secs: settings.soft_time_reminder_secs(),
+            auto_reveal_secs: settings.auto_reveal_secs(),
             fsrs_target_retention: settings.fsrs_target_retention(),
             fsrs_optimize_enabled: settings.fsrs_optimize_enabled(),
             fsrs_optimize_after: settings.fsrs_optimize_after(),
@@ -66,6 +82,7 @@ impl DeckSettingsSnapshot {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 struct DeckSettingsForm {
     name: String,
     description: String,
@@ -75,6 +92,11 @@ struct DeckSettingsForm {
     protect_overload: bool,
     preserve_stability_on_lapse: bool,
     lapse_min_interval: String,
+    show_timer: bool,
+    soft_time_reminder: bool,
+    auto_advance_cards: bool,
+    soft_time_reminder_secs: String,
+    auto_reveal_secs: String,
     fsrs_target_retention: String,
     fsrs_optimize_enabled: bool,
     fsrs_optimize_after: String,
@@ -94,6 +116,11 @@ impl DeckSettingsForm {
             protect_overload: snapshot.protect_overload,
             preserve_stability_on_lapse: snapshot.preserve_stability_on_lapse,
             lapse_min_interval: format_lapse_interval(snapshot.lapse_min_interval_secs),
+            show_timer: snapshot.show_timer,
+            soft_time_reminder: snapshot.soft_time_reminder,
+            auto_advance_cards: snapshot.auto_advance_cards,
+            soft_time_reminder_secs: snapshot.soft_time_reminder_secs.to_string(),
+            auto_reveal_secs: snapshot.auto_reveal_secs.to_string(),
             fsrs_target_retention: format_retention(snapshot.fsrs_target_retention),
             fsrs_optimize_enabled: snapshot.fsrs_optimize_enabled,
             fsrs_optimize_after: snapshot.fsrs_optimize_after.to_string(),
@@ -116,6 +143,8 @@ impl DeckSettingsForm {
         let lapse_min_interval_secs = parse_lapse_interval_secs(&self.lapse_min_interval)?;
         let fsrs_target_retention = parse_retention(&self.fsrs_target_retention)?;
         let fsrs_optimize_after = parse_positive_u32(&self.fsrs_optimize_after)?;
+        let soft_time_reminder_secs = parse_timer_secs(&self.soft_time_reminder_secs)?;
+        let auto_reveal_secs = parse_timer_secs(&self.auto_reveal_secs)?;
 
         Some(DeckSettingsSnapshot {
             deck_id,
@@ -127,6 +156,11 @@ impl DeckSettingsForm {
             protect_overload: self.protect_overload,
             preserve_stability_on_lapse: self.preserve_stability_on_lapse,
             lapse_min_interval_secs,
+            show_timer: self.show_timer,
+            soft_time_reminder: self.soft_time_reminder,
+            auto_advance_cards: self.auto_advance_cards,
+            soft_time_reminder_secs,
+            auto_reveal_secs,
             fsrs_target_retention,
             fsrs_optimize_enabled: self.fsrs_optimize_enabled,
             fsrs_optimize_after,
@@ -141,6 +175,8 @@ struct DeckSettingsErrors {
     review_limit_per_day: Option<&'static str>,
     micro_session_size: Option<&'static str>,
     lapse_min_interval: Option<&'static str>,
+    soft_time_reminder_secs: Option<&'static str>,
+    auto_reveal_secs: Option<&'static str>,
     fsrs_target_retention: Option<&'static str>,
     fsrs_optimize_after: Option<&'static str>,
 }
@@ -152,6 +188,8 @@ impl DeckSettingsErrors {
             || self.review_limit_per_day.is_some()
             || self.micro_session_size.is_some()
             || self.lapse_min_interval.is_some()
+            || self.soft_time_reminder_secs.is_some()
+            || self.auto_reveal_secs.is_some()
             || self.fsrs_target_retention.is_some()
             || self.fsrs_optimize_after.is_some()
     }
@@ -224,9 +262,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let mut autoplay_audio = use_signal(|| true);
     let mut replay_audio_after_answer = use_signal(|| false);
     let mut audio_delay_ms = use_signal(|| "300".to_string());
-    let mut show_timer = use_signal(|| false);
-    let mut soft_time_reminder = use_signal(|| false);
-    let mut auto_advance_cards = use_signal(|| false);
     let mut easy_days_enabled = use_signal(|| true);
     let mut easy_day_load_factor = use_signal(|| "0.5".to_string());
     let mut easy_days_selected = use_signal(|| "Saturday, Sunday".to_string());
@@ -323,7 +358,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                     });
                 }
                 Err(next_errors) => {
-                    errors.set(next_errors);
+                    errors.set(*next_errors);
                 }
             }
         })
@@ -342,6 +377,11 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         next.protect_overload = defaults.protect_overload();
         next.preserve_stability_on_lapse = defaults.preserve_stability_on_lapse();
         next.lapse_min_interval = format_lapse_interval(defaults.lapse_min_interval_secs());
+        next.show_timer = defaults.show_timer();
+        next.soft_time_reminder = defaults.soft_time_reminder();
+        next.auto_advance_cards = defaults.auto_advance_cards();
+        next.soft_time_reminder_secs = defaults.soft_time_reminder_secs().to_string();
+        next.auto_reveal_secs = defaults.auto_reveal_secs().to_string();
         next.fsrs_target_retention = format_retention(defaults.fsrs_target_retention());
         next.fsrs_optimize_enabled = defaults.fsrs_optimize_enabled();
         next.fsrs_optimize_after = defaults.fsrs_optimize_after().to_string();
@@ -856,7 +896,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                 }
                                             }
                                         }
-                                        p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                     SettingsAccordionSection {
                                         label: "Timers",
@@ -879,8 +918,13 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{show_timer()}",
-                                                        onclick: move |_| show_timer.set(!show_timer()),
+                                                        aria_checked: "{form_value.show_timer}",
+                                                        onclick: move |_| {
+                                                            let mut next = form();
+                                                            next.show_timer = !next.show_timer;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
+                                                        },
                                                     }
                                                 }
                                             }
@@ -898,8 +942,55 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{soft_time_reminder()}",
-                                                        onclick: move |_| soft_time_reminder.set(!soft_time_reminder()),
+                                                        aria_checked: "{form_value.soft_time_reminder}",
+                                                        onclick: move |_| {
+                                                            let mut next = form();
+                                                            next.soft_time_reminder =
+                                                                !next.soft_time_reminder;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
+                                                        },
+                                                    }
+                                                }
+                                            }
+                                            div { class: "settings-row",
+                                                div { class: "settings-row__label",
+                                                    label { r#for: "soft-reminder-secs", "Soft reminder after" }
+                                                    span {
+                                                        class: "settings-row__help",
+                                                        title: "How many seconds before the gentle reminder appears.",
+                                                        "?"
+                                                    }
+                                                }
+                                                div { class: "settings-row__field settings-row__field--wide",
+                                                    div { class: "settings-inline-input",
+                                                        input {
+                                                            id: "soft-reminder-secs",
+                                                            class: if errors_value.soft_time_reminder_secs.is_some() {
+                                                                "editor-input settings-input editor-input--error"
+                                                            } else {
+                                                                "editor-input settings-input"
+                                                            },
+                                                            r#type: "number",
+                                                            min: "5",
+                                                            max: "600",
+                                                            inputmode: "numeric",
+                                                            value: "{form_value.soft_time_reminder_secs}",
+                                                            disabled: "{!form_value.soft_time_reminder}",
+                                                            oninput: move |evt| {
+                                                                let mut next = form();
+                                                                next.soft_time_reminder_secs = evt.value();
+                                                                form.set(next);
+                                                                let mut next_errors = errors();
+                                                                next_errors.soft_time_reminder_secs = None;
+                                                                errors.set(next_errors);
+                                                                save_state.set(SaveState::Idle);
+                                                            },
+                                                        }
+                                                        span { class: "settings-inline-suffix", "sec" }
+                                                    }
+                                                    if let Some(message) = errors_value.soft_time_reminder_secs {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
@@ -917,12 +1008,59 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{auto_advance_cards()}",
-                                                        onclick: move |_| auto_advance_cards.set(!auto_advance_cards()),
+                                                        aria_checked: "{form_value.auto_advance_cards}",
+                                                        onclick: move |_| {
+                                                            let mut next = form();
+                                                            next.auto_advance_cards =
+                                                                !next.auto_advance_cards;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
+                                                        },
+                                                }
+                                            }
+                                            div { class: "settings-row",
+                                                div { class: "settings-row__label",
+                                                    label { r#for: "auto-reveal-secs", "Auto reveal after" }
+                                                    span {
+                                                        class: "settings-row__help",
+                                                        title: "Seconds before the answer is revealed automatically.",
+                                                        "?"
+                                                    }
+                                                }
+                                                div { class: "settings-row__field settings-row__field--wide",
+                                                    div { class: "settings-inline-input",
+                                                        input {
+                                                            id: "auto-reveal-secs",
+                                                            class: if errors_value.auto_reveal_secs.is_some() {
+                                                                "editor-input settings-input editor-input--error"
+                                                            } else {
+                                                                "editor-input settings-input"
+                                                            },
+                                                            r#type: "number",
+                                                            min: "5",
+                                                            max: "600",
+                                                            inputmode: "numeric",
+                                                            value: "{form_value.auto_reveal_secs}",
+                                                            disabled: "{!form_value.auto_advance_cards}",
+                                                            oninput: move |evt| {
+                                                                let mut next = form();
+                                                                next.auto_reveal_secs = evt.value();
+                                                                form.set(next);
+                                                                let mut next_errors = errors();
+                                                                next_errors.auto_reveal_secs = None;
+                                                                errors.set(next_errors);
+                                                                save_state.set(SaveState::Idle);
+                                                            },
+                                                        }
+                                                        span { class: "settings-inline-suffix", "sec" }
+                                                    }
+                                                    if let Some(message) = errors_value.auto_reveal_secs {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
                                         }
+                                    }
                                         p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                     SettingsAccordionSection {
@@ -1278,7 +1416,7 @@ fn SettingsAccordionSection(
     }
 }
 
-fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSettingsErrors> {
+fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckSettingsErrors>> {
     let mut errors = DeckSettingsErrors::default();
 
     let name = form.name.trim();
@@ -1303,6 +1441,14 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
             errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
             0
         });
+    let soft_time_reminder_secs = parse_timer_secs(&form.soft_time_reminder_secs).unwrap_or_else(|| {
+        errors.soft_time_reminder_secs = Some("Enter 5-600 seconds.");
+        0
+    });
+    let auto_reveal_secs = parse_timer_secs(&form.auto_reveal_secs).unwrap_or_else(|| {
+        errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
+        0
+    });
     let fsrs_target_retention = parse_retention(&form.fsrs_target_retention).unwrap_or_else(|| {
         errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
         0.0
@@ -1313,7 +1459,7 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
     });
 
     if errors.has_any() {
-        return Err(errors);
+        return Err(Box::new(errors));
     }
 
     let settings = DeckSettings::new(
@@ -1323,40 +1469,51 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, DeckSetti
         form.protect_overload,
         form.preserve_stability_on_lapse,
         lapse_min_interval_secs,
+        form.show_timer,
+        form.soft_time_reminder,
+        form.auto_advance_cards,
+        soft_time_reminder_secs,
+        auto_reveal_secs,
         fsrs_target_retention,
         form.fsrs_optimize_enabled,
         fsrs_optimize_after,
     )
-        .map_err(|err| {
-            let mut errors = DeckSettingsErrors::default();
-            match err {
-                learn_core::model::DeckError::InvalidMicroSessionSize => {
-                    errors.micro_session_size = Some("Enter a positive number.");
-                }
-                learn_core::model::DeckError::InvalidNewCardsPerDay => {
-                    errors.new_cards_per_day = Some("Enter a positive number.");
-                }
-                learn_core::model::DeckError::InvalidReviewLimitPerDay => {
-                    errors.review_limit_per_day = Some("Enter a positive number.");
-                }
-                learn_core::model::DeckError::InvalidLapseMinInterval => {
-                    errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
-                }
-                learn_core::model::DeckError::InvalidFsrsTargetRetention => {
-                    errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
-                }
-                learn_core::model::DeckError::InvalidFsrsOptimizeAfter => {
-                    errors.fsrs_optimize_after = Some("Enter a positive number.");
-                }
-                learn_core::model::DeckError::EmptyName => {
-                    errors.name = Some("Deck name is required.");
-                }
-                _ => {
-                    errors.name = Some("Invalid deck settings.");
-                }
+    .map_err(|err| {
+        let mut errors = DeckSettingsErrors::default();
+        match err {
+            learn_core::model::DeckError::InvalidMicroSessionSize => {
+                errors.micro_session_size = Some("Enter a positive number.");
             }
-            errors
-        })?;
+            learn_core::model::DeckError::InvalidNewCardsPerDay => {
+                errors.new_cards_per_day = Some("Enter a positive number.");
+            }
+            learn_core::model::DeckError::InvalidReviewLimitPerDay => {
+                errors.review_limit_per_day = Some("Enter a positive number.");
+            }
+            learn_core::model::DeckError::InvalidLapseMinInterval => {
+                errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
+            }
+            learn_core::model::DeckError::InvalidSoftReminderSeconds => {
+                errors.soft_time_reminder_secs = Some("Enter 5-600 seconds.");
+            }
+            learn_core::model::DeckError::InvalidAutoRevealSeconds => {
+                errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
+            }
+            learn_core::model::DeckError::InvalidFsrsTargetRetention => {
+                errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
+            }
+            learn_core::model::DeckError::InvalidFsrsOptimizeAfter => {
+                errors.fsrs_optimize_after = Some("Enter a positive number.");
+            }
+            learn_core::model::DeckError::EmptyName => {
+                errors.name = Some("Deck name is required.");
+            }
+            _ => {
+                errors.name = Some("Invalid deck settings.");
+            }
+        }
+        Box::new(errors)
+    })?;
 
     Ok(ValidatedSettings {
         name: name.to_string(),
@@ -1409,6 +1566,15 @@ fn format_lapse_interval(secs: u32) -> String {
     } else {
         format!("{secs}s")
     }
+}
+
+fn parse_timer_secs(value: &str) -> Option<u32> {
+    let value = value.trim();
+    let parsed = value.parse::<u32>().ok()?;
+    if !(5..=600).contains(&parsed) {
+        return None;
+    }
+    Some(parsed)
 }
 
 fn parse_retention(value: &str) -> Option<f32> {
