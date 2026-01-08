@@ -7,7 +7,7 @@ use learn_core::model::{
 };
 use learn_core::time::fixed_now;
 use storage::repository::{
-    CardRepository, DeckRepository, DeckPracticeCounts, ReviewLogRecord, ReviewLogRepository,
+    CardRepository, DeckPracticeCounts, DeckRepository, ReviewLogRecord, ReviewLogRepository,
     SessionSummaryRepository,
 };
 use storage::sqlite::SqliteRepository;
@@ -283,6 +283,76 @@ async fn sqlite_counts_practice_stats() {
 }
 
 #[tokio::test]
+async fn sqlite_lists_deck_practice_counts() {
+    let repo = SqliteRepository::connect("sqlite:file:memdb_counts_multi?mode=memory&cache=shared")
+        .await
+        .expect("connect");
+    repo.migrate().await.expect("migrate");
+
+    let deck1 = learn_core::model::Deck::new(
+        DeckId::new(1),
+        "Deck 1",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    let deck2 = learn_core::model::Deck::new(
+        DeckId::new(2),
+        "Deck 2",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    repo.upsert_deck(&deck1).await.unwrap();
+    repo.upsert_deck(&deck2).await.unwrap();
+
+    let now = fixed_now();
+    let card1 = build_card(1, deck1.id());
+    repo.upsert_card(&card1).await.unwrap();
+    let mut card2 = build_card(2, deck1.id());
+    let outcome_due =
+        learn_core::model::ReviewOutcome::new(now - Duration::hours(1), 1.0, 2.0, 0.0, 1.0);
+    card2.apply_review_with_phase(ReviewGrade::Good, &outcome_due, now);
+    repo.upsert_card(&card2).await.unwrap();
+
+    let card3 = build_card(3, deck2.id());
+    repo.upsert_card(&card3).await.unwrap();
+    let mut card4 = build_card(4, deck2.id());
+    let outcome_future =
+        learn_core::model::ReviewOutcome::new(now + Duration::hours(2), 1.0, 2.0, 0.0, 1.0);
+    card4.apply_review_with_phase(ReviewGrade::Good, &outcome_future, now);
+    repo.upsert_card(&card4).await.unwrap();
+
+    let rows = repo
+        .list_deck_practice_counts(&[deck1.id(), deck2.id()], now)
+        .await
+        .unwrap();
+    let mut by_deck = std::collections::HashMap::new();
+    for row in rows {
+        by_deck.insert(row.deck_id, row.counts);
+    }
+
+    assert_eq!(
+        by_deck.get(&deck1.id()),
+        Some(&DeckPracticeCounts {
+            total: 2,
+            due: 1,
+            new: 1,
+        })
+    );
+    assert_eq!(
+        by_deck.get(&deck2.id()),
+        Some(&DeckPracticeCounts {
+            total: 2,
+            due: 0,
+            new: 1,
+        })
+    );
+}
+
+#[tokio::test]
 async fn sqlite_lists_session_summaries_by_range() {
     let repo = SqliteRepository::connect("sqlite:file:memdb_session_list?mode=memory&cache=shared")
         .await
@@ -358,4 +428,57 @@ async fn sqlite_lists_session_summaries_by_range() {
 
     // (Optional sanity) ensure the out-of-range summary1 is not included.
     assert_ne!(rows[2].id, id1);
+}
+
+#[tokio::test]
+async fn sqlite_lists_latest_summary_rows() {
+    let repo =
+        SqliteRepository::connect("sqlite:file:memdb_latest_summary?mode=memory&cache=shared")
+            .await
+            .expect("connect");
+    repo.migrate().await.expect("migrate");
+
+    let deck1 = learn_core::model::Deck::new(
+        DeckId::new(1),
+        "Deck 1",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    let deck2 = learn_core::model::Deck::new(
+        DeckId::new(2),
+        "Deck 2",
+        None,
+        DeckSettings::default_for_adhd(),
+        fixed_now(),
+    )
+    .unwrap();
+    repo.upsert_deck(&deck1).await.unwrap();
+    repo.upsert_deck(&deck2).await.unwrap();
+
+    let now = fixed_now();
+    let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
+    let summary1 = SessionSummary::from_logs(deck1.id(), now, now, &logs).unwrap();
+    let summary2 =
+        SessionSummary::from_logs(deck1.id(), now, now + Duration::days(1), &logs).unwrap();
+    let earlier = now - Duration::days(1);
+    let summary3 = SessionSummary::from_logs(deck2.id(), earlier, earlier, &logs).unwrap();
+
+    let id1 = repo.append_summary(&summary1).await.unwrap();
+    let id2 = repo.append_summary(&summary2).await.unwrap();
+    let id3 = repo.append_summary(&summary3).await.unwrap();
+
+    let rows = repo
+        .list_latest_summary_rows(&[deck1.id(), deck2.id()])
+        .await
+        .unwrap();
+    let mut by_deck = std::collections::HashMap::new();
+    for row in rows {
+        by_deck.insert(row.summary.deck_id(), row.id);
+    }
+
+    assert_eq!(by_deck.get(&deck1.id()), Some(&id2));
+    assert_eq!(by_deck.get(&deck2.id()), Some(&id3));
+    assert_ne!(by_deck.get(&deck1.id()), Some(&id1));
 }
