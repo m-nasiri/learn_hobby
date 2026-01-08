@@ -1,5 +1,6 @@
 use learn_core::model::{DeckId, SessionSummary};
 use sqlx::Row;
+use std::collections::HashSet;
 
 use super::{SqliteRepository, mapping::deck_id_from_i64};
 use crate::repository::{SessionSummaryRepository, SessionSummaryRow, StorageError};
@@ -159,6 +160,57 @@ impl SessionSummaryRepository for SqliteRepository {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
+            out.push(map_summary_row_with_id(&row)?);
+        }
+
+        Ok(out)
+    }
+
+    async fn list_latest_summary_rows(
+        &self,
+        deck_ids: &[DeckId],
+    ) -> Result<Vec<SessionSummaryRow>, StorageError> {
+        if deck_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = String::from(
+            r"
+                SELECT
+                    id, deck_id, started_at, completed_at, total_reviews,
+                    again, hard, good, easy
+                FROM session_summaries
+                WHERE deck_id IN (
+            ",
+        );
+
+        for i in 0..deck_ids.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+            sql.push_str(&(i + 1).to_string());
+        }
+        sql.push_str(")\n ORDER BY deck_id ASC, completed_at DESC, id DESC");
+
+        let mut query = sqlx::query(&sql);
+        for deck_id in deck_ids {
+            let deck = id_i64("deck_id", deck_id.value())?;
+            query = query.bind(deck);
+        }
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for row in rows {
+            let deck_id = deck_id_from_i64(row.try_get::<i64, _>("deck_id").map_err(ser)?)?;
+            if !seen.insert(deck_id) {
+                continue;
+            }
             out.push(map_summary_row_with_id(&row)?);
         }
 

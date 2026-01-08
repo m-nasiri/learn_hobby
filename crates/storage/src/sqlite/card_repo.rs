@@ -5,10 +5,11 @@ use sqlx::Row;
 
 use super::{
     SqliteRepository,
-    mapping::{card_id_from_i64, map_card_row, map_tag_row, media_id_to_i64},
+    mapping::{card_id_from_i64, deck_id_from_i64, map_card_row, map_tag_row, media_id_to_i64},
 };
 use crate::repository::{
-    CardRepository, DeckPracticeCounts, NewCardRecord, StorageError, TagPracticeCounts,
+    CardRepository, DeckPracticeCounts, DeckPracticeCountsRow, NewCardRecord, StorageError,
+    TagPracticeCounts,
 };
 
 fn u32_from_i64(field: &'static str, value: i64) -> Result<u32, StorageError> {
@@ -406,6 +407,76 @@ impl CardRepository for SqliteRepository {
         )?;
 
         Ok(DeckPracticeCounts { total, due, new })
+    }
+
+    async fn list_deck_practice_counts(
+        &self,
+        deck_ids: &[DeckId],
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<DeckPracticeCountsRow>, StorageError> {
+        if deck_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = String::from(
+            r"
+            SELECT
+                deck_id,
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN review_count = 0 THEN 1 ELSE 0 END), 0) AS new_count,
+                COALESCE(
+                    SUM(CASE WHEN review_count > 0 AND next_review_at <= ?1 THEN 1 ELSE 0 END),
+                    0
+                ) AS due_count
+            FROM cards
+            WHERE deck_id IN (
+            ",
+        );
+
+        for i in 0..deck_ids.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+            sql.push_str(&(i + 2).to_string());
+        }
+        sql.push_str(")\n GROUP BY deck_id\n");
+
+        let mut query = sqlx::query(&sql).bind(now);
+        for deck_id in deck_ids {
+            let deck = i64::try_from(deck_id.value())
+                .map_err(|_| StorageError::Serialization("deck_id overflow".into()))?;
+            query = query.bind(deck);
+        }
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let deck_id =
+                deck_id_from_i64(row.try_get::<i64, _>("deck_id").map_err(|e| ser(&e))?)?;
+
+            let total =
+                u32_from_i64("total", row.try_get::<i64, _>("total").map_err(|e| ser(&e))?)?;
+            let new = u32_from_i64(
+                "new_count",
+                row.try_get::<i64, _>("new_count").map_err(|e| ser(&e))?,
+            )?;
+            let due = u32_from_i64(
+                "due_count",
+                row.try_get::<i64, _>("due_count").map_err(|e| ser(&e))?,
+            )?;
+
+            out.push(DeckPracticeCountsRow::new(
+                deck_id,
+                DeckPracticeCounts { total, due, new },
+            ));
+        }
+
+        Ok(out)
     }
 
     async fn list_tag_practice_counts(

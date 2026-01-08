@@ -319,6 +319,19 @@ impl SessionQueries {
         let from = now - chrono::Duration::days(days);
         Self::list_summary_rows(deck_id, summaries, Some(from), Some(now), limit).await
     }
+
+    /// List the latest summary row for each deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_latest_summary_rows(
+        deck_ids: &[DeckId],
+        summaries: &dyn SessionSummaryRepository,
+    ) -> Result<Vec<SessionSummaryRow>, SessionError> {
+        let rows = summaries.list_latest_summary_rows(deck_ids).await?;
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]

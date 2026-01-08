@@ -23,6 +23,13 @@ pub struct DeckPracticeStats {
     pub new: u32,
 }
 
+/// Aggregate counts for a deck with identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeckPracticeStatsRow {
+    pub deck_id: DeckId,
+    pub stats: DeckPracticeStats,
+}
+
 /// Aggregate counts for a tag scoped to a deck.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagPracticeStats {
@@ -207,6 +214,30 @@ impl CardService {
             due: counts.due,
             new: counts.new,
         })
+    }
+
+    /// Compute practice-ready card counts for multiple decks.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CardServiceError::Storage` if repository access fails.
+    pub async fn list_deck_practice_stats(
+        &self,
+        deck_ids: &[DeckId],
+    ) -> Result<Vec<DeckPracticeStatsRow>, CardServiceError> {
+        let now = self.clock.now();
+        let rows = self.cards.list_deck_practice_counts(deck_ids, now).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| DeckPracticeStatsRow {
+                deck_id: row.deck_id,
+                stats: DeckPracticeStats {
+                    total: row.counts.total,
+                    due: row.counts.due,
+                    new: row.counts.new,
+                },
+            })
+            .collect())
     }
 
     /// Compute practice-ready tag counts for a deck.

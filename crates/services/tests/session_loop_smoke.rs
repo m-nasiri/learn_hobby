@@ -62,6 +62,13 @@ impl SessionSummaryRepository for FlakySummaryRepo {
             .list_summary_rows(deck_id, completed_from, completed_until, limit)
             .await
     }
+
+    async fn list_latest_summary_rows(
+        &self,
+        deck_ids: &[DeckId],
+    ) -> Result<Vec<SessionSummaryRow>, StorageError> {
+        self.inner.list_latest_summary_rows(deck_ids).await
+    }
 }
 
 #[tokio::test]

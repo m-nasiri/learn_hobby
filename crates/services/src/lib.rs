@@ -14,12 +14,13 @@ pub use error::{CardServiceError, DeckServiceError, ReviewServiceError, SessionE
 pub use error::AppServicesError;
 pub use app_services::AppServices;
 pub use card_service::{
-    CardListFilter, CardListSort, CardService, DeckPracticeStats, TagPracticeStats,
+    CardListFilter, CardListSort, CardService, DeckPracticeStats, DeckPracticeStatsRow,
+    TagPracticeStats,
 };
 pub use deck_service::DeckService;
 pub use review_service::{PersistedReview, ReviewResult, ReviewService};
 
 pub use sessions::{
-    SessionAnswerResult, SessionLoopService, SessionReview, SessionService, SessionSummaryId,
-    SessionSummaryListItem, SessionSummaryService,
+    SessionAnswerResult, SessionLoopService, SessionReview, SessionService, SessionSummaryDeckItem,
+    SessionSummaryId, SessionSummaryListItem, SessionSummaryService,
 };

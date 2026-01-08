@@ -7,6 +7,7 @@ use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
 use crate::vm::format_relative_datetime;
 use learn_core::model::DeckId;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HomePracticeNow {
@@ -64,53 +65,71 @@ pub fn HomeView() -> Element {
                 .await
                 .map_err(|_| ViewError::Unknown)?
                 .ok_or(ViewError::Unknown)?;
-            let current_stats = card_service
-                .deck_practice_stats(deck_id)
-                .await
-                .map_err(|_| ViewError::Unknown)?;
-
             let decks = deck_service
                 .list_decks(8)
                 .await
                 .map_err(|_| ViewError::Unknown)?;
 
+            let deck_ids: Vec<DeckId> = decks.iter().map(learn_core::model::Deck::id).collect();
+            let stats_rows = card_service
+                .list_deck_practice_stats(&deck_ids)
+                .await
+                .map_err(|_| ViewError::Unknown)?;
+            let stats_by_deck: HashMap<DeckId, services::DeckPracticeStats> = stats_rows
+                .into_iter()
+                .map(|row| (row.deck_id, row.stats))
+                .collect();
+            let summary_rows = summaries
+                .list_latest_summaries_by_deck(&deck_ids)
+                .await
+                .map_err(|_| ViewError::Unknown)?;
+            let summary_by_deck: HashMap<DeckId, services::SessionSummaryDeckItem> = summary_rows
+                .into_iter()
+                .map(|row| (row.deck_id, row))
+                .collect();
+            let deck_name_by_id: HashMap<DeckId, String> = decks
+                .iter()
+                .map(|deck| (deck.id(), deck.name().to_string()))
+                .collect();
+
             let mut recent_sessions = Vec::new();
-            for deck in &decks {
-                let items = summaries
-                    .list_recent_summaries(deck.id(), 7, 1)
-                    .await
-                    .map_err(|_| ViewError::Unknown)?;
-                if let Some(item) = items.first() {
-                    let total = item.total;
-                    let pct = |count: u32| {
-                        if total == 0 {
-                            0
-                        } else {
-                            count.saturating_mul(100) / total
-                        }
-                    };
-                    let date_label = format_relative_datetime(&item.completed_at, &now);
-                    recent_sessions.push(HomeRecentSession {
-                        deck_id: deck.id(),
-                        deck_name: deck.name().to_string(),
-                        completed_at: item.completed_at,
-                        meta_label: format!("{date_label} \u{00b7} {total} Cards"),
-                        again_pct: pct(item.again),
-                        hard_pct: pct(item.hard),
-                        good_pct: pct(item.good),
-                        easy_pct: pct(item.easy),
-                    });
-                }
+            for item in summary_by_deck.values() {
+                let total = item.total;
+                let pct = |count: u32| {
+                    if total == 0 {
+                        0
+                    } else {
+                        count.saturating_mul(100) / total
+                    }
+                };
+                let date_label = format_relative_datetime(&item.completed_at, &now);
+                let deck_name = deck_name_by_id
+                    .get(&item.deck_id)
+                    .cloned()
+                    .unwrap_or_else(|| "Deck".to_string());
+                recent_sessions.push(HomeRecentSession {
+                    deck_id: item.deck_id,
+                    deck_name,
+                    completed_at: item.completed_at,
+                    meta_label: format!("{date_label} \u{00b7} {total} Cards"),
+                    again_pct: pct(item.again),
+                    hard_pct: pct(item.hard),
+                    good_pct: pct(item.good),
+                    easy_pct: pct(item.easy),
+                });
             }
             recent_sessions.sort_by(|a, b| b.completed_at.cmp(&a.completed_at));
             recent_sessions.truncate(3);
 
             let mut upcoming_decks = Vec::new();
             for deck in &decks {
-                let stats = card_service
-                    .deck_practice_stats(deck.id())
-                    .await
-                    .map_err(|_| ViewError::Unknown)?;
+                let stats = stats_by_deck.get(&deck.id()).copied().unwrap_or(
+                    services::DeckPracticeStats {
+                        total: 0,
+                        due: 0,
+                        new: 0,
+                    },
+                );
                 if stats.due > 0 || stats.new > 0 {
                     upcoming_decks.push(HomeUpcomingDeck {
                         deck_id: deck.id(),
@@ -123,6 +142,13 @@ pub fn HomeView() -> Element {
             upcoming_decks.sort_by(|a, b| b.due.cmp(&a.due).then_with(|| b.new.cmp(&a.new)));
             upcoming_decks.truncate(3);
 
+            let current_stats = stats_by_deck.get(&deck_id).copied().unwrap_or(
+                services::DeckPracticeStats {
+                    total: 0,
+                    due: 0,
+                    new: 0,
+                },
+            );
             Ok::<_, ViewError>(HomeData {
                 practice_now: HomePracticeNow {
                     deck_id,

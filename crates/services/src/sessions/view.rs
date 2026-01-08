@@ -32,6 +32,37 @@ pub struct SessionSummaryListItem {
     pub easy: u32,
 }
 
+/// Latest summary per deck, preserving deck identifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummaryDeckItem {
+    pub deck_id: DeckId,
+    pub id: SessionSummaryId,
+    pub completed_at: DateTime<Utc>,
+
+    pub total: u32,
+    pub again: u32,
+    pub hard: u32,
+    pub good: u32,
+    pub easy: u32,
+}
+
+impl SessionSummaryDeckItem {
+    #[must_use]
+    pub fn from_row(row: &storage::repository::SessionSummaryRow) -> Self {
+        let summary = &row.summary;
+        Self {
+            deck_id: summary.deck_id(),
+            id: row.id,
+            completed_at: summary.completed_at(),
+            total: summary.total_reviews(),
+            again: summary.again(),
+            hard: summary.hard(),
+            good: summary.good(),
+            easy: summary.easy(),
+        }
+    }
+}
+
 impl SessionSummaryListItem {
     #[must_use]
     pub fn from_summary(id: SessionSummaryId, summary: &SessionSummary) -> Self {
@@ -104,6 +135,20 @@ impl SessionSummaryService {
             .iter()
             .map(|row| SessionSummaryListItem::from_summary(row.id, &row.summary))
             .collect())
+    }
+
+    /// Load the latest summary per deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Storage` on repository failures.
+    pub async fn list_latest_summaries_by_deck(
+        &self,
+        deck_ids: &[DeckId],
+    ) -> Result<Vec<SessionSummaryDeckItem>, SessionError> {
+        let rows =
+            SessionQueries::list_latest_summary_rows(deck_ids, self.summaries.as_ref()).await?;
+        Ok(rows.iter().map(SessionSummaryDeckItem::from_row).collect())
     }
 
     /// Fetch a session summary by ID.

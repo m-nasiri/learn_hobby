@@ -99,6 +99,20 @@ pub struct DeckPracticeCounts {
     pub new: u32,
 }
 
+/// Aggregate card counts for a specific deck at a given time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeckPracticeCountsRow {
+    pub deck_id: DeckId,
+    pub counts: DeckPracticeCounts,
+}
+
+impl DeckPracticeCountsRow {
+    #[must_use]
+    pub fn new(deck_id: DeckId, counts: DeckPracticeCounts) -> Self {
+        Self { deck_id, counts }
+    }
+}
+
 /// Aggregate card counts for a tag scoped to a deck.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagPracticeCounts {
@@ -382,6 +396,17 @@ pub trait CardRepository: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<DeckPracticeCounts, StorageError>;
 
+    /// Count total, new, and due cards for multiple decks at the given time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on connection or serialization failure.
+    async fn list_deck_practice_counts(
+        &self,
+        deck_ids: &[DeckId],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<DeckPracticeCountsRow>, StorageError>;
+
     /// Count total, new, and due cards for each tag in a deck at the given time.
     ///
     /// # Errors
@@ -541,6 +566,16 @@ pub trait SessionSummaryRepository: Send + Sync {
         completed_from: Option<DateTime<Utc>>,
         completed_until: Option<DateTime<Utc>>,
         limit: u32,
+    ) -> Result<Vec<SessionSummaryRow>, StorageError>;
+
+    /// List the most recent session summary row for each deck.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn list_latest_summary_rows(
+        &self,
+        deck_ids: &[DeckId],
     ) -> Result<Vec<SessionSummaryRow>, StorageError>;
 }
 
@@ -919,6 +954,45 @@ impl CardRepository for InMemoryRepository {
         }
 
         Ok(DeckPracticeCounts { total, due, new })
+    }
+
+    async fn list_deck_practice_counts(
+        &self,
+        deck_ids: &[DeckId],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<DeckPracticeCountsRow>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut counts_by_deck = HashMap::new();
+        for deck_id in deck_ids {
+            counts_by_deck.insert(
+                *deck_id,
+                DeckPracticeCounts {
+                    total: 0,
+                    due: 0,
+                    new: 0,
+                },
+            );
+        }
+
+        for card in guard.cards.values() {
+            if let Some(counts) = counts_by_deck.get_mut(&card.deck_id()) {
+                counts.total = counts.total.saturating_add(1);
+                if card.is_new() {
+                    counts.new = counts.new.saturating_add(1);
+                } else if card.is_due(now) {
+                    counts.due = counts.due.saturating_add(1);
+                }
+            }
+        }
+
+        Ok(counts_by_deck
+            .into_iter()
+            .map(|(deck_id, counts)| DeckPracticeCountsRow::new(deck_id, counts))
+            .collect())
     }
 
     async fn list_tag_practice_counts(
@@ -1302,6 +1376,37 @@ impl SessionSummaryRepository for InMemoryRepository {
 
         rows.truncate(limit_usize(limit));
         Ok(rows)
+    }
+
+    async fn list_latest_summary_rows(
+        &self,
+        deck_ids: &[DeckId],
+    ) -> Result<Vec<SessionSummaryRow>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let mut latest_by_deck: HashMap<DeckId, SessionSummaryRow> = HashMap::new();
+        for (id, summary) in &guard.summaries {
+            if !deck_ids.contains(&summary.deck_id()) {
+                continue;
+            }
+            let row = SessionSummaryRow::new(*id, summary.clone());
+            latest_by_deck
+                .entry(summary.deck_id())
+                .and_modify(|existing| {
+                    if row.summary.completed_at() > existing.summary.completed_at()
+                        || (row.summary.completed_at() == existing.summary.completed_at()
+                            && row.id > existing.id)
+                    {
+                        *existing = row.clone();
+                    }
+                })
+                .or_insert(row);
+        }
+
+        Ok(latest_by_deck.into_values().collect())
     }
 }
 

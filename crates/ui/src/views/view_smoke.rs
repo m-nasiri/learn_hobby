@@ -1,7 +1,9 @@
 use chrono::Duration;
 use dioxus::prelude::ReadableExt;
 use learn_core::model::content::ContentDraft;
-use learn_core::model::{CardId, Deck, DeckId, ReviewGrade, ReviewLog, SessionSummary, TagName};
+use learn_core::model::{
+    CardId, Deck, DeckId, DeckSettings, ReviewGrade, ReviewLog, SessionSummary, TagName,
+};
 use learn_core::time::fixed_now;
 use services::{Clock, SessionLoopService};
 use storage::repository::{
@@ -22,13 +24,34 @@ async fn home_view_smoke_renders_recent_count() {
     let now = fixed_now();
     let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
     let summary = SessionSummary::from_logs(deck_id, now, now, &logs).unwrap();
-    let summary_old = SessionSummary::from_logs(
-        deck_id,
-        now - Duration::days(2),
-        now - Duration::days(1),
-        &logs,
+
+    let other_deck = Deck::new(
+        DeckId::new(99),
+        "Science Facts",
+        None,
+        DeckSettings::default_for_adhd(),
+        now,
     )
     .unwrap();
+    let other_deck_id = harness
+        .storage
+        .decks
+        .insert_new_deck(NewDeckRecord::from_deck(&other_deck))
+        .await
+        .expect("insert deck");
+    let yesterday = now - Duration::days(1);
+    let summary_yesterday =
+        SessionSummary::from_logs(other_deck_id, yesterday, yesterday, &logs).unwrap();
+
+    harness
+        .card_service
+        .create_card(
+            deck_id,
+            ContentDraft::text_only("What is Rust?"),
+            ContentDraft::text_only("A systems language."),
+        )
+        .await
+        .expect("create card");
 
     harness
         .storage
@@ -39,7 +62,7 @@ async fn home_view_smoke_renders_recent_count() {
     harness
         .storage
         .session_summaries
-        .append_summary(&summary_old)
+        .append_summary(&summary_yesterday)
         .await
         .expect("append summary");
 
@@ -54,6 +77,16 @@ async fn home_view_smoke_renders_recent_count() {
         "missing recent sessions section in {html}"
     );
     assert!(html.contains("Default"), "missing deck name in {html}");
+    assert!(html.contains("0 Due"), "missing due label in {html}");
+    assert!(html.contains("1 New"), "missing new label in {html}");
+    assert!(
+        html.contains("Today \u{00b7} 10:13 PM \u{00b7} 1 Cards"),
+        "missing today label in {html}"
+    );
+    assert!(
+        html.contains("Yesterday \u{00b7} 10:13 PM \u{00b7} 1 Cards"),
+        "missing yesterday label in {html}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -152,6 +185,13 @@ impl SessionSummaryRepository for FailingSummaryRepo {
         _completed_from: Option<chrono::DateTime<chrono::Utc>>,
         _completed_until: Option<chrono::DateTime<chrono::Utc>>,
         _limit: u32,
+    ) -> Result<Vec<storage::repository::SessionSummaryRow>, StorageError> {
+        Err(StorageError::Connection("fail".to_string()))
+    }
+
+    async fn list_latest_summary_rows(
+        &self,
+        _deck_ids: &[DeckId],
     ) -> Result<Vec<storage::repository::SessionSummaryRow>, StorageError> {
         Err(StorageError::Connection("fail".to_string()))
     }
