@@ -215,4 +215,39 @@ mod tests {
         assert_eq!(items[0].completed_at, summary_recent.completed_at());
         assert_eq!(items[0].total, 1);
     }
+
+    #[tokio::test]
+    async fn list_latest_summaries_by_deck_returns_latest_for_each_deck() {
+        let repo = InMemoryRepository::new();
+        let now = fixed_now();
+        let deck_a = DeckId::new(1);
+        let deck_b = DeckId::new(2);
+        let logs = vec![ReviewLog::new(CardId::new(1), ReviewGrade::Good, now)];
+
+        let summary_a1 = SessionSummary::from_logs(deck_a, now, now, &logs).unwrap();
+        let summary_a2 =
+            SessionSummary::from_logs(deck_a, now, now + chrono::Duration::days(1), &logs)
+                .unwrap();
+        let earlier = now - chrono::Duration::days(1);
+        let summary_b = SessionSummary::from_logs(deck_b, earlier, earlier, &logs).unwrap();
+
+        let id_a1 = repo.append_summary(&summary_a1).await.unwrap();
+        let id_a2 = repo.append_summary(&summary_a2).await.unwrap();
+        let id_b = repo.append_summary(&summary_b).await.unwrap();
+
+        let svc = SessionSummaryService::new(Clock::Fixed(now), Arc::new(repo));
+        let items = svc
+            .list_latest_summaries_by_deck(&[deck_a, deck_b])
+            .await
+            .unwrap();
+
+        let mut by_deck = std::collections::HashMap::new();
+        for item in items {
+            by_deck.insert(item.deck_id, item.id);
+        }
+
+        assert_eq!(by_deck.get(&deck_a), Some(&id_a2));
+        assert_eq!(by_deck.get(&deck_b), Some(&id_b));
+        assert_ne!(by_deck.get(&deck_a), Some(&id_a1));
+    }
 }

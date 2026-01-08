@@ -596,6 +596,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_deck_practice_stats_returns_rows_for_multiple_decks() {
+        let repo = InMemoryRepository::new();
+        let now = fixed_now();
+        let deck_a = DeckId::new(1);
+        let deck_b = DeckId::new(2);
+
+        let mut due_card = build_card(1, deck_a, now);
+        due_card.apply_review(
+            &ReviewOutcome::new(
+                now - Duration::hours(2),
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+            ),
+            now - Duration::days(1),
+        );
+        repo.upsert_card(&due_card).await.expect("due card");
+
+        let new_card = build_card(2, deck_a, now);
+        repo.upsert_card(&new_card).await.expect("new card");
+
+        let deck_b_card = build_card(3, deck_b, now);
+        repo.upsert_card(&deck_b_card).await.expect("deck b card");
+
+        let service = CardService::new(Clock::Fixed(now), Arc::new(repo));
+        let mut rows = service
+            .list_deck_practice_stats(&[deck_a, deck_b])
+            .await
+            .expect("stats");
+
+        rows.sort_by_key(|row| row.deck_id.value());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].deck_id, deck_a);
+        assert_eq!(rows[0].stats.total, 2);
+        assert_eq!(rows[0].stats.new, 1);
+        assert_eq!(rows[0].stats.due, 1);
+        assert_eq!(rows[1].deck_id, deck_b);
+        assert_eq!(rows[1].stats.total, 1);
+        assert_eq!(rows[1].stats.new, 1);
+        assert_eq!(rows[1].stats.due, 0);
+    }
+
+    #[tokio::test]
     async fn reset_deck_learning_clears_review_state() {
         let repo = InMemoryRepository::new();
         let deck_id = DeckId::new(1);
