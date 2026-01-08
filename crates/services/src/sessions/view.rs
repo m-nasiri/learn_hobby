@@ -74,6 +74,11 @@ impl SessionSummaryService {
         )
     }
 
+    #[must_use]
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
+    }
+
     /// Load recent summaries for a deck.
     ///
     /// # Errors

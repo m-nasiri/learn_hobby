@@ -12,7 +12,9 @@ use crate::views::{
 pub enum Route {
     #[layout(Layout)]
         #[route("/", HomeView)] Home {},
-        #[route("/practice", PracticeView)] Practice {},
+        #[route("/practice", PracticeRoute)] Practice {},
+        #[route("/practice/:deck_id", PracticeDeckRoute)]
+        PracticeDeck { deck_id: u64 },
         #[route("/session/:deck_id", SessionDeckRoute)] Session { deck_id: u64 },
         #[route("/session/:deck_id/all", SessionAllRoute)]
         SessionAll { deck_id: u64 },
@@ -83,6 +85,16 @@ fn SessionMistakesRoute(deck_id: u64) -> Element {
 #[component]
 fn SessionTagRoute(deck_id: u64, tag: String) -> Element {
     rsx! { SessionView { deck_id, tag: Some(tag), mode: crate::vm::SessionStartMode::Due } }
+}
+
+#[component]
+fn PracticeRoute() -> Element {
+    rsx! { PracticeView { deck_id: None } }
+}
+
+#[component]
+fn PracticeDeckRoute(deck_id: u64) -> Element {
+    rsx! { PracticeView { deck_id: Some(deck_id) } }
 }
 
 #[component]

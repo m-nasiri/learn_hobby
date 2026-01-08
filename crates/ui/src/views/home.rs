@@ -5,7 +5,7 @@ use dioxus_router::Link;
 use crate::context::AppContext;
 use crate::routes::Route;
 use crate::views::{ViewError, ViewState, view_state_from_resource};
-use crate::vm::format_datetime;
+use crate::vm::format_relative_datetime;
 use learn_core::model::DeckId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +58,7 @@ pub fn HomeView() -> Element {
         let card_service = card_service.clone();
 
         async move {
+            let now = summaries.now();
             let current_deck = deck_service
                 .get_deck(deck_id)
                 .await
@@ -88,11 +89,12 @@ pub fn HomeView() -> Element {
                             count.saturating_mul(100) / total
                         }
                     };
+                    let date_label = format_relative_datetime(&item.completed_at, &now);
                     recent_sessions.push(HomeRecentSession {
                         deck_id: deck.id(),
                         deck_name: deck.name().to_string(),
                         completed_at: item.completed_at,
-                        meta_label: format!("{} \u{00b7} {total} Cards", format_datetime(&item.completed_at)),
+                        meta_label: format!("{date_label} \u{00b7} {total} Cards"),
                         again_pct: pct(item.again),
                         hard_pct: pct(item.hard),
                         good_pct: pct(item.good),
@@ -109,12 +111,14 @@ pub fn HomeView() -> Element {
                     .deck_practice_stats(deck.id())
                     .await
                     .map_err(|_| ViewError::Unknown)?;
-                upcoming_decks.push(HomeUpcomingDeck {
-                    deck_id: deck.id(),
-                    deck_name: deck.name().to_string(),
-                    due: stats.due,
-                    new: stats.new,
-                });
+                if stats.due > 0 || stats.new > 0 {
+                    upcoming_decks.push(HomeUpcomingDeck {
+                        deck_id: deck.id(),
+                        deck_name: deck.name().to_string(),
+                        due: stats.due,
+                        new: stats.new,
+                    });
+                }
             }
             upcoming_decks.sort_by(|a, b| b.due.cmp(&a.due).then_with(|| b.new.cmp(&a.new)));
             upcoming_decks.truncate(3);
@@ -159,8 +163,10 @@ pub fn HomeView() -> Element {
                                     stroke_width: "1.6",
                                     stroke_linecap: "round",
                                     stroke_linejoin: "round",
-                                    path { d: "M4 7h12a4 4 0 0 1 0 8H8l-4 4z" }
-                                    path { d: "M9 9h6" }
+                                    rect { x: "3.5", y: "5", width: "17", height: "14", rx: "3" }
+                                    path { d: "M8.5 11h.01" }
+                                    path { d: "M15.5 11h.01" }
+                                    path { d: "M9 14.5c1 1 2.5 1 3.5 0" }
                                 }
                             }
                             h3 { class: "home-card__title", "Practice Now" }
@@ -244,22 +250,30 @@ pub fn HomeView() -> Element {
                             }
                             div { class: "home-panel__list",
                                 if data.upcoming_decks.is_empty() {
-                                    p { class: "home-panel__empty", "No decks ready yet." }
-                                }
-                                for deck in data.upcoming_decks {
-                                    div { class: "home-upcoming-row",
-                                        div { class: "home-session-avatar home-session-avatar--muted",
-                                            "{deck_initial(&deck.deck_name)}"
-                                        }
-                                        div { class: "home-session-text",
-                                            h5 { class: "home-session-title", "{deck.deck_name}" }
-                                            p { class: "home-session-meta",
-                                                "{deck.due} Due"
-                                                span { class: "home-session-dot", "\u{00b7}" }
-                                                "{deck.new} New"
+                                    div { class: "home-panel__empty",
+                                        p { "No decks are ready yet." }
+                                        Link { class: "btn home-row__action", to: Route::Practice {}, "Open Practice" }
+                                    }
+                                } else {
+                                    for deck in data.upcoming_decks {
+                                        div { class: "home-upcoming-row",
+                                            div { class: "home-session-avatar home-session-avatar--muted",
+                                                "{deck_initial(&deck.deck_name)}"
+                                            }
+                                            div { class: "home-session-text",
+                                                h5 { class: "home-session-title", "{deck.deck_name}" }
+                                                p { class: "home-session-meta",
+                                                    "{deck.due} Due"
+                                                    span { class: "home-session-dot", "\u{00b7}" }
+                                                    "{deck.new} New"
+                                                }
+                                            }
+                                            Link {
+                                                class: "btn home-row__action",
+                                                to: Route::PracticeDeck { deck_id: deck.deck_id.value() },
+                                                "Practice"
                                             }
                                         }
-                                        Link { class: "btn home-row__action", to: Route::Practice {}, "Show Deck" }
                                     }
                                 }
                             }

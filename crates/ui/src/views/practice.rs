@@ -10,6 +10,7 @@ use crate::vm::{PracticeDeckCardVm, map_practice_deck_card};
 #[derive(Clone, Debug, PartialEq)]
 struct PracticeData {
     deck_cards: Vec<PracticeDeckCardVm>,
+    deck_scope_name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,11 +21,12 @@ enum ResetState {
 }
 
 #[component]
-pub fn PracticeView() -> Element {
+pub fn PracticeView(deck_id: Option<u64>) -> Element {
     let ctx = use_context::<AppContext>();
     let navigator = use_navigator();
     let deck_service = ctx.deck_service();
     let card_service = ctx.card_service();
+    let deck_scope_id = deck_id.map(DeckId::new);
     let mut search = use_signal(String::new);
     let mut open_menu = use_signal(|| None::<u64>);
     let mut reset_target = use_signal(|| None::<u64>);
@@ -34,11 +36,23 @@ pub fn PracticeView() -> Element {
     let resource = use_resource(move || {
         let deck_service = deck_service.clone();
         let card_service = card_service_for_resource.clone();
+        let deck_scope_id = deck_scope_id;
         async move {
-            let decks = deck_service
-                .list_decks(64)
-                .await
-                .map_err(|_| ViewError::Unknown)?;
+            let decks = if let Some(deck_id) = deck_scope_id {
+                match deck_service
+                    .get_deck(deck_id)
+                    .await
+                    .map_err(|_| ViewError::Unknown)?
+                {
+                    Some(deck) => vec![deck],
+                    None => Vec::new(),
+                }
+            } else {
+                deck_service
+                    .list_decks(64)
+                    .await
+                    .map_err(|_| ViewError::Unknown)?
+            };
 
             let mut deck_cards = Vec::new();
             for deck in &decks {
@@ -53,8 +67,13 @@ pub fn PracticeView() -> Element {
                 deck_cards.push(map_practice_deck_card(deck, stats, &tag_stats));
             }
 
+            let deck_scope_name = deck_scope_id
+                .and_then(|id| decks.iter().find(|deck| deck.id() == id))
+                .map(|deck| deck.name().to_string());
+
             Ok::<_, ViewError>(PracticeData {
                 deck_cards,
+                deck_scope_name,
             })
         }
     });
@@ -223,33 +242,41 @@ pub fn PracticeView() -> Element {
                             }
                         }
                     });
+                    let subtitle = data.deck_scope_name.as_ref().map(|name| {
+                        format!("Focused on {name}. Pick a practice option.")
+                    });
                     rsx! {
-                        div { class: "practice-search",
-                            span { class: "practice-search-icon", aria_hidden: "true",
-                                svg {
-                                    view_box: "0 0 24 24",
-                                    stroke: "currentColor",
-                                    stroke_width: "1.8",
-                                    fill: "none",
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    circle { cx: "11", cy: "11", r: "7" }
-                                    path { d: "M20 20l-3.5-3.5" }
+                        if let Some(label) = subtitle {
+                            p { class: "view-hint", "{label}" }
+                        }
+                        if data.deck_scope_name.is_none() {
+                            div { class: "practice-search",
+                                span { class: "practice-search-icon", aria_hidden: "true",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.8",
+                                        fill: "none",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        circle { cx: "11", cy: "11", r: "7" }
+                                        path { d: "M20 20l-3.5-3.5" }
+                                    }
                                 }
-                            }
-                            input {
-                                class: "practice-search-input",
-                                r#type: "text",
-                                placeholder: "Search decks...",
-                                value: "{search()}",
-                                oninput: move |evt| search.set(evt.value()),
-                            }
-                            if !search().is_empty() {
-                                button {
-                                    class: "practice-search-clear",
-                                    r#type: "button",
-                                    onclick: move |_| search.set(String::new()),
-                                    span { class: "practice-search-clear-icon", "×" }
+                                input {
+                                    class: "practice-search-input",
+                                    r#type: "text",
+                                    placeholder: "Search decks...",
+                                    value: "{search()}",
+                                    oninput: move |evt| search.set(evt.value()),
+                                }
+                                if !search().is_empty() {
+                                    button {
+                                        class: "practice-search-clear",
+                                        r#type: "button",
+                                        onclick: move |_| search.set(String::new()),
+                                        span { class: "practice-search-clear-icon", "×" }
+                                    }
                                 }
                             }
                         }
