@@ -80,11 +80,30 @@ pub fn PracticeView(deck_id: Option<u64>) -> Element {
 
     let state = view_state_from_resource(&resource);
     let query = search().trim().to_lowercase();
+    let (header_title, header_subtitle) = match &state {
+        ViewState::Ready(data) => {
+            if let Some(name) = data.deck_scope_name.as_deref() {
+                (
+                    format!("Practice: {name}"),
+                    "Choose a practice option for this deck.".to_string(),
+                )
+            } else {
+                (
+                    "Practice".to_string(),
+                    "Pick a deck or tap a tag for a focused session.".to_string(),
+                )
+            }
+        }
+        _ => (
+            "Practice".to_string(),
+            "Pick a deck or tap a tag for a focused session.".to_string(),
+        ),
+    };
     rsx! {
         div { class: "page practice-page",
             header { class: "view-header",
-                h2 { class: "view-title", "Practice" }
-                p { class: "view-subtitle", "Pick a deck or tap a tag for a focused session." }
+                h2 { class: "view-title", "{header_title}" }
+                p { class: "view-subtitle", "{header_subtitle}" }
             }
             div { class: "view-divider" }
             match state {
@@ -242,13 +261,7 @@ pub fn PracticeView(deck_id: Option<u64>) -> Element {
                             }
                         }
                     });
-                    let subtitle = data.deck_scope_name.as_ref().map(|name| {
-                        format!("Focused on {name}. Pick a practice option.")
-                    });
                     rsx! {
-                        if let Some(label) = subtitle {
-                            p { class: "view-hint", "{label}" }
-                        }
                         if data.deck_scope_name.is_none() {
                             div { class: "practice-search",
                                 span { class: "practice-search-icon", aria_hidden: "true",
