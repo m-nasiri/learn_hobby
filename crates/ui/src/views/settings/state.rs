@@ -285,152 +285,253 @@ pub(super) enum ResetState {
     Error(ViewError),
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn validate_form(
     form: &DeckSettingsForm,
 ) -> Result<ValidatedSettings, Box<DeckSettingsErrors>> {
     let mut errors = DeckSettingsErrors::default();
-
-    let name = form.name.trim();
-    if name.is_empty() {
-        errors.name = Some("Deck name is required.");
-    }
-
-    let new_cards_per_day = parse_positive_u32(&form.new_cards_per_day).unwrap_or_else(|| {
-        errors.new_cards_per_day = Some("Enter a positive number.");
-        0
-    });
-    let review_limit_per_day = parse_positive_u32(&form.review_limit_per_day).unwrap_or_else(|| {
-        errors.review_limit_per_day = Some("Enter a positive number.");
-        0
-    });
-    let micro_session_size = parse_positive_u32(&form.micro_session_size).unwrap_or_else(|| {
-        errors.micro_session_size = Some("Enter a positive number.");
-        0
-    });
-    let lapse_min_interval_secs = parse_lapse_interval_secs(&form.lapse_min_interval)
-        .unwrap_or_else(|| {
-            errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
-            0
-        });
-    let soft_time_reminder_secs =
-        parse_timer_secs(&form.soft_time_reminder_secs).unwrap_or_else(|| {
-            errors.soft_time_reminder_secs = Some("Enter 5-600 seconds.");
-            0
-        });
-    let auto_reveal_secs = parse_timer_secs(&form.auto_reveal_secs).unwrap_or_else(|| {
-        errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
-        0
-    });
-    let min_interval_days = parse_positive_u32(&form.min_interval_days).unwrap_or_else(|| {
-        errors.min_interval_days = Some("Enter a positive number.");
-        0
-    });
-    let max_interval_days = parse_positive_u32(&form.max_interval_days).unwrap_or_else(|| {
-        errors.max_interval_days = Some("Enter a positive number.");
-        0
-    });
-    if min_interval_days > 0 && max_interval_days > 0 && min_interval_days > max_interval_days {
-        errors.min_interval_days = Some("Must be <= maximum interval.");
-        errors.max_interval_days = Some("Must be >= minimum interval.");
-    }
-    let easy_day_load_factor = parse_retention(&form.easy_day_load_factor).unwrap_or_else(|| {
-        errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
-        0.0
-    });
-    let easy_days_mask = form.easy_days_mask;
-    if form.easy_days_enabled && easy_days_mask == 0 {
-        errors.easy_days_mask = Some("Pick at least one day.");
-    }
-    let fsrs_target_retention = parse_retention(&form.fsrs_target_retention).unwrap_or_else(|| {
-        errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
-        0.0
-    });
-    let fsrs_optimize_after = parse_positive_u32(&form.fsrs_optimize_after).unwrap_or_else(|| {
-        errors.fsrs_optimize_after = Some("Enter a positive number.");
-        0
-    });
+    let parsed = parse_settings_form(form, &mut errors);
 
     if errors.has_any() {
         return Err(Box::new(errors));
     }
 
     let settings = DeckSettings::new(
-        new_cards_per_day,
-        review_limit_per_day,
-        micro_session_size,
+        parsed.new_cards_per_day,
+        parsed.review_limit_per_day,
+        parsed.micro_session_size,
         form.protect_overload,
         form.preserve_stability_on_lapse,
-        lapse_min_interval_secs,
+        parsed.lapse_min_interval_secs,
         form.show_timer,
         form.soft_time_reminder,
         form.auto_advance_cards,
+        parsed.soft_time_reminder_secs,
+        parsed.auto_reveal_secs,
+        parsed.min_interval_days,
+        parsed.max_interval_days,
+        form.easy_days_enabled,
+        parsed.easy_day_load_factor,
+        parsed.easy_days_mask,
+        parsed.fsrs_target_retention,
+        form.fsrs_optimize_enabled,
+        parsed.fsrs_optimize_after,
+    )
+    .map_err(|err| map_deck_settings_error(&err))?;
+
+    Ok(ValidatedSettings {
+        name: parsed.name,
+        description: normalize_description(&form.description),
+        settings,
+    })
+}
+
+struct ParsedSettings {
+    name: String,
+    new_cards_per_day: u32,
+    review_limit_per_day: u32,
+    micro_session_size: u32,
+    lapse_min_interval_secs: u32,
+    soft_time_reminder_secs: u32,
+    auto_reveal_secs: u32,
+    min_interval_days: u32,
+    max_interval_days: u32,
+    easy_day_load_factor: f32,
+    easy_days_mask: u8,
+    fsrs_target_retention: f32,
+    fsrs_optimize_after: u32,
+}
+
+fn parse_settings_form(
+    form: &DeckSettingsForm,
+    errors: &mut DeckSettingsErrors,
+) -> ParsedSettings {
+    let name = parse_required_name(form, errors);
+
+    let new_cards_per_day = parse_u32_field(
+        &form.new_cards_per_day,
+        &mut errors.new_cards_per_day,
+        "Enter a positive number.",
+    );
+    let review_limit_per_day = parse_u32_field(
+        &form.review_limit_per_day,
+        &mut errors.review_limit_per_day,
+        "Enter a positive number.",
+    );
+    let micro_session_size = parse_u32_field(
+        &form.micro_session_size,
+        &mut errors.micro_session_size,
+        "Enter a positive number.",
+    );
+    let lapse_min_interval_secs = parse_duration_field(
+        &form.lapse_min_interval,
+        &mut errors.lapse_min_interval,
+        "Use a duration like 10m or 1d.",
+    );
+    let soft_time_reminder_secs = parse_timer_field(
+        &form.soft_time_reminder_secs,
+        &mut errors.soft_time_reminder_secs,
+        "Enter 5-600 seconds.",
+    );
+    let auto_reveal_secs = parse_timer_field(
+        &form.auto_reveal_secs,
+        &mut errors.auto_reveal_secs,
+        "Enter 5-600 seconds.",
+    );
+    let min_interval_days = parse_u32_field(
+        &form.min_interval_days,
+        &mut errors.min_interval_days,
+        "Enter a positive number.",
+    );
+    let max_interval_days = parse_u32_field(
+        &form.max_interval_days,
+        &mut errors.max_interval_days,
+        "Enter a positive number.",
+    );
+    if min_interval_days > 0 && max_interval_days > 0 && min_interval_days > max_interval_days {
+        errors.min_interval_days = Some("Must be <= maximum interval.");
+        errors.max_interval_days = Some("Must be >= minimum interval.");
+    }
+    let easy_day_load_factor = parse_retention_field(
+        &form.easy_day_load_factor,
+        &mut errors.easy_day_load_factor,
+        "Enter a value between 0 and 1.",
+    );
+    let easy_days_mask = form.easy_days_mask;
+    if form.easy_days_enabled && easy_days_mask == 0 {
+        errors.easy_days_mask = Some("Pick at least one day.");
+    }
+    let fsrs_target_retention = parse_retention_field(
+        &form.fsrs_target_retention,
+        &mut errors.fsrs_target_retention,
+        "Enter a value between 0 and 1.",
+    );
+    let fsrs_optimize_after = parse_u32_field(
+        &form.fsrs_optimize_after,
+        &mut errors.fsrs_optimize_after,
+        "Enter a positive number.",
+    );
+
+    ParsedSettings {
+        name,
+        new_cards_per_day,
+        review_limit_per_day,
+        micro_session_size,
+        lapse_min_interval_secs,
         soft_time_reminder_secs,
         auto_reveal_secs,
         min_interval_days,
         max_interval_days,
-        form.easy_days_enabled,
         easy_day_load_factor,
         easy_days_mask,
         fsrs_target_retention,
-        form.fsrs_optimize_enabled,
         fsrs_optimize_after,
-    )
-    .map_err(|err| {
-        let mut errors = DeckSettingsErrors::default();
-        match err {
-            learn_core::model::DeckError::InvalidMicroSessionSize => {
-                errors.micro_session_size = Some("Enter a positive number.");
-            }
-            learn_core::model::DeckError::InvalidNewCardsPerDay => {
-                errors.new_cards_per_day = Some("Enter a positive number.");
-            }
-            learn_core::model::DeckError::InvalidReviewLimitPerDay => {
-                errors.review_limit_per_day = Some("Enter a positive number.");
-            }
-            learn_core::model::DeckError::InvalidLapseMinInterval => {
-                errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
-            }
-            learn_core::model::DeckError::InvalidSoftReminderSeconds => {
-                errors.soft_time_reminder_secs = Some("Enter 5-600 seconds.");
-            }
-            learn_core::model::DeckError::InvalidAutoRevealSeconds => {
-                errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
-            }
-            learn_core::model::DeckError::InvalidMinIntervalDays => {
-                errors.min_interval_days = Some("Enter at least 1 day.");
-            }
-            learn_core::model::DeckError::InvalidMaxIntervalDays => {
-                errors.max_interval_days = Some("Enter at least 1 day.");
-            }
-            learn_core::model::DeckError::InvalidIntervalBounds => {
-                errors.min_interval_days = Some("Must be <= maximum interval.");
-                errors.max_interval_days = Some("Must be >= minimum interval.");
-            }
-            learn_core::model::DeckError::InvalidEasyDayLoadFactor => {
-                errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
-            }
-            learn_core::model::DeckError::InvalidEasyDaysMask => {
-                errors.easy_days_mask = Some("Pick at least one day.");
-            }
-            learn_core::model::DeckError::InvalidFsrsTargetRetention => {
-                errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
-            }
-            learn_core::model::DeckError::InvalidFsrsOptimizeAfter => {
-                errors.fsrs_optimize_after = Some("Enter a positive number.");
-            }
-            learn_core::model::DeckError::EmptyName => {
-                errors.name = Some("Deck name is required.");
-            }
-            _ => {
-                errors.name = Some("Invalid deck settings.");
-            }
-        }
-        Box::new(errors)
-    })?;
+    }
+}
 
-    Ok(ValidatedSettings {
-        name: name.to_string(),
-        description: normalize_description(&form.description),
-        settings,
+fn parse_required_name(form: &DeckSettingsForm, errors: &mut DeckSettingsErrors) -> String {
+    let name = form.name.trim();
+    if name.is_empty() {
+        errors.name = Some("Deck name is required.");
+    }
+    name.to_string()
+}
+
+fn parse_u32_field(
+    value: &str,
+    error_slot: &mut Option<&'static str>,
+    message: &'static str,
+) -> u32 {
+    parse_positive_u32(value).unwrap_or_else(|| {
+        *error_slot = Some(message);
+        0
     })
+}
+
+fn parse_duration_field(
+    value: &str,
+    error_slot: &mut Option<&'static str>,
+    message: &'static str,
+) -> u32 {
+    parse_lapse_interval_secs(value).unwrap_or_else(|| {
+        *error_slot = Some(message);
+        0
+    })
+}
+
+fn parse_timer_field(
+    value: &str,
+    error_slot: &mut Option<&'static str>,
+    message: &'static str,
+) -> u32 {
+    parse_timer_secs(value).unwrap_or_else(|| {
+        *error_slot = Some(message);
+        0
+    })
+}
+
+fn parse_retention_field(
+    value: &str,
+    error_slot: &mut Option<&'static str>,
+    message: &'static str,
+) -> f32 {
+    parse_retention(value).unwrap_or_else(|| {
+        *error_slot = Some(message);
+        0.0
+    })
+}
+
+fn map_deck_settings_error(
+    error: &learn_core::model::DeckError,
+) -> Box<DeckSettingsErrors> {
+    let mut errors = DeckSettingsErrors::default();
+    match *error {
+        learn_core::model::DeckError::InvalidMicroSessionSize => {
+            errors.micro_session_size = Some("Enter a positive number.");
+        }
+        learn_core::model::DeckError::InvalidNewCardsPerDay => {
+            errors.new_cards_per_day = Some("Enter a positive number.");
+        }
+        learn_core::model::DeckError::InvalidReviewLimitPerDay => {
+            errors.review_limit_per_day = Some("Enter a positive number.");
+        }
+        learn_core::model::DeckError::InvalidLapseMinInterval => {
+            errors.lapse_min_interval = Some("Use a duration like 10m or 1d.");
+        }
+        learn_core::model::DeckError::InvalidSoftReminderSeconds => {
+            errors.soft_time_reminder_secs = Some("Enter 5-600 seconds.");
+        }
+        learn_core::model::DeckError::InvalidAutoRevealSeconds => {
+            errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
+        }
+        learn_core::model::DeckError::InvalidMinIntervalDays => {
+            errors.min_interval_days = Some("Enter at least 1 day.");
+        }
+        learn_core::model::DeckError::InvalidMaxIntervalDays => {
+            errors.max_interval_days = Some("Enter at least 1 day.");
+        }
+        learn_core::model::DeckError::InvalidIntervalBounds => {
+            errors.min_interval_days = Some("Must be <= maximum interval.");
+            errors.max_interval_days = Some("Must be >= minimum interval.");
+        }
+        learn_core::model::DeckError::InvalidEasyDayLoadFactor => {
+            errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
+        }
+        learn_core::model::DeckError::InvalidEasyDaysMask => {
+            errors.easy_days_mask = Some("Pick at least one day.");
+        }
+        learn_core::model::DeckError::InvalidFsrsTargetRetention => {
+            errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
+        }
+        learn_core::model::DeckError::InvalidFsrsOptimizeAfter => {
+            errors.fsrs_optimize_after = Some("Enter a positive number.");
+        }
+        learn_core::model::DeckError::EmptyName => {
+            errors.name = Some("Deck name is required.");
+        }
+        _ => {
+            errors.name = Some("Invalid deck settings.");
+        }
+    }
+    Box::new(errors)
 }
