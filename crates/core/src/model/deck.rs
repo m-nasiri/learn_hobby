@@ -38,6 +38,15 @@ pub enum DeckError {
     #[error("auto reveal seconds must be between 5 and 600")]
     InvalidAutoRevealSeconds,
 
+    #[error("minimum interval must be at least 1 day")]
+    InvalidMinIntervalDays,
+
+    #[error("maximum interval must be at least 1 day")]
+    InvalidMaxIntervalDays,
+
+    #[error("minimum interval must be <= maximum interval")]
+    InvalidIntervalBounds,
+
     #[error("easy day load factor must be in (0, 1]")]
     InvalidEasyDayLoadFactor,
 
@@ -66,6 +75,8 @@ pub struct DeckSettings {
     auto_advance_cards: bool,
     soft_time_reminder_secs: u32,
     auto_reveal_secs: u32,
+    min_interval_days: u32,
+    max_interval_days: u32,
     easy_days_enabled: bool,
     easy_day_load_factor: f32,
     easy_days_mask: u8,
@@ -96,6 +107,8 @@ impl DeckSettings {
             auto_advance_cards: false,
             soft_time_reminder_secs: 25,
             auto_reveal_secs: 20,
+            min_interval_days: 1,
+            max_interval_days: 365,
             easy_days_enabled: true,
             easy_day_load_factor: 0.5,
             easy_days_mask: easy_days_mask(&[Weekday::Sat, Weekday::Sun]),
@@ -123,6 +136,8 @@ impl DeckSettings {
         auto_advance_cards: bool,
         soft_time_reminder_secs: u32,
         auto_reveal_secs: u32,
+        min_interval_days: u32,
+        max_interval_days: u32,
         easy_days_enabled: bool,
         easy_day_load_factor: f32,
         easy_days_mask: u8,
@@ -157,6 +172,15 @@ impl DeckSettings {
         if !(5..=600).contains(&auto_reveal_secs) {
             return Err(DeckError::InvalidAutoRevealSeconds);
         }
+        if min_interval_days == 0 {
+            return Err(DeckError::InvalidMinIntervalDays);
+        }
+        if max_interval_days == 0 {
+            return Err(DeckError::InvalidMaxIntervalDays);
+        }
+        if min_interval_days > max_interval_days {
+            return Err(DeckError::InvalidIntervalBounds);
+        }
         if !easy_day_load_factor.is_finite()
             || easy_day_load_factor <= 0.0
             || easy_day_load_factor > 1.0
@@ -179,6 +203,8 @@ impl DeckSettings {
             auto_advance_cards,
             soft_time_reminder_secs,
             auto_reveal_secs,
+            min_interval_days,
+            max_interval_days,
             easy_days_enabled,
             easy_day_load_factor,
             easy_days_mask,
@@ -243,6 +269,16 @@ impl DeckSettings {
     #[must_use]
     pub fn auto_reveal_secs(&self) -> u32 {
         self.auto_reveal_secs
+    }
+
+    #[must_use]
+    pub fn min_interval_days(&self) -> u32 {
+        self.min_interval_days
+    }
+
+    #[must_use]
+    pub fn max_interval_days(&self) -> u32 {
+        self.max_interval_days
     }
 
     #[must_use]
@@ -398,8 +434,8 @@ mod tests {
     #[test]
     fn settings_new_rejects_zero_micro_session() {
         let err = DeckSettings::new(
-            5, 30, 0, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.85,
-            true, 100,
+            5, 30, 0, true, true, 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0,
+            0.85, true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidMicroSessionSize);
@@ -419,6 +455,8 @@ mod tests {
         assert!(!settings.auto_advance_cards());
         assert_eq!(settings.soft_time_reminder_secs(), 25);
         assert_eq!(settings.auto_reveal_secs(), 20);
+        assert_eq!(settings.min_interval_days(), 1);
+        assert_eq!(settings.max_interval_days(), 365);
         assert!(settings.easy_days_enabled());
         assert!((settings.easy_day_load_factor() - 0.5).abs() < f32::EPSILON);
         assert!(settings.is_easy_day(Weekday::Sat));
@@ -432,15 +470,15 @@ mod tests {
     #[test]
     fn settings_rejects_invalid_retention() {
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.0, true,
-            100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0, 0.0,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
 
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 1.1, true,
-            100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0, 1.1,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
@@ -449,32 +487,56 @@ mod tests {
     #[test]
     fn settings_rejects_invalid_timer_bounds() {
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 2, 20, false, 0.5, 0, 0.85, true,
-            100,
+            5, 30, 5, true, true, 86_400, false, false, false, 2, 20, 1, 365, false, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidSoftReminderSeconds);
 
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 700, false, 0.5, 0, 0.85,
-            true, 100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 700, 1, 365, false, 0.5, 0,
+            0.85, true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidAutoRevealSeconds);
     }
 
     #[test]
+    fn settings_rejects_invalid_interval_bounds() {
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 0, 365, false, 0.5, 0, 0.85,
+            true, 100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidMinIntervalDays);
+
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1, 0, false, 0.5, 0, 0.85,
+            true, 100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidMaxIntervalDays);
+
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 10, 5, false, 0.5, 0, 0.85,
+            true, 100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidIntervalBounds);
+    }
+
+    #[test]
     fn settings_rejects_invalid_easy_days() {
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, true, 0.0, 1, 0.85, true,
-            100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1, 365, true, 0.0, 1, 0.85,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidEasyDayLoadFactor);
 
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, true, 0.5, 0, 0.85, true,
-            100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1, 365, true, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidEasyDaysMask);

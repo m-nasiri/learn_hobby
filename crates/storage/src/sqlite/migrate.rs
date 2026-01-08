@@ -494,5 +494,42 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 10).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN min_interval_days INTEGER NOT NULL DEFAULT 1
+                    CHECK (min_interval_days >= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN max_interval_days INTEGER NOT NULL DEFAULT 365
+                    CHECK (max_interval_days >= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(10_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

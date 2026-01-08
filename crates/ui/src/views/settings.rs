@@ -28,6 +28,8 @@ struct DeckSettingsSnapshot {
     auto_advance_cards: bool,
     soft_time_reminder_secs: u32,
     auto_reveal_secs: u32,
+    min_interval_days: u32,
+    max_interval_days: u32,
     easy_days_enabled: bool,
     easy_day_load_factor: f32,
     easy_days_mask: u8,
@@ -54,6 +56,8 @@ impl DeckSettingsSnapshot {
             auto_advance_cards: settings.auto_advance_cards(),
             soft_time_reminder_secs: settings.soft_time_reminder_secs(),
             auto_reveal_secs: settings.auto_reveal_secs(),
+            min_interval_days: settings.min_interval_days(),
+            max_interval_days: settings.max_interval_days(),
             easy_days_enabled: settings.easy_days_enabled(),
             easy_day_load_factor: settings.easy_day_load_factor(),
             easy_days_mask: settings.easy_days_mask(),
@@ -80,6 +84,8 @@ impl DeckSettingsSnapshot {
             auto_advance_cards: settings.auto_advance_cards(),
             soft_time_reminder_secs: settings.soft_time_reminder_secs(),
             auto_reveal_secs: settings.auto_reveal_secs(),
+            min_interval_days: settings.min_interval_days(),
+            max_interval_days: settings.max_interval_days(),
             easy_days_enabled: settings.easy_days_enabled(),
             easy_day_load_factor: settings.easy_day_load_factor(),
             easy_days_mask: settings.easy_days_mask(),
@@ -139,8 +145,8 @@ impl DeckSettingsForm {
             fsrs_target_retention: format_retention(snapshot.fsrs_target_retention),
             fsrs_optimize_enabled: snapshot.fsrs_optimize_enabled,
             fsrs_optimize_after: snapshot.fsrs_optimize_after.to_string(),
-            max_interval_days: "365".to_string(),
-            min_interval_days: "1".to_string(),
+            max_interval_days: snapshot.max_interval_days.to_string(),
+            min_interval_days: snapshot.min_interval_days.to_string(),
             fsrs_parameters: "0.2120, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.0010, 1.8722, 0.1666, 0.7960, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542".to_string(),
         }
     }
@@ -160,8 +166,13 @@ impl DeckSettingsForm {
         let fsrs_optimize_after = parse_positive_u32(&self.fsrs_optimize_after)?;
         let soft_time_reminder_secs = parse_timer_secs(&self.soft_time_reminder_secs)?;
         let auto_reveal_secs = parse_timer_secs(&self.auto_reveal_secs)?;
+        let min_interval_days = parse_positive_u32(&self.min_interval_days)?;
+        let max_interval_days = parse_positive_u32(&self.max_interval_days)?;
         let easy_day_load_factor = parse_retention(&self.easy_day_load_factor)?;
         if self.easy_days_enabled && self.easy_days_mask == 0 {
+            return None;
+        }
+        if min_interval_days > max_interval_days {
             return None;
         }
 
@@ -180,6 +191,8 @@ impl DeckSettingsForm {
             auto_advance_cards: self.auto_advance_cards,
             soft_time_reminder_secs,
             auto_reveal_secs,
+            min_interval_days,
+            max_interval_days,
             easy_days_enabled: self.easy_days_enabled,
             easy_day_load_factor,
             easy_days_mask: self.easy_days_mask,
@@ -199,6 +212,8 @@ struct DeckSettingsErrors {
     lapse_min_interval: Option<&'static str>,
     soft_time_reminder_secs: Option<&'static str>,
     auto_reveal_secs: Option<&'static str>,
+    min_interval_days: Option<&'static str>,
+    max_interval_days: Option<&'static str>,
     easy_day_load_factor: Option<&'static str>,
     easy_days_mask: Option<&'static str>,
     fsrs_target_retention: Option<&'static str>,
@@ -214,6 +229,8 @@ impl DeckSettingsErrors {
             || self.lapse_min_interval.is_some()
             || self.soft_time_reminder_secs.is_some()
             || self.auto_reveal_secs.is_some()
+            || self.min_interval_days.is_some()
+            || self.max_interval_days.is_some()
             || self.easy_day_load_factor.is_some()
             || self.easy_days_mask.is_some()
             || self.fsrs_target_retention.is_some()
@@ -405,6 +422,8 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         next.auto_advance_cards = defaults.auto_advance_cards();
         next.soft_time_reminder_secs = defaults.soft_time_reminder_secs().to_string();
         next.auto_reveal_secs = defaults.auto_reveal_secs().to_string();
+        next.min_interval_days = defaults.min_interval_days().to_string();
+        next.max_interval_days = defaults.max_interval_days().to_string();
         next.easy_days_enabled = defaults.easy_days_enabled();
         next.easy_day_load_factor = format_retention(defaults.easy_day_load_factor());
         next.easy_days_mask = defaults.easy_days_mask();
@@ -1228,7 +1247,11 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                     div { class: "settings-inline-input",
                                                         input {
                                                             id: "max-interval",
-                                                            class: "editor-input settings-input",
+                                                            class: if errors_value.max_interval_days.is_some() {
+                                                                "editor-input settings-input editor-input--error"
+                                                            } else {
+                                                                "editor-input settings-input"
+                                                            },
                                                             r#type: "number",
                                                             min: "1",
                                                             inputmode: "numeric",
@@ -1237,10 +1260,16 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                                 let mut next = form();
                                                                 next.max_interval_days = evt.value();
                                                                 form.set(next);
+                                                                let mut next_errors = errors();
+                                                                next_errors.max_interval_days = None;
+                                                                errors.set(next_errors);
                                                                 save_state.set(SaveState::Idle);
                                                             },
                                                         }
                                                         span { class: "settings-inline-suffix", "days" }
+                                                    }
+                                                    if let Some(message) = errors_value.max_interval_days {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
@@ -1257,7 +1286,11 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                     div { class: "settings-inline-input",
                                                         input {
                                                             id: "min-interval",
-                                                            class: "editor-input settings-input",
+                                                            class: if errors_value.min_interval_days.is_some() {
+                                                                "editor-input settings-input editor-input--error"
+                                                            } else {
+                                                                "editor-input settings-input"
+                                                            },
                                                             r#type: "number",
                                                             min: "1",
                                                             inputmode: "numeric",
@@ -1266,10 +1299,16 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                                 let mut next = form();
                                                                 next.min_interval_days = evt.value();
                                                                 form.set(next);
+                                                                let mut next_errors = errors();
+                                                                next_errors.min_interval_days = None;
+                                                                errors.set(next_errors);
                                                                 save_state.set(SaveState::Idle);
                                                             },
                                                         }
                                                         span { class: "settings-inline-suffix", "days" }
+                                                    }
+                                                    if let Some(message) = errors_value.min_interval_days {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
@@ -1303,7 +1342,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                             title: "Resets all scheduling data for this deck.",
                                             "Reset FSRS data"
                                         }
-                                        p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                 }
 
@@ -1527,6 +1565,18 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckS
         errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
         0
     });
+    let min_interval_days = parse_positive_u32(&form.min_interval_days).unwrap_or_else(|| {
+        errors.min_interval_days = Some("Enter a positive number.");
+        0
+    });
+    let max_interval_days = parse_positive_u32(&form.max_interval_days).unwrap_or_else(|| {
+        errors.max_interval_days = Some("Enter a positive number.");
+        0
+    });
+    if min_interval_days > 0 && max_interval_days > 0 && min_interval_days > max_interval_days {
+        errors.min_interval_days = Some("Must be <= maximum interval.");
+        errors.max_interval_days = Some("Must be >= minimum interval.");
+    }
     let easy_day_load_factor = parse_retention(&form.easy_day_load_factor).unwrap_or_else(|| {
         errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
         0.0
@@ -1560,6 +1610,8 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckS
         form.auto_advance_cards,
         soft_time_reminder_secs,
         auto_reveal_secs,
+        min_interval_days,
+        max_interval_days,
         form.easy_days_enabled,
         easy_day_load_factor,
         easy_days_mask,
@@ -1587,6 +1639,16 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckS
             }
             learn_core::model::DeckError::InvalidAutoRevealSeconds => {
                 errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
+            }
+            learn_core::model::DeckError::InvalidMinIntervalDays => {
+                errors.min_interval_days = Some("Enter at least 1 day.");
+            }
+            learn_core::model::DeckError::InvalidMaxIntervalDays => {
+                errors.max_interval_days = Some("Enter at least 1 day.");
+            }
+            learn_core::model::DeckError::InvalidIntervalBounds => {
+                errors.min_interval_days = Some("Must be <= maximum interval.");
+                errors.max_interval_days = Some("Must be >= minimum interval.");
             }
             learn_core::model::DeckError::InvalidEasyDayLoadFactor => {
                 errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
