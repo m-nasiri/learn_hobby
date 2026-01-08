@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use chrono::Weekday;
 use thiserror::Error;
 
 use crate::model::ids::DeckId;
@@ -36,6 +37,12 @@ pub enum DeckError {
 
     #[error("auto reveal seconds must be between 5 and 600")]
     InvalidAutoRevealSeconds,
+
+    #[error("easy day load factor must be in (0, 1]")]
+    InvalidEasyDayLoadFactor,
+
+    #[error("easy days must include at least one day when enabled")]
+    InvalidEasyDaysMask,
 }
 
 //
@@ -59,6 +66,9 @@ pub struct DeckSettings {
     auto_advance_cards: bool,
     soft_time_reminder_secs: u32,
     auto_reveal_secs: u32,
+    easy_days_enabled: bool,
+    easy_day_load_factor: f32,
+    easy_days_mask: u8,
     fsrs_target_retention: f32,
     fsrs_optimize_enabled: bool,
     fsrs_optimize_after: u32,
@@ -86,6 +96,9 @@ impl DeckSettings {
             auto_advance_cards: false,
             soft_time_reminder_secs: 25,
             auto_reveal_secs: 20,
+            easy_days_enabled: true,
+            easy_day_load_factor: 0.5,
+            easy_days_mask: easy_days_mask(&[Weekday::Sat, Weekday::Sun]),
             fsrs_target_retention: 0.85,
             fsrs_optimize_enabled: true,
             fsrs_optimize_after: 100,
@@ -110,6 +123,9 @@ impl DeckSettings {
         auto_advance_cards: bool,
         soft_time_reminder_secs: u32,
         auto_reveal_secs: u32,
+        easy_days_enabled: bool,
+        easy_day_load_factor: f32,
+        easy_days_mask: u8,
         fsrs_target_retention: f32,
         fsrs_optimize_enabled: bool,
         fsrs_optimize_after: u32,
@@ -141,6 +157,15 @@ impl DeckSettings {
         if !(5..=600).contains(&auto_reveal_secs) {
             return Err(DeckError::InvalidAutoRevealSeconds);
         }
+        if !easy_day_load_factor.is_finite()
+            || easy_day_load_factor <= 0.0
+            || easy_day_load_factor > 1.0
+        {
+            return Err(DeckError::InvalidEasyDayLoadFactor);
+        }
+        if easy_days_enabled && easy_days_mask == 0 {
+            return Err(DeckError::InvalidEasyDaysMask);
+        }
 
         Ok(Self {
             new_cards_per_day,
@@ -154,6 +179,9 @@ impl DeckSettings {
             auto_advance_cards,
             soft_time_reminder_secs,
             auto_reveal_secs,
+            easy_days_enabled,
+            easy_day_load_factor,
+            easy_days_mask,
             fsrs_target_retention,
             fsrs_optimize_enabled,
             fsrs_optimize_after,
@@ -218,6 +246,29 @@ impl DeckSettings {
     }
 
     #[must_use]
+    pub fn easy_days_enabled(&self) -> bool {
+        self.easy_days_enabled
+    }
+
+    #[must_use]
+    pub fn easy_day_load_factor(&self) -> f32 {
+        self.easy_day_load_factor
+    }
+
+    #[must_use]
+    pub fn easy_days_mask(&self) -> u8 {
+        self.easy_days_mask
+    }
+
+    #[must_use]
+    pub fn is_easy_day(&self, weekday: Weekday) -> bool {
+        if !self.easy_days_enabled {
+            return false;
+        }
+        self.easy_days_mask & weekday_bit(weekday) != 0
+    }
+
+    #[must_use]
     pub fn fsrs_target_retention(&self) -> f32 {
         self.fsrs_target_retention
     }
@@ -236,6 +287,22 @@ impl DeckSettings {
     pub fn lapse_min_interval(&self) -> chrono::Duration {
         chrono::Duration::seconds(i64::from(self.lapse_min_interval_secs))
     }
+}
+
+fn weekday_bit(weekday: Weekday) -> u8 {
+    match weekday {
+        Weekday::Mon => 1 << 0,
+        Weekday::Tue => 1 << 1,
+        Weekday::Wed => 1 << 2,
+        Weekday::Thu => 1 << 3,
+        Weekday::Fri => 1 << 4,
+        Weekday::Sat => 1 << 5,
+        Weekday::Sun => 1 << 6,
+    }
+}
+
+fn easy_days_mask(days: &[Weekday]) -> u8 {
+    days.iter().fold(0, |mask, day| mask | weekday_bit(*day))
 }
 
 //
@@ -331,7 +398,8 @@ mod tests {
     #[test]
     fn settings_new_rejects_zero_micro_session() {
         let err = DeckSettings::new(
-            5, 30, 0, true, true, 86_400, false, false, false, 25, 20, 0.85, true, 100,
+            5, 30, 0, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidMicroSessionSize);
@@ -351,6 +419,11 @@ mod tests {
         assert!(!settings.auto_advance_cards());
         assert_eq!(settings.soft_time_reminder_secs(), 25);
         assert_eq!(settings.auto_reveal_secs(), 20);
+        assert!(settings.easy_days_enabled());
+        assert!((settings.easy_day_load_factor() - 0.5).abs() < f32::EPSILON);
+        assert!(settings.is_easy_day(Weekday::Sat));
+        assert!(settings.is_easy_day(Weekday::Sun));
+        assert!(!settings.is_easy_day(Weekday::Mon));
         assert!((settings.fsrs_target_retention() - 0.85).abs() < f32::EPSILON);
         assert!(settings.fsrs_optimize_enabled());
         assert_eq!(settings.fsrs_optimize_after(), 100);
@@ -359,13 +432,15 @@ mod tests {
     #[test]
     fn settings_rejects_invalid_retention() {
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 0.0, true, 100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.0, true,
+            100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
 
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1.1, true, 100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 1.1, true,
+            100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidFsrsTargetRetention);
@@ -374,16 +449,35 @@ mod tests {
     #[test]
     fn settings_rejects_invalid_timer_bounds() {
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 2, 20, 0.85, true, 100,
+            5, 30, 5, true, true, 86_400, false, false, false, 2, 20, false, 0.5, 0, 0.85, true,
+            100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidSoftReminderSeconds);
 
         let err = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 700, 0.85, true, 100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 700, false, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap_err();
         assert_eq!(err, DeckError::InvalidAutoRevealSeconds);
+    }
+
+    #[test]
+    fn settings_rejects_invalid_easy_days() {
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, true, 0.0, 1, 0.85, true,
+            100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidEasyDayLoadFactor);
+
+        let err = DeckSettings::new(
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, true, 0.5, 0, 0.85, true,
+            100,
+        )
+        .unwrap_err();
+        assert_eq!(err, DeckError::InvalidEasyDaysMask);
     }
 
     #[test]

@@ -28,6 +28,9 @@ struct DeckSettingsSnapshot {
     auto_advance_cards: bool,
     soft_time_reminder_secs: u32,
     auto_reveal_secs: u32,
+    easy_days_enabled: bool,
+    easy_day_load_factor: f32,
+    easy_days_mask: u8,
     fsrs_target_retention: f32,
     fsrs_optimize_enabled: bool,
     fsrs_optimize_after: u32,
@@ -51,6 +54,9 @@ impl DeckSettingsSnapshot {
             auto_advance_cards: settings.auto_advance_cards(),
             soft_time_reminder_secs: settings.soft_time_reminder_secs(),
             auto_reveal_secs: settings.auto_reveal_secs(),
+            easy_days_enabled: settings.easy_days_enabled(),
+            easy_day_load_factor: settings.easy_day_load_factor(),
+            easy_days_mask: settings.easy_days_mask(),
             fsrs_target_retention: settings.fsrs_target_retention(),
             fsrs_optimize_enabled: settings.fsrs_optimize_enabled(),
             fsrs_optimize_after: settings.fsrs_optimize_after(),
@@ -74,6 +80,9 @@ impl DeckSettingsSnapshot {
             auto_advance_cards: settings.auto_advance_cards(),
             soft_time_reminder_secs: settings.soft_time_reminder_secs(),
             auto_reveal_secs: settings.auto_reveal_secs(),
+            easy_days_enabled: settings.easy_days_enabled(),
+            easy_day_load_factor: settings.easy_day_load_factor(),
+            easy_days_mask: settings.easy_days_mask(),
             fsrs_target_retention: settings.fsrs_target_retention(),
             fsrs_optimize_enabled: settings.fsrs_optimize_enabled(),
             fsrs_optimize_after: settings.fsrs_optimize_after(),
@@ -97,6 +106,9 @@ struct DeckSettingsForm {
     auto_advance_cards: bool,
     soft_time_reminder_secs: String,
     auto_reveal_secs: String,
+    easy_days_enabled: bool,
+    easy_day_load_factor: String,
+    easy_days_mask: u8,
     fsrs_target_retention: String,
     fsrs_optimize_enabled: bool,
     fsrs_optimize_after: String,
@@ -121,6 +133,9 @@ impl DeckSettingsForm {
             auto_advance_cards: snapshot.auto_advance_cards,
             soft_time_reminder_secs: snapshot.soft_time_reminder_secs.to_string(),
             auto_reveal_secs: snapshot.auto_reveal_secs.to_string(),
+            easy_days_enabled: snapshot.easy_days_enabled,
+            easy_day_load_factor: format_retention(snapshot.easy_day_load_factor),
+            easy_days_mask: snapshot.easy_days_mask,
             fsrs_target_retention: format_retention(snapshot.fsrs_target_retention),
             fsrs_optimize_enabled: snapshot.fsrs_optimize_enabled,
             fsrs_optimize_after: snapshot.fsrs_optimize_after.to_string(),
@@ -145,6 +160,10 @@ impl DeckSettingsForm {
         let fsrs_optimize_after = parse_positive_u32(&self.fsrs_optimize_after)?;
         let soft_time_reminder_secs = parse_timer_secs(&self.soft_time_reminder_secs)?;
         let auto_reveal_secs = parse_timer_secs(&self.auto_reveal_secs)?;
+        let easy_day_load_factor = parse_retention(&self.easy_day_load_factor)?;
+        if self.easy_days_enabled && self.easy_days_mask == 0 {
+            return None;
+        }
 
         Some(DeckSettingsSnapshot {
             deck_id,
@@ -161,6 +180,9 @@ impl DeckSettingsForm {
             auto_advance_cards: self.auto_advance_cards,
             soft_time_reminder_secs,
             auto_reveal_secs,
+            easy_days_enabled: self.easy_days_enabled,
+            easy_day_load_factor,
+            easy_days_mask: self.easy_days_mask,
             fsrs_target_retention,
             fsrs_optimize_enabled: self.fsrs_optimize_enabled,
             fsrs_optimize_after,
@@ -177,6 +199,8 @@ struct DeckSettingsErrors {
     lapse_min_interval: Option<&'static str>,
     soft_time_reminder_secs: Option<&'static str>,
     auto_reveal_secs: Option<&'static str>,
+    easy_day_load_factor: Option<&'static str>,
+    easy_days_mask: Option<&'static str>,
     fsrs_target_retention: Option<&'static str>,
     fsrs_optimize_after: Option<&'static str>,
 }
@@ -190,6 +214,8 @@ impl DeckSettingsErrors {
             || self.lapse_min_interval.is_some()
             || self.soft_time_reminder_secs.is_some()
             || self.auto_reveal_secs.is_some()
+            || self.easy_day_load_factor.is_some()
+            || self.easy_days_mask.is_some()
             || self.fsrs_target_retention.is_some()
             || self.fsrs_optimize_after.is_some()
     }
@@ -262,9 +288,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     let mut autoplay_audio = use_signal(|| true);
     let mut replay_audio_after_answer = use_signal(|| false);
     let mut audio_delay_ms = use_signal(|| "300".to_string());
-    let mut easy_days_enabled = use_signal(|| true);
-    let mut easy_day_load_factor = use_signal(|| "0.5".to_string());
-    let mut easy_days_selected = use_signal(|| "Saturday, Sunday".to_string());
 
     let resource = use_resource(move || {
         let deck_service = deck_service_for_resource.clone();
@@ -382,6 +405,9 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         next.auto_advance_cards = defaults.auto_advance_cards();
         next.soft_time_reminder_secs = defaults.soft_time_reminder_secs().to_string();
         next.auto_reveal_secs = defaults.auto_reveal_secs().to_string();
+        next.easy_days_enabled = defaults.easy_days_enabled();
+        next.easy_day_load_factor = format_retention(defaults.easy_day_load_factor());
+        next.easy_days_mask = defaults.easy_days_mask();
         next.fsrs_target_retention = format_retention(defaults.fsrs_target_retention());
         next.fsrs_optimize_enabled = defaults.fsrs_optimize_enabled();
         next.fsrs_optimize_after = defaults.fsrs_optimize_after().to_string();
@@ -399,6 +425,16 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
     } else {
         deck_title
     };
+
+    let easy_day_options = [
+        ("Mon", 1_u8 << 0, "Monday"),
+        ("Tue", 1_u8 << 1, "Tuesday"),
+        ("Wed", 1_u8 << 2, "Wednesday"),
+        ("Thu", 1_u8 << 3, "Thursday"),
+        ("Fri", 1_u8 << 4, "Friday"),
+        ("Sat", 1_u8 << 5, "Saturday"),
+        ("Sun", 1_u8 << 6, "Sunday"),
+    ];
 
     let on_nav_select = {
         let mut active_section = active_section;
@@ -1016,6 +1052,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                             form.set(next);
                                                             save_state.set(SaveState::Idle);
                                                         },
+                                                    }
                                                 }
                                             }
                                             div { class: "settings-row",
@@ -1061,8 +1098,6 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                             }
                                         }
                                     }
-                                        p { class: "settings-inline-note", "Not wired yet." }
-                                    }
                                     SettingsAccordionSection {
                                         label: "Easy Days",
                                         section: SettingsSection::EasyDays,
@@ -1084,8 +1119,13 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                         class: "settings-toggle",
                                                         r#type: "button",
                                                         role: "switch",
-                                                        aria_checked: "{easy_days_enabled()}",
-                                                        onclick: move |_| easy_days_enabled.set(!easy_days_enabled()),
+                                                        aria_checked: "{form_value.easy_days_enabled}",
+                                                        onclick: move |_| {
+                                                            let mut next = form();
+                                                            next.easy_days_enabled = !next.easy_days_enabled;
+                                                            form.set(next);
+                                                            save_state.set(SaveState::Idle);
+                                                        },
                                                     }
                                                 }
                                             }
@@ -1101,10 +1141,25 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                 div { class: "settings-row__field settings-row__field--wide",
                                                     input {
                                                         id: "easy-day-factor",
-                                                        class: "editor-input settings-input",
+                                                        class: if errors_value.easy_day_load_factor.is_some() {
+                                                            "editor-input settings-input editor-input--error"
+                                                        } else {
+                                                            "editor-input settings-input"
+                                                        },
                                                         r#type: "text",
-                                                        value: "{easy_day_load_factor()}",
-                                                        oninput: move |evt| easy_day_load_factor.set(evt.value()),
+                                                        value: "{form_value.easy_day_load_factor}",
+                                                        oninput: move |evt| {
+                                                            let mut next = form();
+                                                            next.easy_day_load_factor = evt.value();
+                                                            form.set(next);
+                                                            let mut next_errors = errors();
+                                                            next_errors.easy_day_load_factor = None;
+                                                            errors.set(next_errors);
+                                                            save_state.set(SaveState::Idle);
+                                                        },
+                                                    }
+                                                    if let Some(message) = errors_value.easy_day_load_factor {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
@@ -1118,17 +1173,40 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
                                                     }
                                                 }
                                                 div { class: "settings-row__field settings-row__field--wide",
-                                                    input {
-                                                        id: "easy-days",
-                                                        class: "editor-input settings-input",
-                                                        r#type: "text",
-                                                        value: "{easy_days_selected()}",
-                                                        oninput: move |evt| easy_days_selected.set(evt.value()),
+                                                    div { class: "settings-day-picker",
+                                                        for (label, bit, title) in easy_day_options {
+                                                            button {
+                                                                class: if form_value.easy_days_mask & bit != 0 {
+                                                                    "settings-pill settings-pill--active"
+                                                                } else {
+                                                                    "settings-pill"
+                                                                },
+                                                                r#type: "button",
+                                                                title: "{title}",
+                                                                disabled: "{!form_value.easy_days_enabled}",
+                                                                onclick: move |_| {
+                                                                    let mut next = form();
+                                                                    if next.easy_days_mask & bit != 0 {
+                                                                        next.easy_days_mask &= !bit;
+                                                                    } else {
+                                                                        next.easy_days_mask |= bit;
+                                                                    }
+                                                                    form.set(next);
+                                                                    let mut next_errors = errors();
+                                                                    next_errors.easy_days_mask = None;
+                                                                    errors.set(next_errors);
+                                                                    save_state.set(SaveState::Idle);
+                                                                },
+                                                                "{label}"
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(message) = errors_value.easy_days_mask {
+                                                        p { class: "editor-error", "{message}" }
                                                     }
                                                 }
                                             }
                                         }
-                                        p { class: "settings-inline-note", "Not wired yet." }
                                     }
                                     SettingsAccordionSection {
                                         label: "Advanced",
@@ -1449,6 +1527,14 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckS
         errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
         0
     });
+    let easy_day_load_factor = parse_retention(&form.easy_day_load_factor).unwrap_or_else(|| {
+        errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
+        0.0
+    });
+    let easy_days_mask = form.easy_days_mask;
+    if form.easy_days_enabled && easy_days_mask == 0 {
+        errors.easy_days_mask = Some("Pick at least one day.");
+    }
     let fsrs_target_retention = parse_retention(&form.fsrs_target_retention).unwrap_or_else(|| {
         errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");
         0.0
@@ -1474,6 +1560,9 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckS
         form.auto_advance_cards,
         soft_time_reminder_secs,
         auto_reveal_secs,
+        form.easy_days_enabled,
+        easy_day_load_factor,
+        easy_days_mask,
         fsrs_target_retention,
         form.fsrs_optimize_enabled,
         fsrs_optimize_after,
@@ -1498,6 +1587,12 @@ fn validate_form(form: &DeckSettingsForm) -> Result<ValidatedSettings, Box<DeckS
             }
             learn_core::model::DeckError::InvalidAutoRevealSeconds => {
                 errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
+            }
+            learn_core::model::DeckError::InvalidEasyDayLoadFactor => {
+                errors.easy_day_load_factor = Some("Enter a value between 0 and 1.");
+            }
+            learn_core::model::DeckError::InvalidEasyDaysMask => {
+                errors.easy_days_mask = Some("Pick at least one day.");
             }
             learn_core::model::DeckError::InvalidFsrsTargetRetention => {
                 errors.fsrs_target_retention = Some("Enter a value between 0 and 1.");

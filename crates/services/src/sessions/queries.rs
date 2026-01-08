@@ -1,4 +1,6 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
+use rand::rng;
+use rand::seq::SliceRandom;
 
 use learn_core::model::{CardPhase, Deck, DeckId, SessionSummary, TagName};
 use storage::repository::{
@@ -11,6 +13,32 @@ use super::service::SessionService;
 
 /// Storage-backed session queries and builders.
 pub(crate) struct SessionQueries;
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn apply_easy_day_limit(limit: u32, factor: f32) -> u32 {
+    let scaled = f64::from(limit) * f64::from(factor);
+    if scaled <= 0.0 {
+        return 0;
+    }
+    if scaled >= f64::from(u32::MAX) {
+        return u32::MAX;
+    }
+    scaled.floor() as u32
+}
+
+fn effective_daily_limits(
+    settings: &learn_core::model::DeckSettings,
+    now: DateTime<Utc>,
+) -> (u32, u32) {
+    if !settings.is_easy_day(now.weekday()) {
+        return (settings.review_limit_per_day(), settings.new_cards_per_day());
+    }
+    let factor = settings.easy_day_load_factor();
+    (
+        apply_easy_day_limit(settings.review_limit_per_day(), factor),
+        apply_easy_day_limit(settings.new_cards_per_day(), factor),
+    )
+}
 
 // Some query helpers are used only in tests or planned UI flows.
 #[allow(dead_code)]
@@ -32,11 +60,12 @@ impl SessionQueries {
             .await?
             .ok_or(storage::repository::StorageError::NotFound)?;
         let settings = deck.settings();
+        let (review_limit, new_limit) = effective_daily_limits(settings, now);
         let due = cards
-            .due_cards(deck_id, now, settings.review_limit_per_day())
+            .due_cards(deck_id, now, review_limit)
             .await?;
         let new_cards = cards
-            .new_cards(deck_id, settings.new_cards_per_day())
+            .new_cards(deck_id, new_limit)
             .await?;
 
         let plan = SessionBuilder::new(&deck)
@@ -135,6 +164,8 @@ impl SessionQueries {
             .get_deck(deck_id)
             .await?
             .ok_or(storage::repository::StorageError::NotFound)?;
+        let settings = deck.settings();
+        let (review_limit, new_limit) = effective_daily_limits(settings, now);
 
         let tagged_cards = cards.list_cards_by_tags(deck_id, tag_names).await?;
         let mut due = Vec::new();
@@ -150,6 +181,20 @@ impl SessionQueries {
 
         if due.is_empty() && new_cards.is_empty() {
             return Err(SessionError::Empty);
+        }
+
+        if due.len() > review_limit as usize {
+            due.sort_by_key(|card| (card.next_review_at(), card.id().value()));
+            due.truncate(review_limit as usize);
+        }
+        if new_cards.len() > new_limit as usize {
+            if shuffle_new {
+                let mut rng = rng();
+                new_cards.as_mut_slice().shuffle(&mut rng);
+            } else {
+                new_cards.sort_by_key(|card| (card.created_at(), card.id().value()));
+            }
+            new_cards.truncate(new_limit as usize);
         }
 
         let plan = SessionBuilder::new(&deck)

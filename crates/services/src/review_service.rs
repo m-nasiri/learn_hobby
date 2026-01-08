@@ -290,7 +290,8 @@ mod tests {
         let mut card = build_card(now);
         let retention = 0.7;
         let settings = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, retention, true, 100,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, retention,
+            true, 100,
         )
         .unwrap();
         let service = ReviewService::new().unwrap().with_clock(Clock::Fixed(now));
@@ -326,7 +327,8 @@ mod tests {
             .unwrap();
 
         let lapse_settings = DeckSettings::new(
-            5, 30, 5, true, true, 3 * 86_400, false, false, false, 25, 20, 0.85, true, 100,
+            5, 30, 5, true, true, 3 * 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap();
         let lapse_review = now + chrono::Duration::days(2);
@@ -356,7 +358,8 @@ mod tests {
             .unwrap();
 
         let lapse_settings = DeckSettings::new(
-            5, 30, 5, true, false, 86_400, false, false, false, 25, 20, 0.85, true, 100,
+            5, 30, 5, true, false, 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap();
         let result = service

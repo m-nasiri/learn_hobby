@@ -447,5 +447,52 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 9).await? {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN easy_days_enabled INTEGER NOT NULL DEFAULT 1
+                    CHECK (easy_days_enabled IN (0, 1));
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN easy_day_load_factor REAL NOT NULL DEFAULT 0.5
+                    CHECK (easy_day_load_factor > 0 AND easy_day_load_factor <= 1);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE decks
+                ADD COLUMN easy_days_mask INTEGER NOT NULL DEFAULT 96
+                    CHECK (easy_days_mask BETWEEN 0 AND 127);
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(9_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

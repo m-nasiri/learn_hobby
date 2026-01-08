@@ -155,7 +155,8 @@ mod tests {
             .unwrap();
 
         let updated_settings = DeckSettings::new(
-            12, 55, 5, false, true, 86_400, false, false, false, 25, 20, 0.85, true, 100,
+            12, 55, 5, false, true, 86_400, false, false, false, 25, 20, false, 0.5, 0, 0.85,
+            true, 100,
         )
         .unwrap();
         service
