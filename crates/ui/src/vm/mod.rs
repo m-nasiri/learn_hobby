@@ -24,3 +24,4 @@ pub use markdown_vm::{
 };
 pub use editor_vm::{DailyLimitVm, EditorVm, build_editor_vm};
 pub use practice_vm::{PracticeDeckCardVm, PracticeTagPillVm, map_practice_deck_card};
+pub use time_fmt::format_datetime;
