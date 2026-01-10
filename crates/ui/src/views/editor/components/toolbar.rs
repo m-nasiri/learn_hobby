@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use crate::vm::{MarkdownAction, MarkdownField};
 use crate::views::editor::state::{
-    WritingToolsCommand, WritingToolsMenuState, WritingToolsTone,
+    WritingToolsCommand, WritingToolsMenuState, WritingToolsResultStatus, WritingToolsTone,
 };
 
 #[component]
@@ -12,6 +12,10 @@ pub fn EditorFormatToolbar(
     writing_menu_state: WritingToolsMenuState,
     writing_prompt: String,
     writing_tone: WritingToolsTone,
+    writing_result_status: WritingToolsResultStatus,
+    writing_result_target: Option<MarkdownField>,
+    writing_result_title: String,
+    writing_result_body: String,
     on_format: Callback<(MarkdownField, MarkdownAction)>,
     on_block_dir: Callback<(MarkdownField, String)>,
     on_toggle_writing_menu: Callback<MarkdownField>,
@@ -23,6 +27,8 @@ pub fn EditorFormatToolbar(
         writing_menu_state,
         WritingToolsMenuState::Open(current) if current == field
     );
+    let writing_result_open = writing_result_status != WritingToolsResultStatus::Idle
+        && matches!(writing_result_target, Some(current) if current == field);
     rsx! {
         div { class: "editor-md-toolbar",
             div { class: "editor-md-toolbar-group",
@@ -300,6 +306,10 @@ pub fn EditorFormatToolbar(
                             r#type: "button",
                             onclick: move |_| {
                                 on_select_writing_tone.call(WritingToolsTone::Friendly);
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Rewrite,
+                                ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
@@ -320,6 +330,10 @@ pub fn EditorFormatToolbar(
                             r#type: "button",
                             onclick: move |_| {
                                 on_select_writing_tone.call(WritingToolsTone::Professional);
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Rewrite,
+                                ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
@@ -340,6 +354,10 @@ pub fn EditorFormatToolbar(
                             r#type: "button",
                             onclick: move |_| {
                                 on_select_writing_tone.call(WritingToolsTone::Concise);
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Rewrite,
+                                ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
@@ -446,6 +464,47 @@ pub fn EditorFormatToolbar(
                                 path { d: "M14 5l4 3" }
                             }
                             span { "Compose..." }
+                        }
+                    }
+                }
+                if writing_result_open {
+                    div { class: "editor-writing-result",
+                        div { class: "editor-writing-result-header",
+                            span { class: "editor-writing-result-title",
+                                "{writing_result_title}"
+                            }
+                        }
+                        div {
+                            class: if writing_result_status == WritingToolsResultStatus::Loading {
+                                "editor-writing-result-body editor-writing-result-body--loading"
+                            } else {
+                                "editor-writing-result-body"
+                            },
+                            if writing_result_status == WritingToolsResultStatus::Error {
+                                "Something went wrong. Please try again."
+                            } else {
+                                "{writing_result_body}"
+                            }
+                        }
+                        div { class: "editor-writing-result-actions",
+                            button {
+                                class: "editor-writing-result-btn",
+                                r#type: "button",
+                                disabled: writing_result_status != WritingToolsResultStatus::Ready,
+                                "Replace"
+                            }
+                            button {
+                                class: "editor-writing-result-btn",
+                                r#type: "button",
+                                disabled: writing_result_status != WritingToolsResultStatus::Ready,
+                                "Copy"
+                            }
+                            button {
+                                class: "editor-writing-result-flag",
+                                r#type: "button",
+                                aria_label: "Report",
+                                "!"
+                            }
                         }
                     }
                 }

@@ -6,7 +6,7 @@ use crate::vm::{MarkdownAction, MarkdownField};
 use super::EditorFormatToolbar;
 use super::super::state::{
     DeleteState, DuplicateCheckState, SaveMenuState, SaveRequest, SaveState,
-    WritingToolsCommand, WritingToolsMenuState, WritingToolsTone,
+    WritingToolsCommand, WritingToolsMenuState, WritingToolsResultStatus, WritingToolsTone,
 };
 
 #[component]
@@ -32,6 +32,10 @@ pub fn EditorDetailPane(
     writing_tools_menu_state: WritingToolsMenuState,
     writing_tools_prompt: String,
     writing_tools_tone: WritingToolsTone,
+    writing_tools_result_status: WritingToolsResultStatus,
+    writing_tools_result_target: Option<MarkdownField>,
+    writing_tools_result_title: String,
+    writing_tools_result_body: String,
     on_focus_field: Callback<MarkdownField>,
     on_prompt_input: Callback<()>,
     on_answer_input: Callback<()>,
@@ -89,6 +93,10 @@ pub fn EditorDetailPane(
                         writing_menu_state: writing_tools_menu_state,
                         writing_prompt: writing_tools_prompt.clone(),
                         writing_tone: writing_tools_tone,
+                        writing_result_status: writing_tools_result_status,
+                        writing_result_target: writing_tools_result_target,
+                        writing_result_title: writing_tools_result_title.clone(),
+                        writing_result_body: writing_tools_result_body.clone(),
                         on_format,
                         on_block_dir,
                         on_toggle_writing_menu: on_toggle_writing_tools,
@@ -133,6 +141,10 @@ pub fn EditorDetailPane(
                         writing_menu_state: writing_tools_menu_state,
                         writing_prompt: writing_tools_prompt,
                         writing_tone: writing_tools_tone,
+                        writing_result_status: writing_tools_result_status,
+                        writing_result_target: writing_tools_result_target,
+                        writing_result_title: writing_tools_result_title,
+                        writing_result_body: writing_tools_result_body,
                         on_format,
                         on_block_dir,
                         on_toggle_writing_menu: on_toggle_writing_tools,

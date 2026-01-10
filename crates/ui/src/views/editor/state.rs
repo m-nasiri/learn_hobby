@@ -53,6 +53,14 @@ pub enum WritingToolsMenuState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingToolsResultStatus {
+    Idle,
+    Loading,
+    Ready,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WritingToolsTone {
     Friendly,
     Professional,
@@ -68,6 +76,16 @@ pub enum WritingToolsCommand {
     List,
     Table,
     Compose,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WritingToolsRequest {
+    pub field: MarkdownField,
+    pub command: WritingToolsCommand,
+    pub tone: WritingToolsTone,
+    pub user_prompt: String,
+    pub source_text: String,
+    pub request_prompt: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +148,11 @@ pub struct EditorState {
     pub writing_tools_prompt: Signal<String>,
     pub writing_tools_tone: Signal<WritingToolsTone>,
     pub writing_tools_last_command: Signal<Option<WritingToolsCommand>>,
+    pub writing_tools_request: Signal<Option<WritingToolsRequest>>,
+    pub writing_tools_result_status: Signal<WritingToolsResultStatus>,
+    pub writing_tools_result_target: Signal<Option<MarkdownField>>,
+    pub writing_tools_result_title: Signal<String>,
+    pub writing_tools_result_body: Signal<String>,
     pub show_new_deck: Signal<bool>,
     pub new_deck_name: Signal<String>,
     pub new_deck_state: Signal<SaveState>,
@@ -184,6 +207,11 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let writing_tools_prompt = use_signal(String::new);
     let writing_tools_tone = use_signal(|| WritingToolsTone::Professional);
     let writing_tools_last_command = use_signal(|| None::<WritingToolsCommand>);
+    let writing_tools_request = use_signal(|| None::<WritingToolsRequest>);
+    let writing_tools_result_status = use_signal(|| WritingToolsResultStatus::Idle);
+    let writing_tools_result_target = use_signal(|| None::<MarkdownField>);
+    let writing_tools_result_title = use_signal(String::new);
+    let writing_tools_result_body = use_signal(String::new);
     let show_new_deck = use_signal(|| false);
     let new_deck_name = use_signal(String::new);
     let new_deck_state = use_signal(|| SaveState::Idle);
@@ -454,6 +482,11 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         writing_tools_prompt,
         writing_tools_tone,
         writing_tools_last_command,
+        writing_tools_request,
+        writing_tools_result_status,
+        writing_tools_result_target,
+        writing_tools_result_title,
+        writing_tools_result_body,
         show_new_deck,
         new_deck_name,
         new_deck_state,

@@ -12,7 +12,7 @@ use super::components::{EditorDetailPane, EditorListPane, EditorOverlays};
 use super::scripts::{read_editable_html, set_editable_html};
 use super::state::{
     DeleteState, EditorServices, SaveMenuState, SaveState, WritingToolsMenuState,
-    use_editor_state,
+    WritingToolsResultStatus, use_editor_state,
 };
 use crate::vm::build_editor_vm;
 
@@ -55,6 +55,10 @@ pub fn EditorView() -> Element {
     let writing_tools_menu_state = state.writing_tools_menu_state;
     let writing_tools_prompt = state.writing_tools_prompt;
     let writing_tools_tone = state.writing_tools_tone;
+    let writing_tools_result_status = state.writing_tools_result_status;
+    let writing_tools_result_target = state.writing_tools_result_target;
+    let writing_tools_result_title = state.writing_tools_result_title;
+    let writing_tools_result_body = state.writing_tools_result_body;
     let show_reset_deck_modal = state.show_reset_deck_modal;
     let reset_deck_state = state.reset_deck_state;
     let mut show_new_deck = state.show_new_deck;
@@ -363,7 +367,7 @@ pub fn EditorView() -> Element {
                 show_writing_overlay: matches!(
                     writing_tools_menu_state(),
                     WritingToolsMenuState::Open(_)
-                ),
+                ) || writing_tools_result_status() != WritingToolsResultStatus::Idle,
                 show_unsaved_modal: show_unsaved_modal(),
                 on_deck_overlay_close: deck_overlay_close,
                 on_delete_close: on_delete_close,
@@ -631,6 +635,10 @@ pub fn EditorView() -> Element {
                         writing_tools_menu_state: writing_tools_menu_state(),
                         writing_tools_prompt: writing_tools_prompt(),
                         writing_tools_tone: writing_tools_tone(),
+                        writing_tools_result_status: writing_tools_result_status(),
+                        writing_tools_result_target: writing_tools_result_target(),
+                        writing_tools_result_title: writing_tools_result_title(),
+                        writing_tools_result_body: writing_tools_result_body(),
                         on_focus_field,
                         on_prompt_input,
                         on_answer_input,

@@ -8,7 +8,7 @@ use crate::views::{ViewError, ViewState, view_state_from_resource};
 
 use super::super::state::{
     DeleteState, EditorServices, EditorState, PendingAction, SaveMenuState, SaveState,
-    WritingToolsMenuState,
+    WritingToolsMenuState, WritingToolsResultStatus,
 };
 
 pub(super) fn build_select_card_action(state: &EditorState) -> Callback<CardListItemVm> {
@@ -38,6 +38,9 @@ pub(super) fn build_select_card_action(state: &EditorState) -> Callback<CardList
         let mut show_delete_modal = state.show_delete_modal;
         let mut focus_prompt = state.focus_prompt;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
 
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
@@ -57,6 +60,9 @@ pub(super) fn build_select_card_action(state: &EditorState) -> Callback<CardList
         reset_duplicate_state.borrow_mut()();
         focus_prompt.set(false);
         writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+        writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+        writing_tools_result_target.set(None);
+        writing_tools_request.set(None);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         show_deck_menu.set(false);
@@ -114,6 +120,9 @@ pub(super) fn build_new_card_action(state: &EditorState) -> Callback<()> {
         let mut save_menu_state = state.save_menu_state;
         let mut focus_prompt = state.focus_prompt;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
 
         selected_card_id.set(None);
         is_create_mode.set(true);
@@ -131,6 +140,9 @@ pub(super) fn build_new_card_action(state: &EditorState) -> Callback<()> {
         focus_prompt.set(true);
         last_focus_field.set(crate::vm::MarkdownField::Front);
         writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+        writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+        writing_tools_result_target.set(None);
+        writing_tools_request.set(None);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         new_deck_name.set(String::new());
@@ -153,12 +165,18 @@ pub(super) fn build_request_new_card_action(
         let mut show_deck_menu = state.show_deck_menu;
         let mut save_menu_state = state.save_menu_state;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
         if has_unsaved_changes() {
             pending_action.set(Some(PendingAction::NewCard));
             show_unsaved_modal.set(true);
             show_deck_menu.set(false);
             save_menu_state.set(SaveMenuState::Closed);
             writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+            writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+            writing_tools_result_target.set(None);
+            writing_tools_request.set(None);
             return;
         }
         new_card_action.call(());
@@ -188,6 +206,9 @@ pub(super) fn build_delete_action(
         let mut show_delete_modal = state.show_delete_modal;
         let mut save_menu_state = state.save_menu_state;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
         let deck_id = *selected_deck.read();
         let Some(card_id) = selected_card_id() else {
             return;
@@ -203,6 +224,9 @@ pub(super) fn build_delete_action(
             show_delete_modal.set(false);
             save_menu_state.set(SaveMenuState::Closed);
             writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+            writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+            writing_tools_result_target.set(None);
+            writing_tools_request.set(None);
             let result = card_service.delete_card(deck_id, card_id).await;
             match result {
                 Ok(()) => {
@@ -253,6 +277,10 @@ pub(super) fn build_cancel_new_action(state: &EditorState) -> Callback<()> {
         let mut show_unsaved_modal = state.show_unsaved_modal;
         let mut pending_action = state.pending_action;
         let last_selected_tags = state.last_selected_tags;
+        let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
 
         if !is_create_mode() {
             return;
@@ -279,6 +307,10 @@ pub(super) fn build_cancel_new_action(state: &EditorState) -> Callback<()> {
         pending_action.set(None);
         reset_duplicate_state.borrow_mut()();
         show_deck_menu.set(false);
+        writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+        writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+        writing_tools_result_target.set(None);
+        writing_tools_request.set(None);
     })
 }
 
@@ -299,6 +331,9 @@ pub(super) fn use_cards_resource_effect(
         let mut show_unsaved_modal = state.show_unsaved_modal;
         let mut pending_action = state.pending_action;
         let mut focus_prompt = state.focus_prompt;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
         let cards_state = view_state_from_resource(&state.cards_resource);
         if let ViewState::Ready(items) = &cards_state {
             if should_enter_create_mode(items.len(), is_create_mode()) {
@@ -313,6 +348,9 @@ pub(super) fn use_cards_resource_effect(
                 show_unsaved_modal.set(false);
                 pending_action.set(None);
                 focus_prompt.set(true);
+                writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+                writing_tools_result_target.set(None);
+                writing_tools_request.set(None);
             } else if should_select_first(items.len(), selected_card_id().is_none(), is_create_mode())
                 && let Some(first) = items.first()
             {

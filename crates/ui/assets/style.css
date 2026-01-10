@@ -3131,6 +3131,79 @@ a {
   z-index: 55;
 }
 
+.editor-writing-result {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 260px;
+  max-width: 360px;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: linear-gradient(180deg, rgba(236, 246, 252, 0.96), rgba(233, 242, 250, 0.98));
+  box-shadow: 0 18px 36px rgba(17, 24, 39, 0.2);
+  display: grid;
+  gap: 10px;
+  z-index: 58;
+}
+
+.editor-writing-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.editor-writing-result-title {
+  font-weight: 700;
+  font-size: 0.96rem;
+  color: rgba(0, 0, 0, 0.78);
+}
+
+.editor-writing-result-body {
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: rgba(0, 0, 0, 0.72);
+}
+
+.editor-writing-result-body--loading {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.editor-writing-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-writing-result-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.8);
+  color: rgba(0, 0, 0, 0.76);
+  cursor: pointer;
+}
+
+.editor-writing-result-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.editor-writing-result-flag {
+  margin-left: auto;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.7);
+  color: rgba(0, 0, 0, 0.7);
+  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .editor-md-toolbar-btn[data-tooltip]:hover::after,
 .editor-md-toolbar-btn[data-tooltip]:focus-visible::after {
   content: attr(data-tooltip);

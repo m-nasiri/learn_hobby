@@ -8,7 +8,7 @@ use crate::views::ViewError;
 
 use super::super::state::{
     DeleteState, EditorServices, EditorState, PendingAction, ResetDeckState, SaveMenuState,
-    SaveState, WritingToolsMenuState,
+    SaveState, WritingToolsMenuState, WritingToolsResultStatus,
 };
 
 pub(super) fn build_create_deck_action(
@@ -43,6 +43,9 @@ pub(super) fn build_create_deck_action(
         let mut save_menu_state = state.save_menu_state;
         let mut focus_prompt = state.focus_prompt;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
 
         let name = new_deck_name.read().to_string();
         if !is_valid_deck_name(&name) || new_deck_state() == SaveState::Saving {
@@ -74,6 +77,9 @@ pub(super) fn build_create_deck_action(
                     focus_prompt.set(false);
                     save_menu_state.set(SaveMenuState::Closed);
                     writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+                    writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+                    writing_tools_result_target.set(None);
+                    writing_tools_request.set(None);
                     new_deck_state.set(SaveState::Success);
                     decks_resource.restart();
                     cards_resource.restart();
@@ -202,6 +208,9 @@ pub(super) fn build_apply_select_deck_action(state: &EditorState) -> Callback<le
         let mut rename_deck_state = state.rename_deck_state;
         let mut rename_deck_error = state.rename_deck_error;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
 
         selected_deck.set(deck_id);
         show_new_deck.set(false);
@@ -229,6 +238,9 @@ pub(super) fn build_apply_select_deck_action(state: &EditorState) -> Callback<le
         rename_deck_state.set(SaveState::Idle);
         rename_deck_error.set(None);
         writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+        writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+        writing_tools_result_target.set(None);
+        writing_tools_request.set(None);
     })
 }
 
@@ -243,11 +255,17 @@ pub(super) fn build_request_select_deck_action(
         let mut show_unsaved_modal = state.show_unsaved_modal;
         let mut show_deck_menu = state.show_deck_menu;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
         if has_unsaved_changes() {
             pending_action.set(Some(PendingAction::SelectDeck(deck_id)));
             show_unsaved_modal.set(true);
             show_deck_menu.set(false);
             writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+            writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+            writing_tools_result_target.set(None);
+            writing_tools_request.set(None);
             return;
         }
         apply_select_deck_action.call(deck_id);
@@ -265,6 +283,9 @@ pub(super) fn build_open_reset_deck_modal_action(state: &EditorState) -> Callbac
         let mut rename_deck_state = state.rename_deck_state;
         let mut rename_deck_error = state.rename_deck_error;
         let mut writing_tools_menu_state = state.writing_tools_menu_state;
+        let mut writing_tools_result_status = state.writing_tools_result_status;
+        let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_request = state.writing_tools_request;
         show_deck_actions.set(false);
         show_deck_menu.set(false);
         is_renaming_deck.set(false);
@@ -273,6 +294,9 @@ pub(super) fn build_open_reset_deck_modal_action(state: &EditorState) -> Callbac
         reset_deck_state.set(ResetDeckState::Idle);
         show_reset_deck_modal.set(true);
         writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+        writing_tools_result_status.set(WritingToolsResultStatus::Idle);
+        writing_tools_result_target.set(None);
+        writing_tools_request.set(None);
     })
 }
 
