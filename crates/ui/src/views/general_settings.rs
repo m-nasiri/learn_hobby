@@ -1,5 +1,10 @@
 use dioxus::prelude::*;
 
+use learn_core::model::{AppSettings, AppSettingsDraft};
+
+use crate::context::AppContext;
+use crate::views::{ViewError, ViewState, view_state_from_resource};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ThemeChoice {
     System,
@@ -83,6 +88,10 @@ struct GeneralSettingsForm {
     target_retention: String,
     analytics_enabled: bool,
     email: String,
+    ai_api_key: String,
+    ai_model: String,
+    ai_base_url: String,
+    ai_system_prompt: String,
 }
 
 impl Default for GeneralSettingsForm {
@@ -96,6 +105,10 @@ impl Default for GeneralSettingsForm {
             target_retention: "0.85".to_string(),
             analytics_enabled: false,
             email: "john.smil@gmail.com".to_string(),
+            ai_api_key: String::new(),
+            ai_model: String::new(),
+            ai_base_url: String::new(),
+            ai_system_prompt: String::new(),
         }
     }
 }
@@ -103,22 +116,65 @@ impl Default for GeneralSettingsForm {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SaveState {
     Idle,
+    Saving,
     Saved,
+    Error(ViewError),
+}
+
+fn apply_app_settings(form: &mut GeneralSettingsForm, settings: &AppSettings) {
+    form.ai_api_key = settings.api_key().unwrap_or_default().to_string();
+    form.ai_model = settings.api_model().unwrap_or_default().to_string();
+    form.ai_base_url = settings.api_base_url().unwrap_or_default().to_string();
+    form.ai_system_prompt = settings.ai_system_prompt().unwrap_or_default().to_string();
+}
+
+fn to_optional(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[component]
 pub fn GeneralSettingsView() -> Element {
+    let ctx = use_context::<AppContext>();
+    let app_settings = ctx.app_settings();
+    let app_settings_for_resource = app_settings.clone();
     let mut form = use_signal(GeneralSettingsForm::default);
     let mut initial = use_signal(GeneralSettingsForm::default);
     let mut save_state = use_signal(|| SaveState::Idle);
+    let mut settings_loaded = use_signal(|| false);
+
+    let settings_resource = use_resource(move || {
+        let app_settings = app_settings_for_resource.clone();
+        async move {
+            let settings = app_settings.load().await.map_err(|_| ViewError::Unknown)?;
+            Ok::<_, ViewError>(settings)
+        }
+    });
+
+    let settings_state = view_state_from_resource(&settings_resource);
+    if let ViewState::Ready(settings) = settings_state {
+        if !settings_loaded() {
+            let mut next = form();
+            apply_app_settings(&mut next, &settings);
+            form.set(next.clone());
+            initial.set(next);
+            settings_loaded.set(true);
+        }
+    }
 
     let form_value = form();
     let initial_value = initial();
     let is_dirty = form_value != initial_value;
 
-    let status_label = match (is_dirty, save_state()) {
-        (true, _) => Some("Unsaved changes"),
-        (false, SaveState::Saved) => Some("Saved"),
+    let status_label = match save_state() {
+        SaveState::Saving => Some("Saving..."),
+        SaveState::Error(_) => Some("Save failed"),
+        SaveState::Saved if !is_dirty => Some("Saved"),
+        _ if is_dirty => Some("Unsaved changes"),
         _ => None,
     };
 
@@ -325,6 +381,139 @@ pub fn GeneralSettingsView() -> Element {
                     }
                 }
 
+                section { class: "settings-section",
+                    h3 { class: "settings-section-title", "Writing Tools" }
+                    div { class: "settings-card",
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M4 12a8 8 0 1 1 16 0" }
+                                        path { d: "M4 12a8 8 0 0 0 6 7.7" }
+                                        circle { cx: "12", cy: "12", r: "2.8" }
+                                    }
+                                }
+                                span { "API key" }
+                            }
+                            div { class: "settings-row__field settings-row__field--wide",
+                                input {
+                                    class: "editor-input settings-input",
+                                    r#type: "password",
+                                    value: "{form_value.ai_api_key}",
+                                    placeholder: "sk-…",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_api_key = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        rect { x: "4", y: "4", width: "16", height: "16", rx: "3" }
+                                        path { d: "M8 9h8" }
+                                        path { d: "M8 13h6" }
+                                    }
+                                }
+                                span { "Model" }
+                            }
+                            div { class: "settings-row__field",
+                                input {
+                                    class: "editor-input settings-input",
+                                    r#type: "text",
+                                    value: "{form_value.ai_model}",
+                                    placeholder: "gpt-4o-mini",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_model = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        circle { cx: "12", cy: "12", r: "8" }
+                                        path { d: "M4 12h16" }
+                                        path { d: "M12 4c2.2 2.2 2.2 13.8 0 16" }
+                                    }
+                                }
+                                span { "Base URL" }
+                            }
+                            div { class: "settings-row__field settings-row__field--wide",
+                                input {
+                                    class: "editor-input settings-input",
+                                    r#type: "text",
+                                    value: "{form_value.ai_base_url}",
+                                    placeholder: "https://api.openai.com/v1",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_base_url = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M4 7h16" }
+                                        path { d: "M4 12h12" }
+                                        path { d: "M4 17h9" }
+                                    }
+                                }
+                                span { "Initial prompt" }
+                            }
+                            div { class: "settings-row__field settings-row__field--wide",
+                                textarea {
+                                    class: "editor-input settings-input settings-textarea",
+                                    value: "{form_value.ai_system_prompt}",
+                                    placeholder: "Optional system prompt for all writing tools.",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_system_prompt = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+
                 section { class: "settings-section settings-section--subtle",
                     h3 { class: "settings-section-title", "FSRS Core Settings" }
                     div { class: "settings-card",
@@ -447,7 +636,7 @@ pub fn GeneralSettingsView() -> Element {
                         button {
                             class: "button button-secondary",
                             r#type: "button",
-                            disabled: !is_dirty,
+                            disabled: !is_dirty || save_state() == SaveState::Saving,
                             onclick: move |_| {
                                 form.set(initial());
                                 save_state.set(SaveState::Idle);
@@ -457,11 +646,36 @@ pub fn GeneralSettingsView() -> Element {
                         button {
                             class: "button button-primary",
                             r#type: "button",
-                            disabled: !is_dirty,
+                            disabled: !is_dirty || save_state() == SaveState::Saving,
                             onclick: move |_| {
                                 let snapshot = form();
-                                initial.set(snapshot);
-                                save_state.set(SaveState::Saved);
+                                let mut initial = initial;
+                                let mut form = form;
+                                let mut save_state = save_state;
+                                let app_settings = app_settings.clone();
+                                spawn(async move {
+                                    save_state.set(SaveState::Saving);
+                                    let draft = AppSettingsDraft {
+                                        api_key: to_optional(snapshot.ai_api_key.clone()),
+                                        api_model: to_optional(snapshot.ai_model.clone()),
+                                        api_base_url: to_optional(snapshot.ai_base_url.clone()),
+                                        ai_system_prompt: to_optional(
+                                            snapshot.ai_system_prompt.clone(),
+                                        ),
+                                    };
+                                    match app_settings.save(draft).await {
+                                        Ok(settings) => {
+                                            let mut next = snapshot;
+                                            apply_app_settings(&mut next, &settings);
+                                            form.set(next.clone());
+                                            initial.set(next);
+                                            save_state.set(SaveState::Saved);
+                                        }
+                                        Err(_) => {
+                                            save_state.set(SaveState::Error(ViewError::Unknown));
+                                        }
+                                    }
+                                });
                             },
                             "Save"
                         }

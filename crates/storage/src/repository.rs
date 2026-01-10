@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use learn_core::model::{
-    Card, CardError, CardId, CardPhase, Deck, DeckId, DeckSettings, MediaId, ReviewGrade,
-    ReviewLog, ReviewOutcome, SessionSummary, Tag, TagId, TagName, content::Content,
+    AppSettings, Card, CardError, CardId, CardPhase, Deck, DeckId, DeckSettings, MediaId,
+    ReviewGrade, ReviewLog, ReviewOutcome, SessionSummary, Tag, TagId, TagName, content::Content,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,24 @@ pub enum StorageError {
 
     #[error("serialization error: {0}")]
     Serialization(String),
+}
+
+/// Access to persisted app-level settings.
+#[async_trait]
+pub trait AppSettingsRepository: Send + Sync {
+    /// Fetch app-level settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn get_settings(&self) -> Result<Option<AppSettings>, StorageError>;
+
+    /// Persist app-level settings (upsert).
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn save_settings(&self, settings: &AppSettings) -> Result<(), StorageError>;
 }
 
 /// Persisted shape for a card, including lifecycle phase.
@@ -587,6 +605,7 @@ struct InMemState {
     card_tags: HashMap<CardId, Vec<TagId>>,
     logs: Vec<ReviewLogRecord>,
     summaries: HashMap<i64, SessionSummary>,
+    app_settings: Option<AppSettings>,
     next_deck_id: u64,
     next_card_id: u64,
     next_tag_id: u64,
@@ -613,6 +632,26 @@ impl InMemoryRepository {
                 ..InMemState::default()
             })),
         }
+    }
+}
+
+#[async_trait]
+impl AppSettingsRepository for InMemoryRepository {
+    async fn get_settings(&self) -> Result<Option<AppSettings>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        Ok(guard.app_settings.clone())
+    }
+
+    async fn save_settings(&self, settings: &AppSettings) -> Result<(), StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        guard.app_settings = Some(settings.clone());
+        Ok(())
     }
 }
 
@@ -1418,6 +1457,7 @@ pub struct Storage {
     pub review_logs: Arc<dyn ReviewLogRepository>,
     pub reviews: Arc<dyn ReviewPersistence>,
     pub session_summaries: Arc<dyn SessionSummaryRepository>,
+    pub app_settings: Arc<dyn AppSettingsRepository>,
 }
 
 impl Storage {
@@ -1428,13 +1468,15 @@ impl Storage {
         let cards: Arc<dyn CardRepository> = Arc::new(repo.clone());
         let review_logs: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
         let reviews: Arc<dyn ReviewPersistence> = Arc::new(repo.clone());
-        let session_summaries: Arc<dyn SessionSummaryRepository> = Arc::new(repo);
+        let session_summaries: Arc<dyn SessionSummaryRepository> = Arc::new(repo.clone());
+        let app_settings: Arc<dyn AppSettingsRepository> = Arc::new(repo);
         Self {
             decks,
             cards,
             review_logs,
             reviews,
             session_summaries,
+            app_settings,
         }
     }
 }

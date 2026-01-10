@@ -1,5 +1,6 @@
 mod card;
 pub mod content;
+mod app_settings;
 mod deck;
 mod ids;
 mod review;
@@ -13,6 +14,7 @@ pub use content::{
 pub use ids::{CardId, DeckId, MediaId, TagId};
 
 pub use card::{Card, CardError, CardPhase};
+pub use app_settings::{AppSettings, AppSettingsDraft, AppSettingsError};
 pub use deck::{Deck, DeckError, DeckSettings};
 pub use review::{ReviewError, ReviewGrade, ReviewLog, ReviewOutcome};
 pub use session::{SessionSummary, SessionSummaryError};

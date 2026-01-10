@@ -2,7 +2,9 @@
 
 use thiserror::Error;
 
-use learn_core::model::{CardError, DeckError, SessionSummaryError};
+use learn_core::model::{
+    AppSettingsError, CardError, DeckError, SessionSummaryError,
+};
 use learn_core::scheduler::SchedulerError;
 use storage::repository::StorageError;
 use storage::sqlite::SqliteInitError;
@@ -17,6 +19,8 @@ pub enum WritingToolsError {
     EmptyResponse,
     #[error("writing tools request failed with status {0}")]
     HttpStatus(reqwest::StatusCode),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 }
@@ -79,4 +83,14 @@ pub enum AppServicesError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     Deck(#[from] DeckError),
+}
+
+/// Errors emitted by `AppSettingsService`.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AppSettingsServiceError {
+    #[error(transparent)]
+    Settings(#[from] AppSettingsError),
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }

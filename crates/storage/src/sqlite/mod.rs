@@ -5,10 +5,11 @@ use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use thiserror::Error;
 
 use crate::repository::{
-    CardRepository, DeckRepository, ReviewLogRepository, ReviewPersistence,
+    AppSettingsRepository, CardRepository, DeckRepository, ReviewLogRepository, ReviewPersistence,
     SessionSummaryRepository, Storage,
 };
 
+mod app_settings_repo;
 mod card_repo;
 mod deck_repo;
 mod mapping;
@@ -88,13 +89,15 @@ impl Storage {
         let card_repo: Arc<dyn CardRepository> = Arc::new(repo.clone());
         let log_repo: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
         let review_repo: Arc<dyn ReviewPersistence> = Arc::new(repo.clone());
-        let summary_repo: Arc<dyn SessionSummaryRepository> = Arc::new(repo);
+        let summary_repo: Arc<dyn SessionSummaryRepository> = Arc::new(repo.clone());
+        let app_settings_repo: Arc<dyn AppSettingsRepository> = Arc::new(repo);
         Ok(Self {
             decks: deck_repo,
             cards: card_repo,
             review_logs: log_repo,
             reviews: review_repo,
             session_summaries: summary_repo,
+            app_settings: app_settings_repo,
         })
     }
 }

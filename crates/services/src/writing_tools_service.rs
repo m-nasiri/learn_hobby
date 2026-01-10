@@ -1,31 +1,66 @@
 use std::env;
+use std::sync::Arc;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::WritingToolsError;
+use learn_core::model::AppSettings;
+use storage::repository::AppSettingsRepository;
 
 #[derive(Clone, Debug)]
 pub struct WritingToolsConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    pub system_prompt: Option<String>,
 }
 
 impl WritingToolsConfig {
     #[must_use]
     pub fn from_env() -> Option<Self> {
-        let api_key = env::var("LEARN_AI_API_KEY").ok()?;
+        let api_key = env::var("LEARN_AI_API_KEY")
+            .or_else(|_| env::var("LEARN_API_KEY"))
+            .ok()?;
         if api_key.trim().is_empty() {
             return None;
         }
         let base_url =
-            env::var("LEARN_AI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into());
-        let model = env::var("LEARN_AI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into());
+            env::var("LEARN_AI_BASE_URL").unwrap_or_else(|_| default_base_url().into());
+        let model = env::var("LEARN_AI_MODEL").unwrap_or_else(|_| default_model().into());
         Some(Self {
             base_url,
             api_key,
             model,
+            system_prompt: env::var("LEARN_AI_SYSTEM_PROMPT").ok(),
+        })
+    }
+
+    #[must_use]
+    pub fn from_settings(settings: &AppSettings, fallback: Option<&Self>) -> Option<Self> {
+        let api_key = settings
+            .api_key()
+            .map(str::to_string)
+            .or_else(|| fallback.map(|config| config.api_key.clone()))?;
+        let base_url = settings
+            .api_base_url()
+            .map(str::to_string)
+            .or_else(|| fallback.map(|config| config.base_url.clone()))
+            .unwrap_or_else(|| default_base_url().into());
+        let model = settings
+            .api_model()
+            .map(str::to_string)
+            .or_else(|| fallback.map(|config| config.model.clone()))
+            .unwrap_or_else(|| default_model().into());
+        let system_prompt = settings
+            .ai_system_prompt()
+            .map(str::to_string)
+            .or_else(|| fallback.and_then(|config| config.system_prompt.clone()));
+        Some(Self {
+            base_url,
+            api_key,
+            model,
+            system_prompt,
         })
     }
 }
@@ -33,26 +68,26 @@ impl WritingToolsConfig {
 #[derive(Clone)]
 pub struct WritingToolsService {
     client: Client,
-    config: Option<WritingToolsConfig>,
+    settings_repo: Arc<dyn AppSettingsRepository>,
+    env_config: Option<WritingToolsConfig>,
 }
 
 impl WritingToolsService {
     #[must_use]
-    pub fn from_env() -> Self {
-        Self::new(WritingToolsConfig::from_env())
+    pub fn from_env(settings_repo: Arc<dyn AppSettingsRepository>) -> Self {
+        Self::new(settings_repo, WritingToolsConfig::from_env())
     }
 
     #[must_use]
-    pub fn new(config: Option<WritingToolsConfig>) -> Self {
+    pub fn new(
+        settings_repo: Arc<dyn AppSettingsRepository>,
+        env_config: Option<WritingToolsConfig>,
+    ) -> Self {
         Self {
             client: Client::new(),
-            config,
+            settings_repo,
+            env_config,
         }
-    }
-
-    #[must_use]
-    pub fn enabled(&self) -> bool {
-        self.config.is_some()
     }
 
     /// Generate text from a prompt.
@@ -62,21 +97,26 @@ impl WritingToolsService {
     /// Returns `WritingToolsError` when the service is disabled, the request fails,
     /// or the response is empty.
     pub async fn generate(&self, prompt: &str) -> Result<String, WritingToolsError> {
-        let config = self
-            .config
-            .as_ref()
-            .ok_or(WritingToolsError::Disabled)?;
+        let config = self.resolve_config().await?;
 
         let url = format!(
             "{}/chat/completions",
             config.base_url.trim_end_matches('/')
         );
+        let mut messages = Vec::new();
+        if let Some(system_prompt) = config.system_prompt.as_ref() {
+            messages.push(ChatMessage {
+                role: "system",
+                content: system_prompt.clone(),
+            });
+        }
+        messages.push(ChatMessage {
+            role: "user",
+            content: prompt.to_string(),
+        });
         let payload = ChatRequest {
             model: config.model.clone(),
-            messages: vec![ChatMessage {
-                role: "user",
-                content: prompt.to_string(),
-            }],
+            messages,
             temperature: 0.2,
         };
 
@@ -101,6 +141,13 @@ impl WritingToolsService {
             .ok_or(WritingToolsError::EmptyResponse)?;
 
         Ok(content.trim().to_string())
+    }
+
+    async fn resolve_config(&self) -> Result<WritingToolsConfig, WritingToolsError> {
+        let settings = self.settings_repo.get_settings().await?;
+        let settings = settings.unwrap_or_default();
+        WritingToolsConfig::from_settings(&settings, self.env_config.as_ref())
+            .ok_or(WritingToolsError::Disabled)
     }
 }
 
@@ -130,4 +177,12 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatMessageResponse {
     content: Option<String>,
+}
+
+fn default_base_url() -> &'static str {
+    "https://api.openai.com/v1"
+}
+
+fn default_model() -> &'static str {
+    "gpt-4o-mini"
 }

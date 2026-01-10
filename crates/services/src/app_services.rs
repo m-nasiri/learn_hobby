@@ -6,6 +6,7 @@ use storage::repository::{DeckRepository, NewDeckRecord, Storage};
 use crate::card_service::CardService;
 use crate::deck_service::DeckService;
 use crate::error::AppServicesError;
+use crate::app_settings_service::AppSettingsService;
 use crate::sessions::{SessionLoopService, SessionSummaryService};
 use crate::writing_tools_service::WritingToolsService;
 use crate::Clock;
@@ -19,6 +20,7 @@ pub struct AppServices {
     session_loop: Arc<SessionLoopService>,
     card_service: Arc<CardService>,
     deck_service: Arc<DeckService>,
+    app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
 }
 
@@ -48,9 +50,11 @@ impl AppServices {
             Arc::clone(&storage.reviews),
             Arc::clone(&storage.session_summaries),
         ));
+        let app_settings = Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings)));
         let card_service = Arc::new(CardService::new(clock, Arc::clone(&storage.cards)));
         let deck_service = Arc::new(DeckService::new(clock, Arc::clone(&storage.decks)));
-        let writing_tools = Arc::new(WritingToolsService::from_env());
+        let writing_tools =
+            Arc::new(WritingToolsService::from_env(Arc::clone(&storage.app_settings)));
 
         Ok(Self {
             deck_id,
@@ -59,6 +63,7 @@ impl AppServices {
             session_loop,
             card_service,
             deck_service,
+            app_settings,
             writing_tools,
         })
     }
@@ -91,6 +96,11 @@ impl AppServices {
     #[must_use]
     pub fn deck_service(&self) -> Arc<DeckService> {
         Arc::clone(&self.deck_service)
+    }
+
+    #[must_use]
+    pub fn app_settings(&self) -> Arc<AppSettingsService> {
+        Arc::clone(&self.app_settings)
     }
 
     #[must_use]

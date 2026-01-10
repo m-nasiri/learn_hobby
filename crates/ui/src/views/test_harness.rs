@@ -7,8 +7,8 @@ use learn_core::model::DeckId;
 use learn_core::model::DeckSettings;
 use learn_core::time::fixed_now;
 use services::{
-    CardService, Clock, DeckService, SessionLoopService, SessionSummaryService,
-    WritingToolsService,
+    AppSettingsService, CardService, Clock, DeckService, SessionLoopService,
+    SessionSummaryService, WritingToolsService,
 };
 use storage::repository::{SessionSummaryRepository, Storage};
 
@@ -24,6 +24,7 @@ struct TestApp {
     card_service: Arc<CardService>,
     deck_service: Arc<DeckService>,
     writing_tools: Arc<WritingToolsService>,
+    app_settings: Arc<AppSettingsService>,
 }
 
 impl UiApp for TestApp {
@@ -49,6 +50,10 @@ impl UiApp for TestApp {
 
     fn deck_service(&self) -> Arc<DeckService> {
         Arc::clone(&self.deck_service)
+    }
+
+    fn app_settings(&self) -> Arc<AppSettingsService> {
+        Arc::clone(&self.app_settings)
     }
 
     fn writing_tools(&self) -> Arc<WritingToolsService> {
@@ -194,7 +199,11 @@ pub async fn setup_view_harness_with_summary_repo(
         session_loop,
         card_service,
         deck_service,
-        writing_tools: Arc::new(WritingToolsService::new(None)),
+        writing_tools: Arc::new(WritingToolsService::new(
+            Arc::clone(&storage.app_settings),
+            None,
+        )),
+        app_settings: Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings))),
     });
 
     let dom = VirtualDom::new_with_props(
@@ -254,7 +263,11 @@ pub async fn setup_view_harness_with_session_loop(
         session_loop,
         card_service,
         deck_service,
-        writing_tools: Arc::new(WritingToolsService::new(None)),
+        writing_tools: Arc::new(WritingToolsService::new(
+            Arc::clone(&storage.app_settings),
+            None,
+        )),
+        app_settings: Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings))),
     });
 
     let dom = VirtualDom::new_with_props(
