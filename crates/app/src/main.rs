@@ -6,6 +6,7 @@ use dioxus::LaunchBuilder;
 use learn_core::model::DeckId;
 use services::{
     AppServices, CardService, Clock, DeckService, SessionLoopService, SessionSummaryService,
+    WritingToolsService,
 };
 use ui::{App, UiApp, build_app_context};
 
@@ -43,6 +44,7 @@ struct DesktopApp {
     session_loop: Arc<SessionLoopService>,
     card_service: Arc<CardService>,
     deck_service: Arc<DeckService>,
+    writing_tools: Arc<WritingToolsService>,
     open_editor_on_launch: bool,
 }
 
@@ -65,6 +67,10 @@ impl UiApp for DesktopApp {
 
     fn deck_service(&self) -> Arc<DeckService> {
         Arc::clone(&self.deck_service)
+    }
+
+    fn writing_tools(&self) -> Arc<WritingToolsService> {
+        Arc::clone(&self.writing_tools)
     }
 
     fn open_editor_on_launch(&self) -> bool {
@@ -232,6 +238,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 session_loop: services.session_loop(),
                 card_service: services.card_service(),
                 deck_service: services.deck_service(),
+                writing_tools: services.writing_tools(),
                 open_editor_on_launch: services.open_editor_on_launch(),
             };
 

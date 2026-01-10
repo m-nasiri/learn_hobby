@@ -8,6 +8,7 @@ use learn_core::model::DeckSettings;
 use learn_core::time::fixed_now;
 use services::{
     CardService, Clock, DeckService, SessionLoopService, SessionSummaryService,
+    WritingToolsService,
 };
 use storage::repository::{SessionSummaryRepository, Storage};
 
@@ -22,6 +23,7 @@ struct TestApp {
     session_loop: Arc<SessionLoopService>,
     card_service: Arc<CardService>,
     deck_service: Arc<DeckService>,
+    writing_tools: Arc<WritingToolsService>,
 }
 
 impl UiApp for TestApp {
@@ -47,6 +49,10 @@ impl UiApp for TestApp {
 
     fn deck_service(&self) -> Arc<DeckService> {
         Arc::clone(&self.deck_service)
+    }
+
+    fn writing_tools(&self) -> Arc<WritingToolsService> {
+        Arc::clone(&self.writing_tools)
     }
 }
 
@@ -188,6 +194,7 @@ pub async fn setup_view_harness_with_summary_repo(
         session_loop,
         card_service,
         deck_service,
+        writing_tools: Arc::new(WritingToolsService::new(None)),
     });
 
     let dom = VirtualDom::new_with_props(
@@ -247,6 +254,7 @@ pub async fn setup_view_harness_with_session_loop(
         session_loop,
         card_service,
         deck_service,
+        writing_tools: Arc::new(WritingToolsService::new(None)),
     });
 
     let dom = VirtualDom::new_with_props(

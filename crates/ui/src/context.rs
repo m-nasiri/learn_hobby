@@ -4,7 +4,9 @@ use std::sync::{
 };
 
 use learn_core::model::DeckId;
-use services::{CardService, DeckService, SessionLoopService, SessionSummaryService};
+use services::{
+    CardService, DeckService, SessionLoopService, SessionSummaryService, WritingToolsService,
+};
 
 pub trait UiApp: Send + Sync {
     fn current_deck_id(&self) -> DeckId;
@@ -14,6 +16,7 @@ pub trait UiApp: Send + Sync {
     fn session_loop(&self) -> Arc<SessionLoopService>;
     fn card_service(&self) -> Arc<CardService>;
     fn deck_service(&self) -> Arc<DeckService>;
+    fn writing_tools(&self) -> Arc<WritingToolsService>;
 }
 
 #[derive(Clone)]
@@ -26,6 +29,7 @@ pub struct AppContext {
     session_loop: Arc<SessionLoopService>,
     card_service: Arc<CardService>,
     deck_service: Arc<DeckService>,
+    writing_tools: Arc<WritingToolsService>,
 }
 
 impl AppContext {
@@ -38,6 +42,7 @@ impl AppContext {
         let session_loop = app.session_loop();
         let card_service = app.card_service();
         let deck_service = app.deck_service();
+        let writing_tools = app.writing_tools();
 
         Self {
             current_deck_id,
@@ -47,6 +52,7 @@ impl AppContext {
             session_loop,
             card_service,
             deck_service,
+            writing_tools,
         }
     }
 
@@ -85,6 +91,11 @@ impl AppContext {
     #[must_use]
     pub fn deck_service(&self) -> Arc<DeckService> {
         Arc::clone(&self.deck_service)
+    }
+
+    #[must_use]
+    pub fn writing_tools(&self) -> Arc<WritingToolsService> {
+        Arc::clone(&self.writing_tools)
     }
 }
 

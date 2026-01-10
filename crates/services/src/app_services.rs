@@ -7,6 +7,7 @@ use crate::card_service::CardService;
 use crate::deck_service::DeckService;
 use crate::error::AppServicesError;
 use crate::sessions::{SessionLoopService, SessionSummaryService};
+use crate::writing_tools_service::WritingToolsService;
 use crate::Clock;
 
 /// Assembles app-facing services and resolves a usable deck id.
@@ -18,6 +19,7 @@ pub struct AppServices {
     session_loop: Arc<SessionLoopService>,
     card_service: Arc<CardService>,
     deck_service: Arc<DeckService>,
+    writing_tools: Arc<WritingToolsService>,
 }
 
 impl AppServices {
@@ -48,6 +50,7 @@ impl AppServices {
         ));
         let card_service = Arc::new(CardService::new(clock, Arc::clone(&storage.cards)));
         let deck_service = Arc::new(DeckService::new(clock, Arc::clone(&storage.decks)));
+        let writing_tools = Arc::new(WritingToolsService::from_env());
 
         Ok(Self {
             deck_id,
@@ -56,6 +59,7 @@ impl AppServices {
             session_loop,
             card_service,
             deck_service,
+            writing_tools,
         })
     }
 
@@ -87,6 +91,11 @@ impl AppServices {
     #[must_use]
     pub fn deck_service(&self) -> Arc<DeckService> {
         Arc::clone(&self.deck_service)
+    }
+
+    #[must_use]
+    pub fn writing_tools(&self) -> Arc<WritingToolsService> {
+        Arc::clone(&self.writing_tools)
     }
 }
 

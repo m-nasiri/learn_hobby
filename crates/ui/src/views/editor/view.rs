@@ -55,10 +55,33 @@ pub fn EditorView() -> Element {
     let writing_tools_menu_state = state.writing_tools_menu_state;
     let writing_tools_prompt = state.writing_tools_prompt;
     let writing_tools_tone = state.writing_tools_tone;
+    let mut writing_tools_request = state.writing_tools_request;
     let writing_tools_result_status = state.writing_tools_result_status;
     let writing_tools_result_target = state.writing_tools_result_target;
     let writing_tools_result_title = state.writing_tools_result_title;
     let writing_tools_result_body = state.writing_tools_result_body;
+
+    let writing_tools_service = ctx.writing_tools();
+    use_effect(move || {
+        let Some(request) = writing_tools_request() else {
+            return;
+        };
+        let service = writing_tools_service.clone();
+        let mut writing_tools_result_status = writing_tools_result_status;
+        let mut writing_tools_result_body = writing_tools_result_body;
+        writing_tools_request.set(None);
+        spawn(async move {
+            match service.generate(&request.request_prompt).await {
+                Ok(text) => {
+                    writing_tools_result_status.set(WritingToolsResultStatus::Ready);
+                    writing_tools_result_body.set(text);
+                }
+                Err(_) => {
+                    writing_tools_result_status.set(WritingToolsResultStatus::Error);
+                }
+            }
+        });
+    });
     let show_reset_deck_modal = state.show_reset_deck_modal;
     let reset_deck_state = state.reset_deck_state;
     let mut show_new_deck = state.show_new_deck;

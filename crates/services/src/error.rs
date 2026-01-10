@@ -7,6 +7,20 @@ use learn_core::scheduler::SchedulerError;
 use storage::repository::StorageError;
 use storage::sqlite::SqliteInitError;
 
+/// Errors emitted by `WritingToolsService`.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum WritingToolsError {
+    #[error("writing tools are not configured")]
+    Disabled,
+    #[error("writing tools returned an empty response")]
+    EmptyResponse,
+    #[error("writing tools request failed with status {0}")]
+    HttpStatus(reqwest::StatusCode),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+}
+
 /// Errors emitted by `ReviewService`.
 #[derive(Debug, Error)]
 #[non_exhaustive]
