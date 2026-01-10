@@ -5,10 +5,12 @@ use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use thiserror::Error;
 
 use crate::repository::{
-    AppSettingsRepository, CardRepository, DeckRepository, ReviewLogRepository, ReviewPersistence,
-    SessionSummaryRepository, Storage,
+    AiPriceBookRepository, AiUsageRepository, AppSettingsRepository, CardRepository, DeckRepository,
+    ReviewLogRepository, ReviewPersistence, SessionSummaryRepository, Storage,
 };
 
+mod ai_price_book_repo;
+mod ai_usage_repo;
 mod app_settings_repo;
 mod card_repo;
 mod deck_repo;
@@ -90,7 +92,9 @@ impl Storage {
         let log_repo: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
         let review_repo: Arc<dyn ReviewPersistence> = Arc::new(repo.clone());
         let summary_repo: Arc<dyn SessionSummaryRepository> = Arc::new(repo.clone());
-        let app_settings_repo: Arc<dyn AppSettingsRepository> = Arc::new(repo);
+        let app_settings_repo: Arc<dyn AppSettingsRepository> = Arc::new(repo.clone());
+        let ai_price_book_repo: Arc<dyn AiPriceBookRepository> = Arc::new(repo.clone());
+        let ai_usage_repo: Arc<dyn AiUsageRepository> = Arc::new(repo);
         Ok(Self {
             decks: deck_repo,
             cards: card_repo,
@@ -98,6 +102,8 @@ impl Storage {
             reviews: review_repo,
             session_summaries: summary_repo,
             app_settings: app_settings_repo,
+            ai_price_book: ai_price_book_repo,
+            ai_usage: ai_usage_repo,
         })
     }
 }

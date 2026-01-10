@@ -889,6 +889,10 @@ a {
   text-align: left;
 }
 
+.settings-input--short {
+  width: 96px;
+}
+
 .settings-textarea {
   min-height: 90px;
   resize: vertical;
@@ -948,6 +952,33 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.settings-price-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+
+.settings-price-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-price-item__model {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+.settings-price-item__rate {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-segment {

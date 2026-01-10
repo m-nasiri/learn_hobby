@@ -43,6 +43,128 @@ pub trait AppSettingsRepository: Send + Sync {
     async fn save_settings(&self, settings: &AppSettings) -> Result<(), StorageError>;
 }
 
+/// Pricing metadata for an AI model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiPriceBookEntry {
+    pub provider: String,
+    pub model: String,
+    pub input_micro_usd_per_million: u64,
+    pub output_micro_usd_per_million: u64,
+    pub deprecated: bool,
+}
+
+/// Access to model pricing metadata.
+#[async_trait]
+pub trait AiPriceBookRepository: Send + Sync {
+    /// Fetch a pricing entry for a specific provider/model.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn get_entry(
+        &self,
+        provider: &str,
+        model: &str,
+    ) -> Result<Option<AiPriceBookEntry>, StorageError>;
+
+    /// List all pricing entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn list_entries(&self) -> Result<Vec<AiPriceBookEntry>, StorageError>;
+
+    /// Insert or update a pricing entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn upsert_entry(&self, entry: &AiPriceBookEntry) -> Result<(), StorageError>;
+}
+
+/// Status of an AI request in the usage ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiUsageStatus {
+    Started,
+    Succeeded,
+    Failed,
+}
+
+/// Record of AI usage for budgeting and rate limiting.
+#[derive(Debug, Clone)]
+pub struct AiUsageRecord {
+    pub id: i64,
+    pub provider: String,
+    pub model: String,
+    pub created_at: DateTime<Utc>,
+    pub status: AiUsageStatus,
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
+    pub cost_micro_usd: Option<u64>,
+}
+
+/// Insert payload for new AI usage rows.
+#[derive(Debug, Clone)]
+pub struct NewAiUsageRecord {
+    pub provider: String,
+    pub model: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Completion payload for AI usage rows.
+#[derive(Debug, Clone)]
+pub struct AiUsageCompletion {
+    pub status: AiUsageStatus,
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
+    pub cost_micro_usd: Option<u64>,
+}
+
+/// Access to AI usage logs for budgeting and rate limiting.
+#[async_trait]
+pub trait AiUsageRepository: Send + Sync {
+    /// Insert a new request start entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn insert_started(&self, record: NewAiUsageRecord) -> Result<i64, StorageError>;
+
+    /// Update an existing usage entry with completion info.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn update_completion(
+        &self,
+        id: i64,
+        completion: AiUsageCompletion,
+    ) -> Result<(), StorageError>;
+
+    /// Count requests since a timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn count_since(&self, since: DateTime<Utc>) -> Result<u32, StorageError>;
+
+    /// Fetch the most recent request time.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn last_request_at(&self) -> Result<Option<DateTime<Utc>>, StorageError>;
+
+    /// Sum usage cost since a timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` on persistence failures.
+    async fn sum_cost_since(&self, since: DateTime<Utc>) -> Result<u64, StorageError>;
+}
+
 /// Persisted shape for a card, including lifecycle phase.
 ///
 /// This is a storage-friendly representation used to round-trip the domain `Card`
@@ -606,11 +728,14 @@ struct InMemState {
     logs: Vec<ReviewLogRecord>,
     summaries: HashMap<i64, SessionSummary>,
     app_settings: Option<AppSettings>,
+    ai_price_book: HashMap<(String, String), AiPriceBookEntry>,
+    ai_usage: Vec<AiUsageRecord>,
     next_deck_id: u64,
     next_card_id: u64,
     next_tag_id: u64,
     next_log_id: i64,
     next_summary_id: i64,
+    next_ai_usage_id: i64,
 }
 
 /// Simple in-memory repository implementation for testing and prototyping.
@@ -622,15 +747,18 @@ pub struct InMemoryRepository {
 impl InMemoryRepository {
     #[must_use]
     pub fn new() -> Self {
+        let mut state = InMemState {
+            next_deck_id: 1,
+            next_card_id: 1,
+            next_tag_id: 1,
+            next_log_id: 1,
+            next_summary_id: 1,
+            next_ai_usage_id: 1,
+            ..InMemState::default()
+        };
+        seed_price_book(&mut state);
         Self {
-            state: Arc::new(Mutex::new(InMemState {
-                next_deck_id: 1,
-                next_card_id: 1,
-                next_tag_id: 1,
-                next_log_id: 1,
-                next_summary_id: 1,
-                ..InMemState::default()
-            })),
+            state: Arc::new(Mutex::new(state)),
         }
     }
 }
@@ -655,12 +783,168 @@ impl AppSettingsRepository for InMemoryRepository {
     }
 }
 
+#[async_trait]
+impl AiPriceBookRepository for InMemoryRepository {
+    async fn get_entry(
+        &self,
+        provider: &str,
+        model: &str,
+    ) -> Result<Option<AiPriceBookEntry>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        Ok(guard
+            .ai_price_book
+            .get(&(provider.to_string(), model.to_string()))
+            .cloned())
+    }
+
+    async fn list_entries(&self) -> Result<Vec<AiPriceBookEntry>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        Ok(guard.ai_price_book.values().cloned().collect())
+    }
+
+    async fn upsert_entry(&self, entry: &AiPriceBookEntry) -> Result<(), StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        guard.ai_price_book.insert(
+            (entry.provider.clone(), entry.model.clone()),
+            entry.clone(),
+        );
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AiUsageRepository for InMemoryRepository {
+    async fn insert_started(&self, record: NewAiUsageRecord) -> Result<i64, StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let id = guard.next_ai_usage_id;
+        guard.next_ai_usage_id = id
+            .checked_add(1)
+            .ok_or_else(|| StorageError::Serialization("ai_usage_id overflow".into()))?;
+        guard.ai_usage.push(AiUsageRecord {
+            id,
+            provider: record.provider,
+            model: record.model,
+            created_at: record.created_at,
+            status: AiUsageStatus::Started,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            cost_micro_usd: None,
+        });
+        Ok(id)
+    }
+
+    async fn update_completion(
+        &self,
+        id: i64,
+        completion: AiUsageCompletion,
+    ) -> Result<(), StorageError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let record = guard
+            .ai_usage
+            .iter_mut()
+            .find(|record| record.id == id)
+            .ok_or(StorageError::NotFound)?;
+        record.status = completion.status;
+        record.prompt_tokens = completion.prompt_tokens;
+        record.completion_tokens = completion.completion_tokens;
+        record.total_tokens = completion.total_tokens;
+        record.cost_micro_usd = completion.cost_micro_usd;
+        Ok(())
+    }
+
+    async fn count_since(&self, since: DateTime<Utc>) -> Result<u32, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let count = guard
+            .ai_usage
+            .iter()
+            .filter(|record| record.created_at >= since)
+            .count();
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    async fn last_request_at(&self) -> Result<Option<DateTime<Utc>>, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        Ok(guard
+            .ai_usage
+            .iter()
+            .map(|record| record.created_at)
+            .max())
+    }
+
+    async fn sum_cost_since(&self, since: DateTime<Utc>) -> Result<u64, StorageError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+        let total = guard
+            .ai_usage
+            .iter()
+            .filter(|record| record.created_at >= since)
+            .filter_map(|record| record.cost_micro_usd)
+            .fold(0_u64, u64::saturating_add);
+        Ok(total)
+    }
+}
+
 fn limit_usize(limit: u32) -> usize {
     usize::try_from(limit).unwrap_or(usize::MAX)
 }
 
 fn normalize_prompt(text: &str) -> String {
     text.trim().to_lowercase()
+}
+
+fn seed_price_book(state: &mut InMemState) {
+    let entries = [
+        AiPriceBookEntry {
+            provider: "openai".to_string(),
+            model: "gpt-4.1-mini".to_string(),
+            input_micro_usd_per_million: 3_000_000,
+            output_micro_usd_per_million: 15_000_000,
+            deprecated: false,
+        },
+        AiPriceBookEntry {
+            provider: "openai".to_string(),
+            model: "gpt-4.1".to_string(),
+            input_micro_usd_per_million: 10_000_000,
+            output_micro_usd_per_million: 30_000_000,
+            deprecated: false,
+        },
+        AiPriceBookEntry {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            input_micro_usd_per_million: 150_000,
+            output_micro_usd_per_million: 600_000,
+            deprecated: false,
+        },
+    ];
+    for entry in entries {
+        state
+            .ai_price_book
+            .insert((entry.provider.clone(), entry.model.clone()), entry);
+    }
 }
 
 #[async_trait]
@@ -1458,6 +1742,8 @@ pub struct Storage {
     pub reviews: Arc<dyn ReviewPersistence>,
     pub session_summaries: Arc<dyn SessionSummaryRepository>,
     pub app_settings: Arc<dyn AppSettingsRepository>,
+    pub ai_price_book: Arc<dyn AiPriceBookRepository>,
+    pub ai_usage: Arc<dyn AiUsageRepository>,
 }
 
 impl Storage {
@@ -1469,7 +1755,9 @@ impl Storage {
         let review_logs: Arc<dyn ReviewLogRepository> = Arc::new(repo.clone());
         let reviews: Arc<dyn ReviewPersistence> = Arc::new(repo.clone());
         let session_summaries: Arc<dyn SessionSummaryRepository> = Arc::new(repo.clone());
-        let app_settings: Arc<dyn AppSettingsRepository> = Arc::new(repo);
+        let app_settings: Arc<dyn AppSettingsRepository> = Arc::new(repo.clone());
+        let ai_price_book: Arc<dyn AiPriceBookRepository> = Arc::new(repo.clone());
+        let ai_usage: Arc<dyn AiUsageRepository> = Arc::new(repo);
         Self {
             decks,
             cards,
@@ -1477,6 +1765,8 @@ impl Storage {
             reviews,
             session_summaries,
             app_settings,
+            ai_price_book,
+            ai_usage,
         }
     }
 }

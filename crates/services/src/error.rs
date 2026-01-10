@@ -2,12 +2,26 @@
 
 use thiserror::Error;
 
-use learn_core::model::{
-    AppSettingsError, CardError, DeckError, SessionSummaryError,
-};
+use learn_core::model::{AppSettingsError, CardError, DeckError, SessionSummaryError};
 use learn_core::scheduler::SchedulerError;
 use storage::repository::StorageError;
 use storage::sqlite::SqliteInitError;
+
+/// Errors emitted by AI usage/budget policy.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AiUsageError {
+    #[error("daily request cap reached ({cap})")]
+    DailyCapReached { cap: u32 },
+    #[error("cooldown active ({remaining_secs}s remaining)")]
+    CooldownActive { remaining_secs: u32 },
+    #[error("monthly budget exceeded")]
+    MonthlyBudgetExceeded { budget_cents: u32 },
+    #[error("pricing missing for provider {provider} model {model}")]
+    MissingPriceEntry { provider: String, model: String },
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+}
 
 /// Errors emitted by `WritingToolsService`.
 #[derive(Debug, Error)]
@@ -17,8 +31,12 @@ pub enum WritingToolsError {
     Disabled,
     #[error("writing tools returned an empty response")]
     EmptyResponse,
+    #[error("writing tools response did not include usage data")]
+    MissingUsage,
     #[error("writing tools request failed with status {0}")]
     HttpStatus(reqwest::StatusCode),
+    #[error(transparent)]
+    Usage(#[from] AiUsageError),
     #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]

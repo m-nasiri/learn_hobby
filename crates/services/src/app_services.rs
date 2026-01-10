@@ -3,6 +3,7 @@ use std::sync::Arc;
 use learn_core::model::{Deck, DeckId, DeckSettings};
 use storage::repository::{DeckRepository, NewDeckRecord, Storage};
 
+use crate::ai::AiUsageService;
 use crate::card_service::CardService;
 use crate::deck_service::DeckService;
 use crate::error::AppServicesError;
@@ -22,6 +23,7 @@ pub struct AppServices {
     deck_service: Arc<DeckService>,
     app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
+    ai_usage: Arc<AiUsageService>,
 }
 
 impl AppServices {
@@ -51,10 +53,18 @@ impl AppServices {
             Arc::clone(&storage.session_summaries),
         ));
         let app_settings = Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings)));
+        let ai_usage = Arc::new(AiUsageService::new(
+            clock,
+            Arc::clone(&storage.app_settings),
+            Arc::clone(&storage.ai_usage),
+            Arc::clone(&storage.ai_price_book),
+        ));
         let card_service = Arc::new(CardService::new(clock, Arc::clone(&storage.cards)));
         let deck_service = Arc::new(DeckService::new(clock, Arc::clone(&storage.decks)));
-        let writing_tools =
-            Arc::new(WritingToolsService::from_env(Arc::clone(&storage.app_settings)));
+        let writing_tools = Arc::new(WritingToolsService::from_env(
+            Arc::clone(&storage.app_settings),
+            Arc::clone(&ai_usage),
+        ));
 
         Ok(Self {
             deck_id,
@@ -65,6 +75,7 @@ impl AppServices {
             deck_service,
             app_settings,
             writing_tools,
+            ai_usage,
         })
     }
 
@@ -106,6 +117,11 @@ impl AppServices {
     #[must_use]
     pub fn writing_tools(&self) -> Arc<WritingToolsService> {
         Arc::clone(&self.writing_tools)
+    }
+
+    #[must_use]
+    pub fn ai_usage(&self) -> Arc<AiUsageService> {
+        Arc::clone(&self.ai_usage)
     }
 }
 

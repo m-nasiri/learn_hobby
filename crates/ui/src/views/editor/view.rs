@@ -76,8 +76,9 @@ pub fn EditorView() -> Element {
                     writing_tools_result_status.set(WritingToolsResultStatus::Ready);
                     writing_tools_result_body.set(text);
                 }
-                Err(_) => {
+                Err(err) => {
                     writing_tools_result_status.set(WritingToolsResultStatus::Error);
+                    writing_tools_result_body.set(err.to_string());
                 }
             }
         });

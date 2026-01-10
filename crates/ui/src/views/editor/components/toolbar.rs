@@ -480,11 +480,7 @@ pub fn EditorFormatToolbar(
                             } else {
                                 "editor-writing-result-body"
                             },
-                            if writing_result_status == WritingToolsResultStatus::Error {
-                                "Something went wrong. Please try again."
-                            } else {
-                                "{writing_result_body}"
-                            }
+                            "{writing_result_body}"
                         }
                         div { class: "editor-writing-result-actions",
                             button {

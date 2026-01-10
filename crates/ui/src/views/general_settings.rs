@@ -90,8 +90,15 @@ struct GeneralSettingsForm {
     email: String,
     ai_api_key: String,
     ai_model: String,
+    ai_fallback_model: String,
     ai_base_url: String,
     ai_system_prompt: String,
+    ai_daily_request_cap: String,
+    ai_cooldown_secs: String,
+    ai_monthly_budget: String,
+    ai_warn_50_pct: String,
+    ai_warn_80_pct: String,
+    ai_warn_100_pct: String,
 }
 
 impl Default for GeneralSettingsForm {
@@ -107,8 +114,15 @@ impl Default for GeneralSettingsForm {
             email: "john.smil@gmail.com".to_string(),
             ai_api_key: String::new(),
             ai_model: String::new(),
+            ai_fallback_model: String::new(),
             ai_base_url: String::new(),
             ai_system_prompt: String::new(),
+            ai_daily_request_cap: "100".to_string(),
+            ai_cooldown_secs: "5".to_string(),
+            ai_monthly_budget: "5.00".to_string(),
+            ai_warn_50_pct: "50".to_string(),
+            ai_warn_80_pct: "80".to_string(),
+            ai_warn_100_pct: "100".to_string(),
         }
     }
 }
@@ -124,11 +138,18 @@ enum SaveState {
 fn apply_app_settings(form: &mut GeneralSettingsForm, settings: &AppSettings) {
     form.ai_api_key = settings.api_key().unwrap_or_default().to_string();
     form.ai_model = settings.api_model().unwrap_or_default().to_string();
+    form.ai_fallback_model = settings.api_fallback_model().unwrap_or_default().to_string();
     form.ai_base_url = settings.api_base_url().unwrap_or_default().to_string();
     form.ai_system_prompt = settings.ai_system_prompt().unwrap_or_default().to_string();
+    form.ai_daily_request_cap = settings.ai_daily_request_cap().to_string();
+    form.ai_cooldown_secs = settings.ai_cooldown_secs().to_string();
+    form.ai_monthly_budget = format_budget_cents(settings.ai_monthly_budget_cents());
+    form.ai_warn_50_pct = settings.ai_warn_50_pct().to_string();
+    form.ai_warn_80_pct = settings.ai_warn_80_pct().to_string();
+    form.ai_warn_100_pct = settings.ai_warn_100_pct().to_string();
 }
 
-fn to_optional(value: String) -> Option<String> {
+fn to_optional(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         None
@@ -137,11 +158,77 @@ fn to_optional(value: String) -> Option<String> {
     }
 }
 
+fn format_budget_cents(cents: u32) -> String {
+    let dollars = cents / 100;
+    let remainder = cents % 100;
+    format!("{dollars}.{remainder:02}")
+}
+
+fn format_micro_usd(micro_usd: u64) -> String {
+    let cents = micro_usd / 10_000;
+    let dollars = cents / 100;
+    let remainder = cents % 100;
+    format!("{dollars}.{remainder:02}")
+}
+
+fn format_micro_usd_per_million(micro_usd_per_million: u64) -> String {
+    let cents = micro_usd_per_million / 10_000;
+    let dollars = cents / 100;
+    let remainder = cents % 100;
+    format!("{dollars}.{remainder:02}")
+}
+
+fn parse_optional_u32(value: &str) -> Result<Option<u32>, ()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    trimmed.parse::<u32>().map(Some).map_err(|_| ())
+}
+
+fn parse_optional_u8(value: &str) -> Result<Option<u8>, ()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    trimmed.parse::<u8>().map(Some).map_err(|_| ())
+}
+
+fn parse_budget_cents(value: &str) -> Result<Option<u32>, ()> {
+    let trimmed = value.trim().trim_start_matches('$');
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let mut parts = trimmed.split('.');
+    let dollars_str = parts.next().ok_or(())?;
+    let cents_str = parts.next().unwrap_or("0");
+    if parts.next().is_some() {
+        return Err(());
+    }
+    let dollars = dollars_str.parse::<u32>().map_err(|_| ())?;
+    if cents_str.len() > 2 {
+        return Err(());
+    }
+    let mut cents = cents_str.to_string();
+    while cents.len() < 2 {
+        cents.push('0');
+    }
+    let cents_val = cents.parse::<u32>().map_err(|_| ())?;
+    dollars
+        .checked_mul(100)
+        .and_then(|base| base.checked_add(cents_val))
+        .ok_or(())
+        .map(Some)
+}
+
 #[component]
 pub fn GeneralSettingsView() -> Element {
     let ctx = use_context::<AppContext>();
     let app_settings = ctx.app_settings();
     let app_settings_for_resource = app_settings.clone();
+    let ai_usage = ctx.ai_usage();
+    let ai_usage_for_resource = ai_usage.clone();
+    let ai_price_for_resource = ai_usage.clone();
     let mut form = use_signal(GeneralSettingsForm::default);
     let mut initial = use_signal(GeneralSettingsForm::default);
     let mut save_state = use_signal(|| SaveState::Idle);
@@ -155,15 +242,26 @@ pub fn GeneralSettingsView() -> Element {
         }
     });
 
+    let usage_summary_resource = use_resource(move || {
+        let ai_usage = ai_usage_for_resource.clone();
+        async move { ai_usage.summary().await.map_err(|_| ViewError::Unknown) }
+    });
+    let price_book_resource = use_resource(move || {
+        let ai_usage = ai_price_for_resource.clone();
+        async move { ai_usage.price_entries().await.map_err(|_| ViewError::Unknown) }
+    });
+
     let settings_state = view_state_from_resource(&settings_resource);
-    if let ViewState::Ready(settings) = settings_state {
-        if !settings_loaded() {
-            let mut next = form();
-            apply_app_settings(&mut next, &settings);
-            form.set(next.clone());
-            initial.set(next);
-            settings_loaded.set(true);
-        }
+    let usage_state = view_state_from_resource(&usage_summary_resource);
+    let price_state = view_state_from_resource(&price_book_resource);
+    if let ViewState::Ready(settings) = settings_state
+        && !settings_loaded()
+    {
+        let mut next = form();
+        apply_app_settings(&mut next, &settings);
+        form.set(next.clone());
+        initial.set(next);
+        settings_loaded.set(true);
     }
 
     let form_value = form();
@@ -258,11 +356,7 @@ pub fn GeneralSettingsView() -> Element {
                                 div { class: "settings-segment",
                                     for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
                                         button {
-                                            class: if form_value.theme == choice {
-                                                "settings-segment__button settings-segment__button--active"
-                                            } else {
-                                                "settings-segment__button"
-                                            },
+                                            class: if form_value.theme == choice { "settings-segment__button settings-segment__button--active" } else { "settings-segment__button" },
                                             r#type: "button",
                                             onclick: move |_| {
                                                 let mut next = form();
@@ -303,7 +397,7 @@ pub fn GeneralSettingsView() -> Element {
                                         next.appearance_enabled = !next.appearance_enabled;
                                         form.set(next);
                                         save_state.set(SaveState::Idle);
-                                    }
+                                    },
                                 }
                             }
                         }
@@ -361,7 +455,9 @@ pub fn GeneralSettingsView() -> Element {
                                 }
                                 div { class: "settings-row__text",
                                     span { "Protect from overload" }
-                                    span { class: "settings-row__sub", "Delays extra reviews instead of overwhelming you." }
+                                    span { class: "settings-row__sub",
+                                        "Delays extra reviews instead of overwhelming you."
+                                    }
                                 }
                             }
                             div { class: "settings-row__field settings-row__field--toggle",
@@ -374,7 +470,247 @@ pub fn GeneralSettingsView() -> Element {
                                         next.protect_overload = !next.protect_overload;
                                         form.set(next);
                                         save_state.set(SaveState::Idle);
+                                    },
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M4 7h16" }
+                                        path { d: "M4 12h10" }
+                                        path { d: "M4 17h6" }
                                     }
+                                }
+                                span { "Daily request cap" }
+                            }
+                            div { class: "settings-row__field",
+                                input {
+                                    class: "editor-input settings-input settings-input--short",
+                                    r#type: "text",
+                                    value: "{form_value.ai_daily_request_cap}",
+                                    placeholder: "100",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_daily_request_cap = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                                p { class: "settings-field-hint",
+                                    "Maximum writing tool requests per day."
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        circle { cx: "12", cy: "12", r: "9" }
+                                        path { d: "M12 7v5l3 2" }
+                                    }
+                                }
+                                span { "Cooldown (sec)" }
+                            }
+                            div { class: "settings-row__field",
+                                input {
+                                    class: "editor-input settings-input settings-input--short",
+                                    r#type: "text",
+                                    value: "{form_value.ai_cooldown_secs}",
+                                    placeholder: "5",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_cooldown_secs = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                                p { class: "settings-field-hint",
+                                    "Minimum seconds between writing tool requests."
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M12 1v22" }
+                                        path { d: "M17 5H9a4 4 0 0 0 0 8h6a4 4 0 0 1 0 8H6" }
+                                    }
+                                }
+                                span { "Monthly budget ($)" }
+                            }
+                            div { class: "settings-row__field",
+                                input {
+                                    class: "editor-input settings-input settings-input--short",
+                                    r#type: "text",
+                                    value: "{form_value.ai_monthly_budget}",
+                                    placeholder: "5.00",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_monthly_budget = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                                p { class: "settings-field-hint",
+                                    "Hard cap on monthly AI spend."
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M4 20h16" }
+                                        path { d: "M6 16l2-3 3 2 4-6 3 4" }
+                                    }
+                                }
+                                span { "Warning thresholds (%)" }
+                            }
+                            div { class: "settings-row__field",
+                                div { class: "settings-inline-input",
+                                    input {
+                                        class: "editor-input settings-input settings-input--short",
+                                        r#type: "text",
+                                        value: "{form_value.ai_warn_50_pct}",
+                                        oninput: move |evt| {
+                                            let mut next = form();
+                                            next.ai_warn_50_pct = evt.value();
+                                            form.set(next);
+                                            save_state.set(SaveState::Idle);
+                                        },
+                                    }
+                                    input {
+                                        class: "editor-input settings-input settings-input--short",
+                                        r#type: "text",
+                                        value: "{form_value.ai_warn_80_pct}",
+                                        oninput: move |evt| {
+                                            let mut next = form();
+                                            next.ai_warn_80_pct = evt.value();
+                                            form.set(next);
+                                            save_state.set(SaveState::Idle);
+                                        },
+                                    }
+                                    input {
+                                        class: "editor-input settings-input settings-input--short",
+                                        r#type: "text",
+                                        value: "{form_value.ai_warn_100_pct}",
+                                        oninput: move |evt| {
+                                            let mut next = form();
+                                            next.ai_warn_100_pct = evt.value();
+                                            form.set(next);
+                                            save_state.set(SaveState::Idle);
+                                        },
+                                    }
+                                }
+                                p { class: "settings-field-hint",
+                                    "Shown at 50%, 80%, and 100% of budget."
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        circle { cx: "12", cy: "12", r: "9" }
+                                        path { d: "M12 7v5l3 2" }
+                                    }
+                                }
+                                span { "Usage summary" }
+                            }
+                            div { class: "settings-row__field settings-row__field--wide",
+                                match &usage_state {
+                                    ViewState::Ready(summary) => rsx! {
+                                        div { class: "settings-inline-note",
+                                            "Requests today: {summary.requests_today}/{summary.daily_cap} | ",
+                                            "Monthly spend: ${format_micro_usd(summary.monthly_cost_micro_usd)} / ",
+                                            "${format_budget_cents(summary.monthly_budget_cents)}"
+                                        }
+                                    },
+                                    ViewState::Loading => rsx! {
+                                        div { class: "settings-inline-note", "Loading usage..." }
+                                    },
+                                    _ => rsx! {
+                                        div { class: "settings-inline-note", "Usage unavailable." }
+                                    },
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        rect { x: "3", y: "4", width: "18", height: "16", rx: "2" }
+                                        path { d: "M7 8h10" }
+                                        path { d: "M7 12h10" }
+                                        path { d: "M7 16h6" }
+                                    }
+                                }
+                                span { "Price book" }
+                            }
+                            div { class: "settings-row__field settings-row__field--wide",
+                                match &price_state {
+                                    ViewState::Ready(entries) => rsx! {
+                                        ul { class: "settings-price-list",
+                                            for entry in entries.iter() {
+                                                li { class: "settings-price-item",
+                                                    span { class: "settings-price-item__model",
+                                                        "{entry.provider}:{entry.model}"
+                                                    }
+                                                    span { class: "settings-price-item__rate",
+                                                        "${format_micro_usd_per_million(entry.input_micro_usd_per_million)}",
+                                                        " / ",
+                                                        "${format_micro_usd_per_million(entry.output_micro_usd_per_million)}",
+                                                        " per 1M"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    ViewState::Loading => rsx! {
+                                        div { class: "settings-inline-note", "Loading pricing..." }
+                                    },
+                                    _ => rsx! {
+                                        div { class: "settings-inline-note", "Pricing unavailable." }
+                                    },
                                 }
                             }
                         }
@@ -426,25 +762,69 @@ pub fn GeneralSettingsView() -> Element {
                                         stroke_width: "1.6",
                                         stroke_linecap: "round",
                                         stroke_linejoin: "round",
-                                        rect { x: "4", y: "4", width: "16", height: "16", rx: "3" }
+                                        rect {
+                                            x: "4",
+                                            y: "4",
+                                            width: "16",
+                                            height: "16",
+                                            rx: "3",
+                                        }
                                         path { d: "M8 9h8" }
                                         path { d: "M8 13h6" }
                                     }
                                 }
-                                span { "Model" }
+                                span { "Preferred model" }
                             }
                             div { class: "settings-row__field",
                                 input {
                                     class: "editor-input settings-input",
                                     r#type: "text",
                                     value: "{form_value.ai_model}",
-                                    placeholder: "gpt-4o-mini",
+                                    placeholder: "gpt-4.1-mini",
                                     oninput: move |evt| {
                                         let mut next = form();
                                         next.ai_model = evt.value();
                                         form.set(next);
                                         save_state.set(SaveState::Idle);
                                     },
+                                }
+                                p { class: "settings-field-hint",
+                                    "Used by default for writing tools."
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M4 7h16" }
+                                        path { d: "M4 12h16" }
+                                        path { d: "M4 17h10" }
+                                    }
+                                }
+                                span { "Fallback model" }
+                            }
+                            div { class: "settings-row__field",
+                                input {
+                                    class: "editor-input settings-input",
+                                    r#type: "text",
+                                    value: "{form_value.ai_fallback_model}",
+                                    placeholder: "gpt-4o-mini",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_fallback_model = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                                p { class: "settings-field-hint",
+                                    "Used when the preferred model is rate limited."
                                 }
                             }
                         }
@@ -577,7 +957,7 @@ pub fn GeneralSettingsView() -> Element {
                                         next.analytics_enabled = !next.analytics_enabled;
                                         form.set(next);
                                         save_state.set(SaveState::Idle);
-                                    }
+                                    },
                                 }
                             }
                         }
@@ -597,7 +977,13 @@ pub fn GeneralSettingsView() -> Element {
                                         stroke_width: "1.6",
                                         stroke_linecap: "round",
                                         stroke_linejoin: "round",
-                                        rect { x: "3", y: "6", width: "18", height: "12", rx: "2" }
+                                        rect {
+                                            x: "3",
+                                            y: "6",
+                                            width: "18",
+                                            height: "12",
+                                            rx: "2",
+                                        }
                                         path { d: "M3 7l9 6 9-6" }
                                     }
                                 }
@@ -655,13 +1041,58 @@ pub fn GeneralSettingsView() -> Element {
                                 let app_settings = app_settings.clone();
                                 spawn(async move {
                                     save_state.set(SaveState::Saving);
+                                    let Ok(ai_daily_request_cap) =
+                                        parse_optional_u32(&snapshot.ai_daily_request_cap)
+                                    else {
+                                        save_state.set(SaveState::Error(ViewError::Unknown));
+                                        return;
+                                    };
+                                    let Ok(ai_cooldown_secs) =
+                                        parse_optional_u32(&snapshot.ai_cooldown_secs)
+                                    else {
+                                        save_state.set(SaveState::Error(ViewError::Unknown));
+                                        return;
+                                    };
+                                    let Ok(ai_monthly_budget_cents) =
+                                        parse_budget_cents(&snapshot.ai_monthly_budget)
+                                    else {
+                                        save_state.set(SaveState::Error(ViewError::Unknown));
+                                        return;
+                                    };
+                                    let Ok(ai_warn_50_pct) =
+                                        parse_optional_u8(&snapshot.ai_warn_50_pct)
+                                    else {
+                                        save_state.set(SaveState::Error(ViewError::Unknown));
+                                        return;
+                                    };
+                                    let Ok(ai_warn_80_pct) =
+                                        parse_optional_u8(&snapshot.ai_warn_80_pct)
+                                    else {
+                                        save_state.set(SaveState::Error(ViewError::Unknown));
+                                        return;
+                                    };
+                                    let Ok(ai_warn_100_pct) =
+                                        parse_optional_u8(&snapshot.ai_warn_100_pct)
+                                    else {
+                                        save_state.set(SaveState::Error(ViewError::Unknown));
+                                        return;
+                                    };
                                     let draft = AppSettingsDraft {
-                                        api_key: to_optional(snapshot.ai_api_key.clone()),
-                                        api_model: to_optional(snapshot.ai_model.clone()),
-                                        api_base_url: to_optional(snapshot.ai_base_url.clone()),
-                                        ai_system_prompt: to_optional(
-                                            snapshot.ai_system_prompt.clone(),
+                                        api_key: to_optional(&snapshot.ai_api_key),
+                                        api_model: to_optional(&snapshot.ai_model),
+                                        api_fallback_model: to_optional(
+                                            &snapshot.ai_fallback_model,
                                         ),
+                                        api_base_url: to_optional(&snapshot.ai_base_url),
+                                        ai_system_prompt: to_optional(
+                                            &snapshot.ai_system_prompt,
+                                        ),
+                                        ai_daily_request_cap,
+                                        ai_cooldown_secs,
+                                        ai_monthly_budget_cents,
+                                        ai_warn_50_pct,
+                                        ai_warn_80_pct,
+                                        ai_warn_100_pct,
                                     };
                                     match app_settings.save(draft).await {
                                         Ok(settings) => {

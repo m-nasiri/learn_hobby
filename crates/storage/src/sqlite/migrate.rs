@@ -563,5 +563,127 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 12).await? {
+        let mut tx = pool.begin().await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN api_fallback_model TEXT;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN ai_daily_request_cap INTEGER;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN ai_cooldown_secs INTEGER;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN ai_monthly_budget_cents INTEGER;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN ai_warn_50_pct INTEGER;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN ai_warn_80_pct INTEGER;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                ALTER TABLE app_settings ADD COLUMN ai_warn_100_pct INTEGER;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE TABLE IF NOT EXISTS ai_price_book (
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    input_micro_usd_per_million INTEGER NOT NULL,
+                    output_micro_usd_per_million INTEGER NOT NULL,
+                    deprecated INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (provider, model)
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE TABLE IF NOT EXISTS ai_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    cost_micro_usd INTEGER
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO ai_price_book (
+                    provider, model, input_micro_usd_per_million, output_micro_usd_per_million, deprecated
+                )
+                VALUES
+                    ('openai', 'gpt-4.1-mini', 3000000, 15000000, 0),
+                    ('openai', 'gpt-4.1', 10000000, 30000000, 0),
+                    ('openai', 'gpt-4o-mini', 150000, 600000, 0)
+                ON CONFLICT(provider, model) DO NOTHING;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(12_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }
