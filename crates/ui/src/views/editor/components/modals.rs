@@ -11,6 +11,7 @@ pub fn EditorOverlays(
     reset_deck_state: ResetDeckState,
     show_duplicate_modal: bool,
     show_save_overlay: bool,
+    show_writing_overlay: bool,
     show_unsaved_modal: bool,
     on_deck_overlay_close: Callback<()>,
     on_delete_close: Callback<()>,
@@ -20,6 +21,7 @@ pub fn EditorOverlays(
     on_duplicate_close: Callback<()>,
     on_duplicate_confirm: Callback<()>,
     on_save_overlay_close: Callback<()>,
+    on_writing_overlay_close: Callback<()>,
     on_unsaved_cancel: Callback<()>,
     on_unsaved_confirm: Callback<()>,
 ) -> Element {
@@ -123,6 +125,12 @@ pub fn EditorOverlays(
             div {
                 class: "editor-save-overlay",
                 onclick: move |_| on_save_overlay_close.call(()),
+            }
+        }
+        if show_writing_overlay {
+            div {
+                class: "editor-writing-overlay",
+                onclick: move |_| on_writing_overlay_close.call(()),
             }
         }
         if show_unsaved_modal {

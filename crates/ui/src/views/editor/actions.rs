@@ -12,7 +12,9 @@ use dioxus_router::use_navigator;
 
 use crate::vm::{CardListItemVm, MarkdownAction, MarkdownField};
 
-use super::state::{EditorServices, EditorState, SaveRequest};
+use super::state::{
+    EditorServices, EditorState, SaveRequest, WritingToolsCommand, WritingToolsTone,
+};
 
 pub use intent::EditorIntent;
 
@@ -44,6 +46,11 @@ struct EditorActionHandlers {
     open_delete_modal: Callback<()>,
     toggle_save_menu: Callback<()>,
     close_save_menu: Callback<()>,
+    toggle_writing_tools: Callback<MarkdownField>,
+    close_writing_tools: Callback<()>,
+    update_writing_tools_prompt: Callback<String>,
+    select_writing_tools_tone: Callback<WritingToolsTone>,
+    select_writing_tools_command: Callback<(MarkdownField, WritingToolsCommand)>,
     close_delete_modal: Callback<()>,
     open_reset_deck_modal: Callback<()>,
     close_reset_deck_modal: Callback<()>,
@@ -87,6 +94,12 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
     let confirm_reset_deck_action = decks::build_confirm_reset_deck_action(&state, &services);
     let toggle_save_menu_action = menus::build_toggle_save_menu_action(&state);
     let close_save_menu_action = menus::build_close_save_menu_action(&state);
+    let toggle_writing_tools_action = menus::build_toggle_writing_tools_action(&state);
+    let close_writing_tools_action = menus::build_close_writing_tools_action(&state);
+    let update_writing_tools_prompt_action = menus::build_update_writing_tools_prompt_action(&state);
+    let select_writing_tools_tone_action = menus::build_select_writing_tools_tone_action(&state);
+    let select_writing_tools_command_action =
+        menus::build_select_writing_tools_command_action(&state);
     let close_delete_modal_action = menus::build_close_delete_modal_action(&state);
     let close_duplicate_modal_action = menus::build_close_duplicate_modal_action(&state);
     let confirm_duplicate_action = menus::build_confirm_duplicate_action(&state, save_action);
@@ -118,6 +131,11 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         confirm_reset_deck: confirm_reset_deck_action,
         toggle_save_menu: toggle_save_menu_action,
         close_save_menu: close_save_menu_action,
+        toggle_writing_tools: toggle_writing_tools_action,
+        close_writing_tools: close_writing_tools_action,
+        update_writing_tools_prompt: update_writing_tools_prompt_action,
+        select_writing_tools_tone: select_writing_tools_tone_action,
+        select_writing_tools_command: select_writing_tools_command_action,
         close_delete_modal: close_delete_modal_action,
         close_duplicate_modal: close_duplicate_modal_action,
         confirm_duplicate: confirm_duplicate_action,
@@ -168,6 +186,17 @@ fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
         EditorIntent::ConfirmResetDeck => handlers.confirm_reset_deck.call(()),
         EditorIntent::ToggleSaveMenu => handlers.toggle_save_menu.call(()),
         EditorIntent::CloseSaveMenu => handlers.close_save_menu.call(()),
+        EditorIntent::ToggleWritingTools(field) => handlers.toggle_writing_tools.call(field),
+        EditorIntent::CloseWritingTools => handlers.close_writing_tools.call(()),
+        EditorIntent::UpdateWritingToolsPrompt(value) => {
+            handlers.update_writing_tools_prompt.call(value);
+        }
+        EditorIntent::SelectWritingToolsTone(tone) => {
+            handlers.select_writing_tools_tone.call(tone);
+        }
+        EditorIntent::SelectWritingToolsCommand(field, command) => {
+            handlers.select_writing_tools_command.call((field, command));
+        }
         EditorIntent::CloseDeleteModal => handlers.close_delete_modal.call(()),
         EditorIntent::CloseDuplicateModal => handlers.close_duplicate_modal.call(()),
         EditorIntent::ConfirmDuplicate => handlers.confirm_duplicate.call(()),

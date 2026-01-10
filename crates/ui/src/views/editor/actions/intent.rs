@@ -2,7 +2,7 @@ use learn_core::model::DeckId;
 
 use crate::vm::{CardListItemVm, MarkdownAction, MarkdownField};
 
-use super::super::state::SaveRequest;
+use super::super::state::{SaveRequest, WritingToolsCommand, WritingToolsTone};
 
 #[derive(Clone, Debug)]
 pub enum EditorIntent {
@@ -25,6 +25,11 @@ pub enum EditorIntent {
     OpenDeleteModal,
     ToggleSaveMenu,
     CloseSaveMenu,
+    ToggleWritingTools(MarkdownField),
+    CloseWritingTools,
+    UpdateWritingToolsPrompt(String),
+    SelectWritingToolsTone(WritingToolsTone),
+    SelectWritingToolsCommand(MarkdownField, WritingToolsCommand),
     CloseDeleteModal,
     OpenResetDeckModal,
     CloseResetDeckModal,

@@ -3010,6 +3010,127 @@ a {
   cursor: not-allowed;
 }
 
+.editor-writing-tools {
+  position: relative;
+}
+
+.editor-writing-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 240px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(248, 249, 251, 0.98);
+  box-shadow: 0 18px 36px rgba(17, 24, 39, 0.18);
+  display: grid;
+  gap: 2px;
+  z-index: 60;
+}
+
+.editor-writing-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.editor-writing-prompt-icon {
+  width: 18px;
+  height: 18px;
+  stroke: rgba(88, 117, 204, 0.9);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.editor-writing-prompt-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.86rem;
+  color: var(--ink-1);
+  width: 100%;
+}
+
+.editor-writing-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.editor-writing-chip {
+  border: none;
+  border-radius: 14px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.04);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.72);
+  cursor: pointer;
+}
+
+.editor-writing-chip:hover {
+  background: rgba(88, 117, 204, 0.16);
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.editor-writing-divider {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 0;
+}
+
+.editor-writing-item {
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 0.88rem;
+  color: rgba(0, 0, 0, 0.78);
+  cursor: pointer;
+  text-align: left;
+}
+
+.editor-writing-item:hover {
+  background: rgba(88, 117, 204, 0.12);
+}
+
+.editor-writing-item--active {
+  background: rgba(88, 117, 204, 0.18);
+  color: rgba(0, 0, 0, 0.9);
+  font-weight: 600;
+}
+
+.editor-writing-item--compose {
+  font-weight: 600;
+}
+
+.editor-writing-item-icon {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  fill: none;
+  flex: 0 0 auto;
+}
+
+.editor-writing-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 55;
+}
+
 .editor-md-toolbar-btn[data-tooltip]:hover::after,
 .editor-md-toolbar-btn[data-tooltip]:focus-visible::after {
   content: attr(data-tooltip);

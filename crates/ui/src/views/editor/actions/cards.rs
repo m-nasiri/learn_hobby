@@ -8,6 +8,7 @@ use crate::views::{ViewError, ViewState, view_state_from_resource};
 
 use super::super::state::{
     DeleteState, EditorServices, EditorState, PendingAction, SaveMenuState, SaveState,
+    WritingToolsMenuState,
 };
 
 pub(super) fn build_select_card_action(state: &EditorState) -> Callback<CardListItemVm> {
@@ -36,6 +37,7 @@ pub(super) fn build_select_card_action(state: &EditorState) -> Callback<CardList
         let mut show_validation = state.show_validation;
         let mut show_delete_modal = state.show_delete_modal;
         let mut focus_prompt = state.focus_prompt;
+        let mut writing_tools_menu_state = state.writing_tools_menu_state;
 
         selected_card_id.set(Some(item.id));
         last_selected_card.set(Some(item.clone()));
@@ -54,6 +56,7 @@ pub(super) fn build_select_card_action(state: &EditorState) -> Callback<CardList
         pending_action.set(None);
         reset_duplicate_state.borrow_mut()();
         focus_prompt.set(false);
+        writing_tools_menu_state.set(WritingToolsMenuState::Closed);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         show_deck_menu.set(false);
@@ -110,6 +113,7 @@ pub(super) fn build_new_card_action(state: &EditorState) -> Callback<()> {
         let mut show_delete_modal = state.show_delete_modal;
         let mut save_menu_state = state.save_menu_state;
         let mut focus_prompt = state.focus_prompt;
+        let mut writing_tools_menu_state = state.writing_tools_menu_state;
 
         selected_card_id.set(None);
         is_create_mode.set(true);
@@ -126,6 +130,7 @@ pub(super) fn build_new_card_action(state: &EditorState) -> Callback<()> {
         save_menu_state.set(SaveMenuState::Closed);
         focus_prompt.set(true);
         last_focus_field.set(crate::vm::MarkdownField::Front);
+        writing_tools_menu_state.set(WritingToolsMenuState::Closed);
         show_new_deck.set(false);
         new_deck_state.set(SaveState::Idle);
         new_deck_name.set(String::new());
@@ -147,11 +152,13 @@ pub(super) fn build_request_new_card_action(
         let mut show_unsaved_modal = state.show_unsaved_modal;
         let mut show_deck_menu = state.show_deck_menu;
         let mut save_menu_state = state.save_menu_state;
+        let mut writing_tools_menu_state = state.writing_tools_menu_state;
         if has_unsaved_changes() {
             pending_action.set(Some(PendingAction::NewCard));
             show_unsaved_modal.set(true);
             show_deck_menu.set(false);
             save_menu_state.set(SaveMenuState::Closed);
+            writing_tools_menu_state.set(WritingToolsMenuState::Closed);
             return;
         }
         new_card_action.call(());
@@ -180,6 +187,7 @@ pub(super) fn build_delete_action(
         let mut tag_input = state.tag_input;
         let mut show_delete_modal = state.show_delete_modal;
         let mut save_menu_state = state.save_menu_state;
+        let mut writing_tools_menu_state = state.writing_tools_menu_state;
         let deck_id = *selected_deck.read();
         let Some(card_id) = selected_card_id() else {
             return;
@@ -194,6 +202,7 @@ pub(super) fn build_delete_action(
             save_state.set(SaveState::Idle);
             show_delete_modal.set(false);
             save_menu_state.set(SaveMenuState::Closed);
+            writing_tools_menu_state.set(WritingToolsMenuState::Closed);
             let result = card_service.delete_card(deck_id, card_id).await;
             match result {
                 Ok(()) => {

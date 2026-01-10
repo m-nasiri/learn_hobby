@@ -6,6 +6,7 @@ use crate::vm::{MarkdownAction, MarkdownField};
 use super::EditorFormatToolbar;
 use super::super::state::{
     DeleteState, DuplicateCheckState, SaveMenuState, SaveRequest, SaveState,
+    WritingToolsCommand, WritingToolsMenuState, WritingToolsTone,
 };
 
 #[component]
@@ -28,6 +29,9 @@ pub fn EditorDetailPane(
     delete_state: DeleteState,
     duplicate_check_state: DuplicateCheckState,
     save_menu_state: SaveMenuState,
+    writing_tools_menu_state: WritingToolsMenuState,
+    writing_tools_prompt: String,
+    writing_tools_tone: WritingToolsTone,
     on_focus_field: Callback<MarkdownField>,
     on_prompt_input: Callback<()>,
     on_answer_input: Callback<()>,
@@ -43,6 +47,10 @@ pub fn EditorDetailPane(
     on_save: Callback<SaveRequest>,
     on_toggle_save_menu: Callback<()>,
     on_close_save_menu: Callback<()>,
+    on_toggle_writing_tools: Callback<MarkdownField>,
+    on_update_writing_tools_prompt: Callback<String>,
+    on_select_writing_tools_tone: Callback<WritingToolsTone>,
+    on_select_writing_tools_command: Callback<(MarkdownField, WritingToolsCommand)>,
 ) -> Element {
     let show_dirty = can_edit && has_unsaved_changes;
     let can_show_delete = !is_create_mode && selected_card_id.is_some();
@@ -78,8 +86,15 @@ pub fn EditorDetailPane(
                     EditorFormatToolbar {
                         field: MarkdownField::Front,
                         disabled: prompt_toolbar_disabled,
+                        writing_menu_state: writing_tools_menu_state,
+                        writing_prompt: writing_tools_prompt.clone(),
+                        writing_tone: writing_tools_tone,
                         on_format,
                         on_block_dir,
+                        on_toggle_writing_menu: on_toggle_writing_tools,
+                        on_writing_prompt_change: on_update_writing_tools_prompt,
+                        on_select_writing_tone: on_select_writing_tools_tone,
+                        on_select_writing_command: on_select_writing_tools_command,
                     }
                     div {
                         id: "prompt",
@@ -115,8 +130,15 @@ pub fn EditorDetailPane(
                     EditorFormatToolbar {
                         field: MarkdownField::Back,
                         disabled: answer_toolbar_disabled,
+                        writing_menu_state: writing_tools_menu_state,
+                        writing_prompt: writing_tools_prompt,
+                        writing_tone: writing_tools_tone,
                         on_format,
                         on_block_dir,
+                        on_toggle_writing_menu: on_toggle_writing_tools,
+                        on_writing_prompt_change: on_update_writing_tools_prompt,
+                        on_select_writing_tone: on_select_writing_tools_tone,
+                        on_select_writing_command: on_select_writing_tools_command,
                     }
                     div {
                         id: "answer",

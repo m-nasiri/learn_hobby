@@ -1,19 +1,37 @@
 use dioxus::prelude::*;
 
 use crate::vm::{MarkdownAction, MarkdownField};
+use crate::views::editor::state::{
+    WritingToolsCommand, WritingToolsMenuState, WritingToolsTone,
+};
 
 #[component]
 pub fn EditorFormatToolbar(
     field: MarkdownField,
     disabled: bool,
+    writing_menu_state: WritingToolsMenuState,
+    writing_prompt: String,
+    writing_tone: WritingToolsTone,
     on_format: Callback<(MarkdownField, MarkdownAction)>,
     on_block_dir: Callback<(MarkdownField, String)>,
+    on_toggle_writing_menu: Callback<MarkdownField>,
+    on_writing_prompt_change: Callback<String>,
+    on_select_writing_tone: Callback<WritingToolsTone>,
+    on_select_writing_command: Callback<(MarkdownField, WritingToolsCommand)>,
 ) -> Element {
+    let writing_menu_open = matches!(
+        writing_menu_state,
+        WritingToolsMenuState::Open(current) if current == field
+    );
     rsx! {
         div { class: "editor-md-toolbar",
             div { class: "editor-md-toolbar-group",
                 button {
-                    class: "editor-md-toolbar-btn",
+                    class: if writing_menu_open {
+                        "editor-md-toolbar-btn editor-md-toolbar-btn--active"
+                    } else {
+                        "editor-md-toolbar-btn"
+                    },
                     r#type: "button",
                     disabled: disabled,
                     "data-tooltip": "Bold",
@@ -206,6 +224,229 @@ pub fn EditorFormatToolbar(
                         line { x1: "10", y1: "12", x2: "20", y2: "12" }
                         line { x1: "10", y1: "18", x2: "20", y2: "18" }
                         path { d: "M9 9l-3 3 3 3" }
+                    }
+                }
+            }
+            div { class: "editor-md-toolbar-separator" }
+            div { class: "editor-md-toolbar-group editor-writing-tools",
+                button {
+                    class: "editor-md-toolbar-btn",
+                    r#type: "button",
+                    disabled: disabled,
+                    "data-tooltip": "Writing tools",
+                    aria_label: "Writing tools",
+                    onclick: move |_| {
+                        on_toggle_writing_menu.call(field);
+                    },
+                    svg {
+                        class: "editor-md-toolbar-icon",
+                        view_box: "0 0 24 24",
+                        path { d: "M12 3l1.2 2.9 2.9 1.2-2.9 1.2L12 11l-1.2-2.7-2.9-1.2 2.9-1.2L12 3z" }
+                        path { d: "M18 12l0.8 2 2 0.8-2 0.8-0.8 2-0.8-2-2-0.8 2-0.8 0.8-2z" }
+                        path { d: "M6 13l0.8 2 2 0.8-2 0.8-0.8 2-0.8-2-2-0.8 2-0.8 0.8-2z" }
+                    }
+                }
+                if writing_menu_open {
+                    div {
+                        class: "editor-writing-menu",
+                        onclick: move |evt| evt.stop_propagation(),
+                        div { class: "editor-writing-prompt",
+                            svg {
+                                class: "editor-writing-prompt-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M4 12a8 8 0 1 1 16 0" }
+                                path { d: "M4 12a8 8 0 0 0 6 7.7" }
+                                circle { cx: "12", cy: "12", r: "2.8" }
+                            }
+                            input {
+                                class: "editor-writing-prompt-input",
+                                r#type: "text",
+                                value: "{writing_prompt}",
+                                placeholder: "Describe your change",
+                                oninput: move |evt| on_writing_prompt_change.call(evt.value()),
+                            }
+                        }
+                        div { class: "editor-writing-row",
+                            button {
+                                class: "editor-writing-chip",
+                                r#type: "button",
+                                onclick: move |_| {
+                                    on_select_writing_command.call((
+                                        field,
+                                        WritingToolsCommand::Proofread,
+                                    ));
+                                },
+                                "Proofread"
+                            }
+                            button {
+                                class: "editor-writing-chip",
+                                r#type: "button",
+                                onclick: move |_| {
+                                    on_select_writing_command.call((
+                                        field,
+                                        WritingToolsCommand::Rewrite,
+                                    ));
+                                },
+                                "Rewrite"
+                            }
+                        }
+                        div { class: "editor-writing-divider" }
+                        button {
+                            class: if writing_tone == WritingToolsTone::Friendly {
+                                "editor-writing-item editor-writing-item--active"
+                            } else {
+                                "editor-writing-item"
+                            },
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_tone.call(WritingToolsTone::Friendly);
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M7.5 9c1.2-2.3 7.8-2.3 9 0" }
+                                path { d: "M8 14c1.6 1.4 6.4 1.4 8 0" }
+                                circle { cx: "9", cy: "10", r: "1" }
+                                circle { cx: "15", cy: "10", r: "1" }
+                            }
+                            span { "Friendly" }
+                        }
+                        button {
+                            class: if writing_tone == WritingToolsTone::Professional {
+                                "editor-writing-item editor-writing-item--active"
+                            } else {
+                                "editor-writing-item"
+                            },
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_tone.call(WritingToolsTone::Professional);
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                rect { x: "5", y: "6", width: "14", height: "12", rx: "2" }
+                                path { d: "M8 6V4h8v2" }
+                                path { d: "M9 10h6" }
+                                path { d: "M9 13h6" }
+                            }
+                            span { "Professional" }
+                        }
+                        button {
+                            class: if writing_tone == WritingToolsTone::Concise {
+                                "editor-writing-item editor-writing-item--active"
+                            } else {
+                                "editor-writing-item"
+                            },
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_tone.call(WritingToolsTone::Concise);
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M6 8h12" }
+                                path { d: "M6 12h8" }
+                                path { d: "M6 16h6" }
+                            }
+                            span { "Concise" }
+                        }
+                        div { class: "editor-writing-divider" }
+                        button {
+                            class: "editor-writing-item",
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Summary,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M6 7h12" }
+                                path { d: "M6 12h10" }
+                                path { d: "M6 17h8" }
+                            }
+                            span { "Summary" }
+                        }
+                        button {
+                            class: "editor-writing-item",
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::KeyPoints,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                circle { cx: "7", cy: "9", r: "1.2" }
+                                circle { cx: "7", cy: "12", r: "1.2" }
+                                circle { cx: "7", cy: "15", r: "1.2" }
+                                line { x1: "10", y1: "9", x2: "18", y2: "9" }
+                                line { x1: "10", y1: "12", x2: "18", y2: "12" }
+                                line { x1: "10", y1: "15", x2: "18", y2: "15" }
+                            }
+                            span { "Key Points" }
+                        }
+                        button {
+                            class: "editor-writing-item",
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::List,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                rect { x: "6", y: "7", width: "2.5", height: "2.5", rx: "0.6" }
+                                rect { x: "6", y: "11", width: "2.5", height: "2.5", rx: "0.6" }
+                                rect { x: "6", y: "15", width: "2.5", height: "2.5", rx: "0.6" }
+                                line { x1: "10.5", y1: "8.2", x2: "18", y2: "8.2" }
+                                line { x1: "10.5", y1: "12.2", x2: "18", y2: "12.2" }
+                                line { x1: "10.5", y1: "16.2", x2: "18", y2: "16.2" }
+                            }
+                            span { "List" }
+                        }
+                        button {
+                            class: "editor-writing-item",
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Table,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                rect { x: "5", y: "6", width: "14", height: "12", rx: "2" }
+                                line { x1: "5", y1: "11", x2: "19", y2: "11" }
+                                line { x1: "10", y1: "6", x2: "10", y2: "18" }
+                            }
+                            span { "Table" }
+                        }
+                        div { class: "editor-writing-divider" }
+                        button {
+                            class: "editor-writing-item editor-writing-item--compose",
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Compose,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M4 17l4 3 12-12-4-3-12 12z" }
+                                path { d: "M14 5l4 3" }
+                            }
+                            span { "Compose..." }
+                        }
                     }
                 }
             }

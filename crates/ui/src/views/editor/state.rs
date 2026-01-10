@@ -47,6 +47,30 @@ pub enum SaveMenuState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingToolsMenuState {
+    Closed,
+    Open(MarkdownField),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingToolsTone {
+    Friendly,
+    Professional,
+    Concise,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingToolsCommand {
+    Proofread,
+    Rewrite,
+    Summary,
+    KeyPoints,
+    List,
+    Table,
+    Compose,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DuplicateCheckState {
     Idle,
     Checking,
@@ -102,6 +126,10 @@ pub struct EditorState {
     pub show_unsaved_modal: Signal<bool>,
     pub pending_action: Signal<Option<PendingAction>>,
     pub save_menu_state: Signal<SaveMenuState>,
+    pub writing_tools_menu_state: Signal<WritingToolsMenuState>,
+    pub writing_tools_prompt: Signal<String>,
+    pub writing_tools_tone: Signal<WritingToolsTone>,
+    pub writing_tools_last_command: Signal<Option<WritingToolsCommand>>,
     pub show_new_deck: Signal<bool>,
     pub new_deck_name: Signal<String>,
     pub new_deck_state: Signal<SaveState>,
@@ -152,6 +180,10 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let show_unsaved_modal = use_signal(|| false);
     let pending_action = use_signal(|| None::<PendingAction>);
     let save_menu_state = use_signal(|| SaveMenuState::Closed);
+    let writing_tools_menu_state = use_signal(|| WritingToolsMenuState::Closed);
+    let writing_tools_prompt = use_signal(String::new);
+    let writing_tools_tone = use_signal(|| WritingToolsTone::Professional);
+    let writing_tools_last_command = use_signal(|| None::<WritingToolsCommand>);
     let show_new_deck = use_signal(|| false);
     let new_deck_name = use_signal(String::new);
     let new_deck_state = use_signal(|| SaveState::Idle);
@@ -418,6 +450,10 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         show_unsaved_modal,
         pending_action,
         save_menu_state,
+        writing_tools_menu_state,
+        writing_tools_prompt,
+        writing_tools_tone,
+        writing_tools_last_command,
         show_new_deck,
         new_deck_name,
         new_deck_state,

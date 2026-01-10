@@ -11,7 +11,8 @@ use super::actions::{EditorIntent, use_editor_dispatcher};
 use super::components::{EditorDetailPane, EditorListPane, EditorOverlays};
 use super::scripts::{read_editable_html, set_editable_html};
 use super::state::{
-    DeleteState, EditorServices, SaveMenuState, SaveState, use_editor_state,
+    DeleteState, EditorServices, SaveMenuState, SaveState, WritingToolsMenuState,
+    use_editor_state,
 };
 use crate::vm::build_editor_vm;
 
@@ -51,6 +52,9 @@ pub fn EditorView() -> Element {
     let show_duplicate_modal = state.show_duplicate_modal;
     let show_unsaved_modal = state.show_unsaved_modal;
     let save_menu_state = state.save_menu_state;
+    let writing_tools_menu_state = state.writing_tools_menu_state;
+    let writing_tools_prompt = state.writing_tools_prompt;
+    let writing_tools_tone = state.writing_tools_tone;
     let show_reset_deck_modal = state.show_reset_deck_modal;
     let reset_deck_state = state.reset_deck_state;
     let mut show_new_deck = state.show_new_deck;
@@ -316,6 +320,36 @@ pub fn EditorView() -> Element {
         })
     };
 
+    let on_toggle_writing_tools = {
+        use_callback(move |field: MarkdownField| {
+            dispatch.call(EditorIntent::ToggleWritingTools(field));
+        })
+    };
+
+    let on_close_writing_tools = {
+        use_callback(move |()| {
+            dispatch.call(EditorIntent::CloseWritingTools);
+        })
+    };
+
+    let on_update_writing_tools_prompt = {
+        use_callback(move |value: String| {
+            dispatch.call(EditorIntent::UpdateWritingToolsPrompt(value));
+        })
+    };
+
+    let on_select_writing_tools_tone = {
+        use_callback(move |tone| {
+            dispatch.call(EditorIntent::SelectWritingToolsTone(tone));
+        })
+    };
+
+    let on_select_writing_tools_command = {
+        use_callback(move |(field, command)| {
+            dispatch.call(EditorIntent::SelectWritingToolsCommand(field, command));
+        })
+    };
+
     rsx! {
         div { class: "page page--editor", tabindex: "0", onkeydown: dispatcher.on_key,
             EditorOverlays {
@@ -326,6 +360,10 @@ pub fn EditorView() -> Element {
                 reset_deck_state: reset_deck_state(),
                 show_duplicate_modal: show_duplicate_modal(),
                 show_save_overlay: save_menu_state() == SaveMenuState::Open,
+                show_writing_overlay: matches!(
+                    writing_tools_menu_state(),
+                    WritingToolsMenuState::Open(_)
+                ),
                 show_unsaved_modal: show_unsaved_modal(),
                 on_deck_overlay_close: deck_overlay_close,
                 on_delete_close: on_delete_close,
@@ -335,6 +373,7 @@ pub fn EditorView() -> Element {
                 on_duplicate_close: on_duplicate_close,
                 on_duplicate_confirm: on_duplicate_confirm,
                 on_save_overlay_close: on_save_overlay_close,
+                on_writing_overlay_close: on_close_writing_tools,
                 on_unsaved_cancel: on_unsaved_cancel,
                 on_unsaved_confirm: on_unsaved_confirm,
             }
@@ -589,6 +628,9 @@ pub fn EditorView() -> Element {
                         delete_state: delete_state(),
                         duplicate_check_state: duplicate_check_state(),
                         save_menu_state: save_menu_state(),
+                        writing_tools_menu_state: writing_tools_menu_state(),
+                        writing_tools_prompt: writing_tools_prompt(),
+                        writing_tools_tone: writing_tools_tone(),
                         on_focus_field,
                         on_prompt_input,
                         on_answer_input,
@@ -596,6 +638,10 @@ pub fn EditorView() -> Element {
                         on_answer_paste,
                         on_format: on_format,
                         on_block_dir: on_block_dir,
+                        on_toggle_writing_tools: on_toggle_writing_tools,
+                        on_update_writing_tools_prompt: on_update_writing_tools_prompt,
+                        on_select_writing_tools_tone: on_select_writing_tools_tone,
+                        on_select_writing_tools_command: on_select_writing_tools_command,
                         on_tag_input_change,
                         on_tag_add: on_tag_add,
                         on_tag_remove: on_tag_remove,
