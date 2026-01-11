@@ -5,7 +5,8 @@ use super::SqliteInitError;
 
 /// Runs a single, consolidated migration for the current schema.
 ///
-/// Creates the full schema (decks, cards with media, review logs, session summaries, and indexes).
+/// Creates the full schema (decks, cards, tags, review logs, session summaries, AI usage, and
+/// indexes). This is intended for development where the database can be reset.
 #[allow(clippy::too_many_lines)]
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
     async fn is_applied(pool: &SqlitePool, version: i64) -> Result<bool, sqlx::Error> {
@@ -27,7 +28,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
     .execute(pool)
     .await?;
 
-    // Version 1: full schema.
+    // Version 1: full schema snapshot.
     if !is_applied(pool, 1).await? {
         let mut tx = pool.begin().await?;
 
@@ -40,7 +41,29 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
                     created_at TEXT NOT NULL,
                     new_cards_per_day INTEGER NOT NULL CHECK (new_cards_per_day >= 0),
                     review_limit_per_day INTEGER NOT NULL CHECK (review_limit_per_day >= 0),
-                    micro_session_size INTEGER NOT NULL CHECK (micro_session_size >= 0)
+                    micro_session_size INTEGER NOT NULL CHECK (micro_session_size >= 0),
+                    protect_overload INTEGER NOT NULL DEFAULT 1 CHECK (protect_overload IN (0, 1)),
+                    preserve_stability_on_lapse INTEGER NOT NULL DEFAULT 1
+                        CHECK (preserve_stability_on_lapse IN (0, 1)),
+                    lapse_min_interval_secs INTEGER NOT NULL DEFAULT 86400
+                        CHECK (lapse_min_interval_secs >= 1),
+                    show_timer INTEGER NOT NULL DEFAULT 0 CHECK (show_timer IN (0, 1)),
+                    soft_time_reminder INTEGER NOT NULL DEFAULT 0 CHECK (soft_time_reminder IN (0, 1)),
+                    auto_advance_cards INTEGER NOT NULL DEFAULT 0 CHECK (auto_advance_cards IN (0, 1)),
+                    soft_time_reminder_secs INTEGER NOT NULL DEFAULT 25
+                        CHECK (soft_time_reminder_secs BETWEEN 5 AND 600),
+                    auto_reveal_secs INTEGER NOT NULL DEFAULT 20
+                        CHECK (auto_reveal_secs BETWEEN 5 AND 600),
+                    min_interval_days INTEGER NOT NULL DEFAULT 1 CHECK (min_interval_days >= 1),
+                    max_interval_days INTEGER NOT NULL DEFAULT 365 CHECK (max_interval_days >= 1),
+                    easy_days_enabled INTEGER NOT NULL DEFAULT 1 CHECK (easy_days_enabled IN (0, 1)),
+                    easy_day_load_factor REAL NOT NULL DEFAULT 0.5
+                        CHECK (easy_day_load_factor > 0 AND easy_day_load_factor <= 1),
+                    easy_days_mask INTEGER NOT NULL DEFAULT 96 CHECK (easy_days_mask BETWEEN 0 AND 127),
+                    fsrs_target_retention REAL NOT NULL DEFAULT 0.85
+                        CHECK (fsrs_target_retention > 0 AND fsrs_target_retention <= 1),
+                    fsrs_optimize_enabled INTEGER NOT NULL DEFAULT 1 CHECK (fsrs_optimize_enabled IN (0, 1)),
+                    fsrs_optimize_after INTEGER NOT NULL DEFAULT 100 CHECK (fsrs_optimize_after >= 1)
                 );
             ",
         )
@@ -140,6 +163,55 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
 
         sqlx::query(
             r"
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    api_key TEXT,
+                    api_model TEXT,
+                    api_fallback_model TEXT,
+                    ai_system_prompt TEXT,
+                    ai_daily_request_cap INTEGER,
+                    ai_cooldown_secs INTEGER
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE TABLE IF NOT EXISTS ai_price_book (
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    input_micro_usd_per_million INTEGER NOT NULL,
+                    output_micro_usd_per_million INTEGER NOT NULL,
+                    deprecated INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (provider, model)
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                CREATE TABLE IF NOT EXISTS ai_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    cost_micro_usd INTEGER
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
                 CREATE INDEX IF NOT EXISTS idx_cards_deck_next_review
                     ON cards(deck_id, next_review_at);
             ",
@@ -203,460 +275,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
 
         sqlx::query(
             r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(1_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 2).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN protect_overload INTEGER NOT NULL DEFAULT 1 CHECK (protect_overload IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(2_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 3).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN preserve_stability_on_lapse INTEGER NOT NULL DEFAULT 1
-                    CHECK (preserve_stability_on_lapse IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN lapse_min_interval_days INTEGER NOT NULL DEFAULT 1
-                    CHECK (lapse_min_interval_days >= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(3_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 4).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN lapse_min_interval_secs INTEGER NOT NULL DEFAULT 86400
-                    CHECK (lapse_min_interval_secs >= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                UPDATE decks
-                SET lapse_min_interval_secs = lapse_min_interval_days * 86400
-                WHERE lapse_min_interval_secs = 86400;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(4_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 5).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN fsrs_target_retention REAL NOT NULL DEFAULT 0.85
-                    CHECK (fsrs_target_retention > 0 AND fsrs_target_retention <= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN fsrs_optimize_enabled INTEGER NOT NULL DEFAULT 1
-                    CHECK (fsrs_optimize_enabled IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN fsrs_optimize_after INTEGER NOT NULL DEFAULT 100
-                    CHECK (fsrs_optimize_after >= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(5_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 7).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN show_timer INTEGER NOT NULL DEFAULT 0
-                    CHECK (show_timer IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN soft_time_reminder INTEGER NOT NULL DEFAULT 0
-                    CHECK (soft_time_reminder IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN auto_advance_cards INTEGER NOT NULL DEFAULT 0
-                    CHECK (auto_advance_cards IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(7_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 8).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN soft_time_reminder_secs INTEGER NOT NULL DEFAULT 25
-                    CHECK (soft_time_reminder_secs BETWEEN 5 AND 600);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN auto_reveal_secs INTEGER NOT NULL DEFAULT 20
-                    CHECK (auto_reveal_secs BETWEEN 5 AND 600);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(8_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 9).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN easy_days_enabled INTEGER NOT NULL DEFAULT 1
-                    CHECK (easy_days_enabled IN (0, 1));
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN easy_day_load_factor REAL NOT NULL DEFAULT 0.5
-                    CHECK (easy_day_load_factor > 0 AND easy_day_load_factor <= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN easy_days_mask INTEGER NOT NULL DEFAULT 96
-                    CHECK (easy_days_mask BETWEEN 0 AND 127);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(9_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 10).await? {
-        let mut tx = pool.begin().await?;
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN min_interval_days INTEGER NOT NULL DEFAULT 1
-                    CHECK (min_interval_days >= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE decks
-                ADD COLUMN max_interval_days INTEGER NOT NULL DEFAULT 365
-                    CHECK (max_interval_days >= 1);
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(10_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 11).await? {
-        let mut tx = pool.begin().await?;
-
-        sqlx::query(
-            r"
-                CREATE TABLE IF NOT EXISTS app_settings (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    api_key TEXT,
-                    api_model TEXT,
-                    api_base_url TEXT,
-                    ai_system_prompt TEXT
-                );
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(11_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 12).await? {
-        let mut tx = pool.begin().await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN api_fallback_model TEXT;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN ai_daily_request_cap INTEGER;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN ai_cooldown_secs INTEGER;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN ai_monthly_budget_cents INTEGER;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN ai_warn_50_pct INTEGER;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN ai_warn_80_pct INTEGER;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                ALTER TABLE app_settings ADD COLUMN ai_warn_100_pct INTEGER;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                CREATE TABLE IF NOT EXISTS ai_price_book (
-                    provider TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    input_micro_usd_per_million INTEGER NOT NULL,
-                    output_micro_usd_per_million INTEGER NOT NULL,
-                    deprecated INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (provider, model)
-                );
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                CREATE TABLE IF NOT EXISTS ai_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    provider TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    prompt_tokens INTEGER,
-                    completion_tokens INTEGER,
-                    total_tokens INTEGER,
-                    cost_micro_usd INTEGER
-                );
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
                 INSERT INTO ai_price_book (
                     provider, model, input_micro_usd_per_million, output_micro_usd_per_million, deprecated
                 )
@@ -677,75 +295,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
                 ON CONFLICT(version) DO NOTHING
             ",
         )
-        .bind(12_i64)
-        .bind(Utc::now())
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-    }
-
-    if !is_applied(pool, 13).await? {
-        let mut tx = pool.begin().await?;
-
-        sqlx::query(
-            r"
-                CREATE TABLE IF NOT EXISTS app_settings_new (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    api_key TEXT,
-                    api_model TEXT,
-                    api_fallback_model TEXT,
-                    ai_system_prompt TEXT,
-                    ai_daily_request_cap INTEGER,
-                    ai_cooldown_secs INTEGER
-                );
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO app_settings_new (
-                    id,
-                    api_key,
-                    api_model,
-                    api_fallback_model,
-                    ai_system_prompt,
-                    ai_daily_request_cap,
-                    ai_cooldown_secs
-                )
-                SELECT
-                    id,
-                    api_key,
-                    api_model,
-                    api_fallback_model,
-                    ai_system_prompt,
-                    ai_daily_request_cap,
-                    ai_cooldown_secs
-                FROM app_settings
-                WHERE id = 1;
-            ",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query("DROP TABLE app_settings;")
-            .execute(&mut *tx)
-            .await?;
-
-        sqlx::query("ALTER TABLE app_settings_new RENAME TO app_settings;")
-            .execute(&mut *tx)
-            .await?;
-
-        sqlx::query(
-            r"
-                INSERT INTO schema_migrations (version, applied_at)
-                VALUES (?1, ?2)
-                ON CONFLICT(version) DO NOTHING
-            ",
-        )
-        .bind(13_i64)
+        .bind(1_i64)
         .bind(Utc::now())
         .execute(&mut *tx)
         .await?;
