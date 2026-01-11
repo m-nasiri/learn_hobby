@@ -17,7 +17,6 @@ pub enum EditorIntent {
     AddTag(String),
     RemoveTag(String),
     SetTagFilter(Option<String>),
-    HandlePaste(MarkdownField),
     ApplyFormat(MarkdownField, MarkdownAction),
     ApplyBlockDir(MarkdownField, String),
     ConfirmDiscard,

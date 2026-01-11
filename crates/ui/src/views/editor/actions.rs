@@ -38,7 +38,6 @@ struct EditorActionHandlers {
     add_tag: Callback<String>,
     remove_tag: Callback<String>,
     set_tag_filter: Callback<Option<String>>,
-    handle_paste: Callback<MarkdownField>,
     apply_format: Callback<(MarkdownField, MarkdownAction)>,
     apply_block_dir: Callback<(MarkdownField, String)>,
     confirm_discard: Callback<()>,
@@ -82,7 +81,6 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
     let request_new_card_action = cards::build_request_new_card_action(&state, new_card_action);
     let (add_tag_action, remove_tag_action, set_tag_filter_action) =
         tags::build_tag_actions(&state);
-    let handle_paste_action = format::build_paste_action(&state);
     let (apply_format_action, apply_block_dir_action) = format::build_format_actions(&state);
     let (confirm_discard_action, cancel_discard_action) = menus::build_discard_actions(
         &state,
@@ -124,7 +122,6 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         add_tag: add_tag_action,
         remove_tag: remove_tag_action,
         set_tag_filter: set_tag_filter_action,
-        handle_paste: handle_paste_action,
         apply_format: apply_format_action,
         apply_block_dir: apply_block_dir_action,
         confirm_discard: confirm_discard_action,
@@ -177,7 +174,6 @@ fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
         EditorIntent::AddTag(tag) => handlers.add_tag.call(tag),
         EditorIntent::RemoveTag(tag) => handlers.remove_tag.call(tag),
         EditorIntent::SetTagFilter(tag) => handlers.set_tag_filter.call(tag),
-        EditorIntent::HandlePaste(field) => handlers.handle_paste.call(field),
         EditorIntent::ApplyFormat(field, action) => {
             handlers.apply_format.call((field, action));
         }

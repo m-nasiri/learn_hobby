@@ -207,18 +207,6 @@ pub fn EditorView() -> Element {
         });
     });
 
-    let on_prompt_paste = {
-        use_callback(move |()| {
-            dispatch.call(EditorIntent::HandlePaste(MarkdownField::Front));
-        })
-    };
-
-    let on_answer_paste = {
-        use_callback(move |()| {
-            dispatch.call(EditorIntent::HandlePaste(MarkdownField::Back));
-        })
-    };
-
     let on_replace_writing_tools = {
         use_callback(move |field: MarkdownField| {
             dispatch.call(EditorIntent::WritingToolsReplace(field));
@@ -694,8 +682,6 @@ pub fn EditorView() -> Element {
                         on_focus_field,
                         on_prompt_input,
                         on_answer_input,
-                        on_prompt_paste,
-                        on_answer_paste,
                         on_format: on_format,
                         on_block_dir: on_block_dir,
                         on_toggle_writing_tools: on_toggle_writing_tools,

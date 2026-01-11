@@ -1,11 +1,10 @@
 use dioxus::document::eval;
 use dioxus::prelude::*;
 
-use crate::vm::{MarkdownAction, MarkdownField, looks_like_markdown, markdown_to_html, sanitize_html};
+use crate::vm::{MarkdownAction, MarkdownField};
 
 use super::super::scripts::{
-    exec_command_script, insert_html_script, insert_text_script, read_clipboard_snapshot,
-    read_editable_html, set_block_dir_script, wrap_selection_script,
+    exec_command_script, read_editable_html, set_block_dir_script, wrap_selection_script,
 };
 use super::super::state::{EditorState, SaveState};
 
@@ -13,46 +12,6 @@ pub(super) type FormatCallbacks = (
     Callback<(MarkdownField, MarkdownAction)>,
     Callback<(MarkdownField, String)>,
 );
-
-pub(super) fn build_paste_action(state: &EditorState) -> Callback<MarkdownField> {
-    let state = state.clone();
-    use_callback(move |target: MarkdownField| {
-        let mut prompt_text = state.prompt_text;
-        let mut answer_text = state.answer_text;
-        let mut save_state = state.save_state;
-        spawn(async move {
-            if let Some(snapshot) = read_clipboard_snapshot().await {
-                let element_id = match target {
-                    MarkdownField::Front => "prompt",
-                    MarkdownField::Back => "answer",
-                };
-                let html = snapshot.html.trim();
-                if !html.is_empty() {
-                    let sanitized = sanitize_html(html);
-                    let script = insert_html_script(element_id, &sanitized);
-                    let _ = eval(&script).await;
-                } else if looks_like_markdown(&snapshot.text) {
-                    let html = markdown_to_html(&snapshot.text);
-                    let script = insert_html_script(element_id, &html);
-                    let _ = eval(&script).await;
-                } else if !snapshot.text.is_empty() {
-                    let script = insert_text_script(element_id, &snapshot.text);
-                    let _ = eval(&script).await;
-                } else {
-                    return;
-                }
-
-                if let Some(updated) = read_editable_html(element_id).await {
-                    match target {
-                        MarkdownField::Front => prompt_text.set(updated),
-                        MarkdownField::Back => answer_text.set(updated),
-                    }
-                }
-                save_state.set(SaveState::Idle);
-            }
-        });
-    })
-}
 
 pub(super) fn build_format_actions(state: &EditorState) -> FormatCallbacks {
     let state_for_format = state.clone();

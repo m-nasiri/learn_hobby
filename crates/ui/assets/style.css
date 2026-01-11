@@ -3019,7 +3019,8 @@ a {
   gap: 12px;
   background: rgba(255, 255, 255, 0.96);
   flex: 1;
-  overflow: visible;
+  overflow: auto;
+  min-height: 0;
 }
 
 .editor-empty-hint {

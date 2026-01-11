@@ -39,8 +39,6 @@ pub fn EditorDetailPane(
     on_focus_field: Callback<MarkdownField>,
     on_prompt_input: Callback<()>,
     on_answer_input: Callback<()>,
-    on_prompt_paste: Callback<()>,
-    on_answer_paste: Callback<()>,
     on_format: Callback<(MarkdownField, MarkdownAction)>,
     on_block_dir: Callback<(MarkdownField, String)>,
     on_tag_input_change: Callback<String>,
@@ -125,10 +123,6 @@ pub fn EditorDetailPane(
                         tabindex: "0",
                         onfocus: move |_| on_focus_field.call(MarkdownField::Front),
                         oninput: move |_| on_prompt_input.call(()),
-                        onpaste: move |evt| {
-                            evt.prevent_default();
-                            on_prompt_paste.call(());
-                        },
                     }
                     if prompt_invalid {
                         p { class: "editor-error", "Front is required." }
@@ -175,10 +169,6 @@ pub fn EditorDetailPane(
                         tabindex: "0",
                         onfocus: move |_| on_focus_field.call(MarkdownField::Back),
                         oninput: move |_| on_answer_input.call(()),
-                        onpaste: move |evt| {
-                            evt.prevent_default();
-                            on_answer_paste.call(());
-                        },
                     }
                     if answer_invalid {
                         p { class: "editor-error", "Back is required." }

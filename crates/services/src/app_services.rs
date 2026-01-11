@@ -144,5 +144,5 @@ async fn ensure_default_deck(
         .insert_new_deck(NewDeckRecord::from_deck(&deck))
         .await?;
 
-    Ok((deck_id, true))
+    Ok((deck_id, false))
 }
