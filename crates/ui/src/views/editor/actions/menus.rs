@@ -8,6 +8,7 @@ use super::super::state::{
     WritingToolsTone,
 };
 use crate::vm::{CardListItemVm, MarkdownField, strip_html_tags};
+use crate::views::editor::scripts::{read_selection_snapshot, replace_selection_or_all, write_clipboard};
 
 pub(super) fn build_discard_actions(
     state: &EditorState,
@@ -153,9 +154,13 @@ pub(super) fn build_toggle_writing_tools_action(state: &EditorState) -> Callback
         let mut new_deck_state = state.new_deck_state;
         let mut writing_tools_result_status = state.writing_tools_result_status;
         let mut writing_tools_result_target = state.writing_tools_result_target;
+        let mut writing_tools_selection_html = state.writing_tools_selection_html;
+        let mut writing_tools_selection_text = state.writing_tools_selection_text;
         match writing_tools_menu_state() {
             WritingToolsMenuState::Open(current) if current == field => {
                 writing_tools_menu_state.set(WritingToolsMenuState::Closed);
+                writing_tools_selection_html.set(String::new());
+                writing_tools_selection_text.set(String::new());
             }
             _ => {
                 save_menu_state.set(SaveMenuState::Closed);
@@ -171,6 +176,19 @@ pub(super) fn build_toggle_writing_tools_action(state: &EditorState) -> Callback
                 writing_tools_result_status.set(WritingToolsResultStatus::Idle);
                 writing_tools_result_target.set(None);
                 writing_tools_menu_state.set(WritingToolsMenuState::Open(field));
+                let element_id = match field {
+                    MarkdownField::Front => "prompt",
+                    MarkdownField::Back => "answer",
+                };
+                spawn(async move {
+                    if let Some(snapshot) = read_selection_snapshot(element_id).await {
+                        writing_tools_selection_html.set(snapshot.html);
+                        writing_tools_selection_text.set(snapshot.text);
+                    } else {
+                        writing_tools_selection_html.set(String::new());
+                        writing_tools_selection_text.set(String::new());
+                    }
+                });
             }
         }
     })
@@ -184,12 +202,18 @@ pub(super) fn build_close_writing_tools_action(state: &EditorState) -> Callback<
         let mut writing_tools_result_target = state.writing_tools_result_target;
         let mut writing_tools_result_title = state.writing_tools_result_title;
         let mut writing_tools_result_body = state.writing_tools_result_body;
+        let mut writing_tools_result_html = state.writing_tools_result_html;
+        let mut writing_tools_selection_html = state.writing_tools_selection_html;
+        let mut writing_tools_selection_text = state.writing_tools_selection_text;
         let mut writing_tools_request = state.writing_tools_request;
         writing_tools_menu_state.set(WritingToolsMenuState::Closed);
         writing_tools_result_status.set(WritingToolsResultStatus::Idle);
         writing_tools_result_target.set(None);
         writing_tools_result_title.set(String::new());
         writing_tools_result_body.set(String::new());
+        writing_tools_result_html.set(String::new());
+        writing_tools_selection_html.set(String::new());
+        writing_tools_selection_text.set(String::new());
         writing_tools_request.set(None);
     })
 }
@@ -225,19 +249,10 @@ pub(super) fn build_select_writing_tools_command_action(
         let mut writing_tools_result_body = state.writing_tools_result_body;
         let mut writing_tools_request = state.writing_tools_request;
         let mut last_focus_field = state.last_focus_field;
+        let selection_html = state.writing_tools_selection_html.read().to_string();
+        let selection_text = state.writing_tools_selection_text.read().to_string();
         let tone = (state.writing_tools_tone)();
         let user_prompt = state.writing_tools_prompt.read().to_string();
-        let source_html = match field {
-            MarkdownField::Front => state.prompt_text.read().to_string(),
-            MarkdownField::Back => state.answer_text.read().to_string(),
-        };
-        let source_text = strip_html_tags(&source_html);
-        let request_prompt = build_writing_tools_prompt(
-            command,
-            tone,
-            &user_prompt,
-            &source_text,
-        );
         writing_tools_last_command.set(Some(command));
         last_focus_field.set(field);
         writing_tools_menu_state.set(WritingToolsMenuState::Closed);
@@ -245,15 +260,126 @@ pub(super) fn build_select_writing_tools_command_action(
         writing_tools_result_status.set(WritingToolsResultStatus::Loading);
         writing_tools_result_title.set(build_writing_tools_result_title(command, tone));
         writing_tools_result_body.set("Waiting for response…".to_string());
-        writing_tools_request.set(Some(WritingToolsRequest {
-            field,
-            command,
-            tone,
-            user_prompt,
-            source_text,
-            request_prompt,
-        }));
+        let fallback_html = match field {
+            MarkdownField::Front => state.prompt_text.read().to_string(),
+            MarkdownField::Back => state.answer_text.read().to_string(),
+        };
+        spawn(async move {
+            let source_html = if !selection_html.trim().is_empty() {
+                selection_html.clone()
+            } else if !selection_text.trim().is_empty() {
+                selection_text.clone()
+            } else {
+                fallback_html.clone()
+            };
+            let source_text = strip_html_tags(&source_html);
+            let request_prompt = build_writing_tools_prompt(
+                command,
+                tone,
+                &user_prompt,
+                &source_text,
+            );
+            writing_tools_request.set(Some(WritingToolsRequest {
+                field,
+                command,
+                tone,
+                user_prompt,
+                source_text,
+                request_prompt,
+            }));
+        });
     })
+}
+
+pub(super) fn build_replace_writing_tools_action(
+    state: &EditorState,
+) -> Callback<MarkdownField> {
+    let state = state.clone();
+    use_callback(move |field: MarkdownField| {
+        let html = normalize_writing_tools_html(&state.writing_tools_result_html.read());
+        if html.trim().is_empty() {
+            return;
+        }
+        let mut prompt_text = state.prompt_text;
+        let mut answer_text = state.answer_text;
+        let mut prompt_render_html = state.prompt_render_html;
+        let mut answer_render_html = state.answer_render_html;
+        let mut save_state = state.save_state;
+        let element_id = match field {
+            MarkdownField::Front => "prompt",
+            MarkdownField::Back => "answer",
+        };
+        let html_for_script = html.clone();
+        spawn(async move {
+            replace_selection_or_all(element_id, &html_for_script).await;
+            if let Some(updated) = crate::views::editor::scripts::read_editable_html(element_id).await {
+                match field {
+                    MarkdownField::Front => {
+                        prompt_text.set(updated.clone());
+                        prompt_render_html.set(updated);
+                    }
+                    MarkdownField::Back => {
+                        answer_text.set(updated.clone());
+                        answer_render_html.set(updated);
+                    }
+                }
+                save_state.set(SaveState::Idle);
+            }
+        });
+    })
+}
+
+pub(super) fn build_copy_writing_tools_action(state: &EditorState) -> Callback<()> {
+    let state = state.clone();
+    use_callback(move |()| {
+        let html = state.writing_tools_result_html.read().to_string();
+        if html.trim().is_empty() {
+            return;
+        }
+        let text = strip_html_tags(&html);
+        spawn(async move {
+            write_clipboard(&html, &text).await;
+        });
+    })
+}
+
+fn normalize_writing_tools_html(input: &str) -> String {
+    let mut out = input.trim().to_string();
+    let empty_para = "<p><br></p>";
+    loop {
+        let trimmed = out.trim().to_string();
+        let mut changed = false;
+        if trimmed.starts_with(empty_para) {
+            out = trimmed[empty_para.len()..].to_string();
+            changed = true;
+        }
+        if trimmed.ends_with(empty_para) {
+            out = trimmed[..trimmed.len().saturating_sub(empty_para.len())].to_string();
+            changed = true;
+        }
+        if trimmed.starts_with("<br>") {
+            out = trimmed[4..].to_string();
+            changed = true;
+        }
+        if trimmed.ends_with("<br>") {
+            out = trimmed[..trimmed.len().saturating_sub(4)].to_string();
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let trimmed = out.trim().to_string();
+    if trimmed.starts_with("<p>")
+        && trimmed.ends_with("</p>")
+        && !trimmed[3..trimmed.len().saturating_sub(4)].contains("<p>")
+        && !trimmed[3..trimmed.len().saturating_sub(4)].contains("</p>")
+    {
+        return trimmed[3..trimmed.len() - 4].to_string();
+    }
+
+    trimmed
 }
 
 fn writing_tools_command_label(command: WritingToolsCommand) -> &'static str {
@@ -323,6 +449,9 @@ fn build_writing_tools_prompt(
     let text = source_text.trim();
     let mut prompt = String::new();
     prompt.push_str(action_prompt);
+    prompt.push_str(
+        "\n\nReturn only a JSON object with keys: result, title, notes. Do not use code fences.",
+    );
     prompt.push_str("\n\nTONE: ");
     prompt.push_str(tone_label);
     prompt.push_str("\nACTION: ");

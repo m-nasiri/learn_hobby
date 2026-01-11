@@ -35,7 +35,7 @@ pub fn EditorDetailPane(
     writing_tools_result_status: WritingToolsResultStatus,
     writing_tools_result_target: Option<MarkdownField>,
     writing_tools_result_title: String,
-    writing_tools_result_body: String,
+    writing_tools_result_html: String,
     on_focus_field: Callback<MarkdownField>,
     on_prompt_input: Callback<()>,
     on_answer_input: Callback<()>,
@@ -55,6 +55,8 @@ pub fn EditorDetailPane(
     on_update_writing_tools_prompt: Callback<String>,
     on_select_writing_tools_tone: Callback<WritingToolsTone>,
     on_select_writing_tools_command: Callback<(MarkdownField, WritingToolsCommand)>,
+    on_replace_writing_tools: Callback<MarkdownField>,
+    on_copy_writing_tools: Callback<MarkdownField>,
 ) -> Element {
     let show_dirty = can_edit && has_unsaved_changes;
     let can_show_delete = !is_create_mode && selected_card_id.is_some();
@@ -96,13 +98,15 @@ pub fn EditorDetailPane(
                         writing_result_status: writing_tools_result_status,
                         writing_result_target: writing_tools_result_target,
                         writing_result_title: writing_tools_result_title.clone(),
-                        writing_result_body: writing_tools_result_body.clone(),
+                        writing_result_html: writing_tools_result_html.clone(),
                         on_format,
                         on_block_dir,
                         on_toggle_writing_menu: on_toggle_writing_tools,
                         on_writing_prompt_change: on_update_writing_tools_prompt,
                         on_select_writing_tone: on_select_writing_tools_tone,
                         on_select_writing_command: on_select_writing_tools_command,
+                        on_writing_result_replace: on_replace_writing_tools,
+                        on_writing_result_copy: on_copy_writing_tools,
                     }
                     div {
                         id: "prompt",
@@ -144,13 +148,15 @@ pub fn EditorDetailPane(
                         writing_result_status: writing_tools_result_status,
                         writing_result_target: writing_tools_result_target,
                         writing_result_title: writing_tools_result_title,
-                        writing_result_body: writing_tools_result_body,
+                        writing_result_html: writing_tools_result_html,
                         on_format,
                         on_block_dir,
                         on_toggle_writing_menu: on_toggle_writing_tools,
                         on_writing_prompt_change: on_update_writing_tools_prompt,
                         on_select_writing_tone: on_select_writing_tools_tone,
                         on_select_writing_command: on_select_writing_tools_command,
+                        on_writing_result_replace: on_replace_writing_tools,
+                        on_writing_result_copy: on_copy_writing_tools,
                     }
                     div {
                         id: "answer",

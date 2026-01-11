@@ -153,6 +153,9 @@ pub struct EditorState {
     pub writing_tools_result_target: Signal<Option<MarkdownField>>,
     pub writing_tools_result_title: Signal<String>,
     pub writing_tools_result_body: Signal<String>,
+    pub writing_tools_result_html: Signal<String>,
+    pub writing_tools_selection_html: Signal<String>,
+    pub writing_tools_selection_text: Signal<String>,
     pub show_new_deck: Signal<bool>,
     pub new_deck_name: Signal<String>,
     pub new_deck_state: Signal<SaveState>,
@@ -212,6 +215,9 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let writing_tools_result_target = use_signal(|| None::<MarkdownField>);
     let writing_tools_result_title = use_signal(String::new);
     let writing_tools_result_body = use_signal(String::new);
+    let writing_tools_result_html = use_signal(String::new);
+    let writing_tools_selection_html = use_signal(String::new);
+    let writing_tools_selection_text = use_signal(String::new);
     let show_new_deck = use_signal(|| false);
     let new_deck_name = use_signal(String::new);
     let new_deck_state = use_signal(|| SaveState::Idle);
@@ -487,6 +493,9 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         writing_tools_result_target,
         writing_tools_result_title,
         writing_tools_result_body,
+        writing_tools_result_html,
+        writing_tools_selection_html,
+        writing_tools_selection_text,
         show_new_deck,
         new_deck_name,
         new_deck_state,

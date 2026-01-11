@@ -15,13 +15,15 @@ pub fn EditorFormatToolbar(
     writing_result_status: WritingToolsResultStatus,
     writing_result_target: Option<MarkdownField>,
     writing_result_title: String,
-    writing_result_body: String,
+    writing_result_html: String,
     on_format: Callback<(MarkdownField, MarkdownAction)>,
     on_block_dir: Callback<(MarkdownField, String)>,
     on_toggle_writing_menu: Callback<MarkdownField>,
     on_writing_prompt_change: Callback<String>,
     on_select_writing_tone: Callback<WritingToolsTone>,
     on_select_writing_command: Callback<(MarkdownField, WritingToolsCommand)>,
+    on_writing_result_replace: Callback<MarkdownField>,
+    on_writing_result_copy: Callback<MarkdownField>,
 ) -> Element {
     let writing_menu_open = matches!(
         writing_menu_state,
@@ -490,19 +492,25 @@ pub fn EditorFormatToolbar(
                             } else {
                                 "editor-writing-result-body"
                             },
-                            "{writing_result_body}"
+                            dangerous_inner_html: "{writing_result_html}"
                         }
                         div { class: "editor-writing-result-actions",
                             button {
                                 class: "editor-writing-result-btn",
                                 r#type: "button",
                                 disabled: writing_result_status != WritingToolsResultStatus::Ready,
+                                onclick: move |_| {
+                                    on_writing_result_replace.call(field);
+                                },
                                 "Replace"
                             }
                             button {
                                 class: "editor-writing-result-btn",
                                 r#type: "button",
                                 disabled: writing_result_status != WritingToolsResultStatus::Ready,
+                                onclick: move |_| {
+                                    on_writing_result_copy.call(field);
+                                },
                                 "Copy"
                             }
                             button {

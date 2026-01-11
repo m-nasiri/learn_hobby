@@ -51,6 +51,8 @@ struct EditorActionHandlers {
     update_writing_tools_prompt: Callback<String>,
     select_writing_tools_tone: Callback<WritingToolsTone>,
     select_writing_tools_command: Callback<(MarkdownField, WritingToolsCommand)>,
+    replace_writing_tools: Callback<MarkdownField>,
+    copy_writing_tools: Callback<()>,
     close_delete_modal: Callback<()>,
     open_reset_deck_modal: Callback<()>,
     close_reset_deck_modal: Callback<()>,
@@ -100,6 +102,8 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
     let select_writing_tools_tone_action = menus::build_select_writing_tools_tone_action(&state);
     let select_writing_tools_command_action =
         menus::build_select_writing_tools_command_action(&state);
+    let replace_writing_tools_action = menus::build_replace_writing_tools_action(&state);
+    let copy_writing_tools_action = menus::build_copy_writing_tools_action(&state);
     let close_delete_modal_action = menus::build_close_delete_modal_action(&state);
     let close_duplicate_modal_action = menus::build_close_duplicate_modal_action(&state);
     let confirm_duplicate_action = menus::build_confirm_duplicate_action(&state, save_action);
@@ -136,6 +140,8 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         update_writing_tools_prompt: update_writing_tools_prompt_action,
         select_writing_tools_tone: select_writing_tools_tone_action,
         select_writing_tools_command: select_writing_tools_command_action,
+        replace_writing_tools: replace_writing_tools_action,
+        copy_writing_tools: copy_writing_tools_action,
         close_delete_modal: close_delete_modal_action,
         close_duplicate_modal: close_duplicate_modal_action,
         confirm_duplicate: confirm_duplicate_action,
@@ -196,6 +202,13 @@ fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
         }
         EditorIntent::SelectWritingToolsCommand(field, command) => {
             handlers.select_writing_tools_command.call((field, command));
+        }
+        EditorIntent::WritingToolsReplace(field) => {
+            handlers.replace_writing_tools.call(field);
+        }
+        EditorIntent::WritingToolsCopy(field) => {
+            let _ = field;
+            handlers.copy_writing_tools.call(());
         }
         EditorIntent::CloseDeleteModal => handlers.close_delete_modal.call(()),
         EditorIntent::CloseDuplicateModal => handlers.close_duplicate_modal.call(()),

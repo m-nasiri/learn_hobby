@@ -3232,8 +3232,8 @@ a {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  min-width: 260px;
-  max-width: 360px;
+  min-width: 320px;
+  max-width: 520px;
   padding: 12px;
   border-radius: 18px;
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -3260,6 +3260,27 @@ a {
   font-size: 0.9rem;
   line-height: 1.4;
   color: rgba(0, 0, 0, 0.72);
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.editor-writing-result-body p {
+  margin: 0 0 8px;
+}
+
+.editor-writing-result-body p:last-child {
+  margin-bottom: 0;
+}
+
+.editor-writing-result-body ul,
+.editor-writing-result-body ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.editor-writing-result-body li {
+  margin: 4px 0;
 }
 
 .editor-writing-result-body--loading {

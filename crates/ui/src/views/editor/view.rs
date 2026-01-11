@@ -4,7 +4,9 @@ use dioxus_router::use_navigator;
 
 use crate::context::AppContext;
 use crate::routes::Route;
-use crate::vm::MarkdownField;
+use crate::vm::{
+    MarkdownField, looks_like_html, markdown_to_html, sanitize_html,
+};
 use crate::views::{ViewState, view_state_from_resource};
 
 use super::actions::{EditorIntent, use_editor_dispatcher};
@@ -60,6 +62,7 @@ pub fn EditorView() -> Element {
     let writing_tools_result_target = state.writing_tools_result_target;
     let writing_tools_result_title = state.writing_tools_result_title;
     let writing_tools_result_body = state.writing_tools_result_body;
+    let writing_tools_result_html = state.writing_tools_result_html;
 
     let writing_tools_service = ctx.writing_tools();
     use_effect(move || {
@@ -86,6 +89,15 @@ pub fn EditorView() -> Element {
                 }
             }
         });
+    });
+    let writing_tools_result_body_for_effect = writing_tools_result_body;
+    let mut writing_tools_result_html_for_effect = writing_tools_result_html;
+    use_effect(move || {
+        let body = writing_tools_result_body_for_effect.read().to_string();
+        let rendered = render_writing_tools_html(&body);
+        if writing_tools_result_html_for_effect.read().as_str() != rendered.as_str() {
+            writing_tools_result_html_for_effect.set(rendered);
+        }
     });
     let show_reset_deck_modal = state.show_reset_deck_modal;
     let reset_deck_state = state.reset_deck_state;
@@ -204,6 +216,18 @@ pub fn EditorView() -> Element {
     let on_answer_paste = {
         use_callback(move |()| {
             dispatch.call(EditorIntent::HandlePaste(MarkdownField::Back));
+        })
+    };
+
+    let on_replace_writing_tools = {
+        use_callback(move |field: MarkdownField| {
+            dispatch.call(EditorIntent::WritingToolsReplace(field));
+        })
+    };
+
+    let on_copy_writing_tools = {
+        use_callback(move |field: MarkdownField| {
+            dispatch.call(EditorIntent::WritingToolsCopy(field));
         })
     };
 
@@ -666,7 +690,7 @@ pub fn EditorView() -> Element {
                         writing_tools_result_status: writing_tools_result_status(),
                         writing_tools_result_target: writing_tools_result_target(),
                         writing_tools_result_title: writing_tools_result_title(),
-                        writing_tools_result_body: writing_tools_result_body(),
+                        writing_tools_result_html: writing_tools_result_html(),
                         on_focus_field,
                         on_prompt_input,
                         on_answer_input,
@@ -678,6 +702,8 @@ pub fn EditorView() -> Element {
                         on_update_writing_tools_prompt: on_update_writing_tools_prompt,
                         on_select_writing_tools_tone: on_select_writing_tools_tone,
                         on_select_writing_tools_command: on_select_writing_tools_command,
+                        on_replace_writing_tools: on_replace_writing_tools,
+                        on_copy_writing_tools: on_copy_writing_tools,
                         on_tag_input_change,
                         on_tag_add: on_tag_add,
                         on_tag_remove: on_tag_remove,
@@ -691,4 +717,14 @@ pub fn EditorView() -> Element {
             }
         }
     }
+}
+
+fn render_writing_tools_html(body: &str) -> String {
+    if body.trim().is_empty() {
+        return String::new();
+    }
+    if looks_like_html(body) {
+        return sanitize_html(body);
+    }
+    markdown_to_html(body)
 }

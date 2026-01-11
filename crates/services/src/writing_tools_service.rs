@@ -66,8 +66,7 @@ impl WritingToolsConfig {
             .map(str::to_string)
             .or_else(|| fallback.map(|config| config.api_key.clone()))?;
         let base_url = fallback
-            .map(|config| config.base_url.clone())
-            .unwrap_or_else(|| default_base_url().into());
+            .map_or_else(|| default_base_url().into(), |config| config.base_url.clone());
         let preferred_model = settings
             .api_model()
             .map(str::to_string)
@@ -239,7 +238,7 @@ impl WritingToolsService {
             )
             .await?;
 
-        parse_writing_tools_output(&content)
+        parse_writing_tools_output(&content, prompt)
     }
 }
 
@@ -272,22 +271,52 @@ struct ChatMessageResponse {
     content: Option<String>,
 }
 
-fn parse_writing_tools_output(content: &str) -> Result<WritingToolsOutput, WritingToolsError> {
+fn parse_writing_tools_output(
+    content: &str,
+    prompt: &str,
+) -> Result<WritingToolsOutput, WritingToolsError> {
     let cleaned = strip_json_fence(content.trim());
-    let output: WritingToolsOutput = serde_json::from_str(&cleaned)
-        .or_else(|_| parse_json_value_fallback(&cleaned))?;
-    Ok(output)
+    if cleaned.trim().is_empty() {
+        return Err(WritingToolsError::InvalidResponse);
+    }
+    let action = extract_action_label(prompt);
+    if let Ok(output) = parse_output_json(&cleaned, action.as_deref()) {
+        return Ok(output);
+    }
+    if let Some(candidate) = extract_json_object(&cleaned)
+        && let Ok(output) = parse_output_json(&candidate, action.as_deref())
+    {
+        return Ok(output);
+    }
+    Ok(WritingToolsOutput {
+        result: cleaned.clone(),
+        title: String::new(),
+        notes: String::new(),
+    })
 }
 
-fn parse_json_value_fallback(payload: &str) -> Result<WritingToolsOutput, WritingToolsError> {
+fn parse_output_json(
+    payload: &str,
+    action: Option<&str>,
+) -> Result<WritingToolsOutput, WritingToolsError> {
+    if let Ok(output) = serde_json::from_str::<WritingToolsOutput>(payload) {
+        if output.result.trim().is_empty() {
+            return Err(WritingToolsError::InvalidResponse);
+        }
+        return Ok(output);
+    }
+
     let value: Value =
         serde_json::from_str(payload).map_err(|_| WritingToolsError::InvalidResponse)?;
-    let result = value
+    let result_value = value
         .get("result")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    if result.is_empty() {
+        .ok_or(WritingToolsError::InvalidResponse)?;
+    let result = match result_value {
+        Value::String(text) => text.clone(),
+        Value::Array(items) => format_array_result(items, action)?,
+        _ => return Err(WritingToolsError::InvalidResponse),
+    };
+    if result.trim().is_empty() {
         return Err(WritingToolsError::InvalidResponse);
     }
     let title = value
@@ -301,6 +330,48 @@ fn parse_json_value_fallback(payload: &str) -> Result<WritingToolsOutput, Writin
         .unwrap_or("")
         .to_string();
     Ok(WritingToolsOutput { result, title, notes })
+}
+
+fn format_array_result(
+    items: &[Value],
+    action: Option<&str>,
+) -> Result<String, WritingToolsError> {
+    let values: Vec<String> = items.iter().filter_map(Value::as_str).map(str::to_string).collect();
+    if values.is_empty() {
+        return Err(WritingToolsError::InvalidResponse);
+    }
+    let list: Vec<String> = match action {
+        Some("Key points") => values.into_iter().map(|item| format!("- {item}")).collect(),
+        Some("List" | "Turn into question") => values
+            .into_iter()
+            .enumerate()
+            .map(|(idx, item)| format!("{}. {item}", idx + 1))
+            .collect(),
+        _ => values.into_iter().map(|item| format!("- {item}")).collect(),
+    };
+    Ok(list.join("\n"))
+}
+
+fn extract_action_label(prompt: &str) -> Option<String> {
+    for line in prompt.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("ACTION:") {
+            let action = rest.trim();
+            if !action.is_empty() {
+                return Some(action.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_json_object(payload: &str) -> Option<String> {
+    let start = payload.find('{')?;
+    let end = payload.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(payload[start..=end].to_string())
 }
 
 fn strip_json_fence(content: &str) -> String {

@@ -30,6 +30,8 @@ pub enum EditorIntent {
     UpdateWritingToolsPrompt(String),
     SelectWritingToolsTone(WritingToolsTone),
     SelectWritingToolsCommand(MarkdownField, WritingToolsCommand),
+    WritingToolsReplace(MarkdownField),
+    WritingToolsCopy(MarkdownField),
     CloseDeleteModal,
     OpenResetDeckModal,
     CloseResetDeckModal,

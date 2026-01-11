@@ -7,6 +7,12 @@ pub struct ClipboardSnapshot {
     pub text: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct SelectionSnapshot {
+    pub html: String,
+    pub text: String,
+}
+
 const CLIPBOARD_READ_SCRIPT: &str = r#"
     let html = "";
     let text = "";
@@ -31,8 +37,30 @@ const CLIPBOARD_READ_SCRIPT: &str = r#"
     return { html, text };
 "#;
 
+const SELECTION_READ_SCRIPT_TEMPLATE: &str = r#"
+    const el = document.getElementById("{element_id}");
+    if (!el) {{ return {{ html: "", text: "" }}; }}
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {{
+        return {{ html: "", text: "" }};
+    }}
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.commonAncestorContainer)) {{
+        return {{ html: "", text: "" }};
+    }}
+    const fragment = range.cloneContents();
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(fragment);
+    return {{ html: wrapper.innerHTML || "", text: sel.toString() || "" }};
+"#;
+
 pub async fn read_clipboard_snapshot() -> Option<ClipboardSnapshot> {
     eval(CLIPBOARD_READ_SCRIPT).join::<ClipboardSnapshot>().await.ok()
+}
+
+pub async fn read_selection_snapshot(element_id: &str) -> Option<SelectionSnapshot> {
+    let script = SELECTION_READ_SCRIPT_TEMPLATE.replace("{element_id}", element_id);
+    eval(&script).join::<SelectionSnapshot>().await.ok()
 }
 
 pub async fn read_editable_html(element_id: &str) -> Option<String> {
@@ -42,6 +70,16 @@ pub async fn read_editable_html(element_id: &str) -> Option<String> {
 
 pub async fn set_editable_html(element_id: &str, html: &str) {
     let script = set_editable_html_script(element_id, html);
+    let _ = eval(&script).await;
+}
+
+pub async fn replace_selection_or_all(element_id: &str, html: &str) {
+    let script = replace_selection_or_all_script(element_id, html);
+    let _ = eval(&script).await;
+}
+
+pub async fn write_clipboard(html: &str, text: &str) {
+    let script = write_clipboard_script(html, text);
     let _ = eval(&script).await;
 }
 
@@ -187,6 +225,52 @@ fn set_editable_html_script(element_id: &str, html: &str) -> String {
         r#"
         const el = document.getElementById("{element_id}");
         if (el) {{ el.innerHTML = {html_literal}; }}
+        "#
+    )
+}
+
+fn replace_selection_or_all_script(element_id: &str, html: &str) -> String {
+    let html_literal = js_string_literal(html);
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        el.focus();
+        const sel = window.getSelection();
+        const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+        const isInside = range ? el.contains(range.commonAncestorContainer) : false;
+        if (isInside && sel && !sel.isCollapsed) {{
+            document.execCommand("insertHTML", false, {html_literal});
+            return;
+        }}
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertHTML", false, {html_literal});
+        "#
+    )
+}
+
+fn write_clipboard_script(html: &str, text: &str) -> String {
+    let html_literal = js_string_literal(html);
+    let text_literal = js_string_literal(text);
+    format!(
+        r#"
+        const html = {html_literal};
+        const text = {text_literal};
+        try {{
+            if (navigator.clipboard && navigator.clipboard.write) {{
+                const item = new ClipboardItem({{
+                    "text/html": new Blob([html], {{ type: "text/html" }}),
+                    "text/plain": new Blob([text], {{ type: "text/plain" }})
+                }});
+                await navigator.clipboard.write([item]);
+                return;
+            }}
+        }} catch (_) {{}}
+        try {{
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                await navigator.clipboard.writeText(text);
+            }}
+        }} catch (_) {{}}
         "#
     )
 }
