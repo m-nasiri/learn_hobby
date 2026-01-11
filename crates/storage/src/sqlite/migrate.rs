@@ -685,5 +685,73 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), SqliteInitError> {
         tx.commit().await?;
     }
 
+    if !is_applied(pool, 13).await? {
+        let mut tx = pool.begin().await?;
+
+        sqlx::query(
+            r"
+                CREATE TABLE IF NOT EXISTS app_settings_new (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    api_key TEXT,
+                    api_model TEXT,
+                    api_fallback_model TEXT,
+                    ai_system_prompt TEXT,
+                    ai_daily_request_cap INTEGER,
+                    ai_cooldown_secs INTEGER
+                );
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO app_settings_new (
+                    id,
+                    api_key,
+                    api_model,
+                    api_fallback_model,
+                    ai_system_prompt,
+                    ai_daily_request_cap,
+                    ai_cooldown_secs
+                )
+                SELECT
+                    id,
+                    api_key,
+                    api_model,
+                    api_fallback_model,
+                    ai_system_prompt,
+                    ai_daily_request_cap,
+                    ai_cooldown_secs
+                FROM app_settings
+                WHERE id = 1;
+            ",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DROP TABLE app_settings;")
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("ALTER TABLE app_settings_new RENAME TO app_settings;")
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            r"
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (?1, ?2)
+                ON CONFLICT(version) DO NOTHING
+            ",
+        )
+        .bind(13_i64)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+    }
+
     Ok(())
 }

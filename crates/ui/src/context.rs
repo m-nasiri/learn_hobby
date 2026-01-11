@@ -5,8 +5,8 @@ use std::sync::{
 
 use learn_core::model::DeckId;
 use services::{
-    AiUsageService, AppSettingsService, CardService, DeckService, SessionLoopService,
-    SessionSummaryService, WritingToolsService,
+    AppSettingsService, CardService, DeckService, SessionLoopService, SessionSummaryService,
+    WritingToolsService,
 };
 
 pub trait UiApp: Send + Sync {
@@ -19,7 +19,6 @@ pub trait UiApp: Send + Sync {
     fn deck_service(&self) -> Arc<DeckService>;
     fn app_settings(&self) -> Arc<AppSettingsService>;
     fn writing_tools(&self) -> Arc<WritingToolsService>;
-    fn ai_usage(&self) -> Arc<AiUsageService>;
 }
 
 #[derive(Clone)]
@@ -34,7 +33,6 @@ pub struct AppContext {
     deck_service: Arc<DeckService>,
     app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
-    ai_usage: Arc<AiUsageService>,
 }
 
 impl AppContext {
@@ -49,7 +47,6 @@ impl AppContext {
         let deck_service = app.deck_service();
         let app_settings = app.app_settings();
         let writing_tools = app.writing_tools();
-        let ai_usage = app.ai_usage();
 
         Self {
             current_deck_id,
@@ -61,7 +58,6 @@ impl AppContext {
             deck_service,
             app_settings,
             writing_tools,
-            ai_usage,
         }
     }
 
@@ -112,10 +108,6 @@ impl AppContext {
         Arc::clone(&self.writing_tools)
     }
 
-    #[must_use]
-    pub fn ai_usage(&self) -> Arc<AiUsageService> {
-        Arc::clone(&self.ai_usage)
-    }
 }
 
 // This context is provided by the application composition root (e.g. `crates/app`).

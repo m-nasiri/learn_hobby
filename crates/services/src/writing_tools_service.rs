@@ -52,10 +52,8 @@ impl WritingToolsConfig {
             .api_key()
             .map(str::to_string)
             .or_else(|| fallback.map(|config| config.api_key.clone()))?;
-        let base_url = settings
-            .api_base_url()
-            .map(str::to_string)
-            .or_else(|| fallback.map(|config| config.base_url.clone()))
+        let base_url = fallback
+            .map(|config| config.base_url.clone())
             .unwrap_or_else(|| default_base_url().into());
         let preferred_model = settings
             .api_model()

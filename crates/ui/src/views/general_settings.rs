@@ -112,14 +112,9 @@ struct GeneralSettingsForm {
     ai_api_key: String,
     ai_model: String,
     ai_fallback_model: String,
-    ai_base_url: String,
     ai_system_prompt: String,
     ai_daily_request_cap: String,
     ai_cooldown_secs: String,
-    ai_monthly_budget: String,
-    ai_warn_50_pct: String,
-    ai_warn_80_pct: String,
-    ai_warn_100_pct: String,
 }
 
 impl Default for GeneralSettingsForm {
@@ -136,14 +131,9 @@ impl Default for GeneralSettingsForm {
             ai_api_key: String::new(),
             ai_model: String::new(),
             ai_fallback_model: String::new(),
-            ai_base_url: String::new(),
             ai_system_prompt: String::new(),
             ai_daily_request_cap: "100".to_string(),
             ai_cooldown_secs: "5".to_string(),
-            ai_monthly_budget: "5.00".to_string(),
-            ai_warn_50_pct: "50".to_string(),
-            ai_warn_80_pct: "80".to_string(),
-            ai_warn_100_pct: "100".to_string(),
         }
     }
 }
@@ -160,14 +150,9 @@ fn apply_app_settings(form: &mut GeneralSettingsForm, settings: &AppSettings) {
     form.ai_api_key = settings.api_key().unwrap_or_default().to_string();
     form.ai_model = settings.api_model().unwrap_or_default().to_string();
     form.ai_fallback_model = settings.api_fallback_model().unwrap_or_default().to_string();
-    form.ai_base_url = settings.api_base_url().unwrap_or_default().to_string();
     form.ai_system_prompt = settings.ai_system_prompt().unwrap_or_default().to_string();
     form.ai_daily_request_cap = settings.ai_daily_request_cap().to_string();
     form.ai_cooldown_secs = settings.ai_cooldown_secs().to_string();
-    form.ai_monthly_budget = format_budget_cents(settings.ai_monthly_budget_cents());
-    form.ai_warn_50_pct = settings.ai_warn_50_pct().to_string();
-    form.ai_warn_80_pct = settings.ai_warn_80_pct().to_string();
-    form.ai_warn_100_pct = settings.ai_warn_100_pct().to_string();
 }
 
 fn to_optional(value: &str) -> Option<String> {
@@ -179,19 +164,6 @@ fn to_optional(value: &str) -> Option<String> {
     }
 }
 
-fn format_budget_cents(cents: u32) -> String {
-    let dollars = cents / 100;
-    let remainder = cents % 100;
-    format!("{dollars}.{remainder:02}")
-}
-
-fn format_micro_usd(micro_usd: u64) -> String {
-    let cents = micro_usd / 10_000;
-    let dollars = cents / 100;
-    let remainder = cents % 100;
-    format!("{dollars}.{remainder:02}")
-}
-
 fn parse_optional_u32(value: &str) -> Result<Option<u32>, ()> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -200,48 +172,12 @@ fn parse_optional_u32(value: &str) -> Result<Option<u32>, ()> {
     trimmed.parse::<u32>().map(Some).map_err(|_| ())
 }
 
-fn parse_optional_u8(value: &str) -> Result<Option<u8>, ()> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    trimmed.parse::<u8>().map(Some).map_err(|_| ())
-}
-
-fn parse_budget_cents(value: &str) -> Result<Option<u32>, ()> {
-    let trimmed = value.trim().trim_start_matches('$');
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let mut parts = trimmed.split('.');
-    let dollars_str = parts.next().ok_or(())?;
-    let cents_str = parts.next().unwrap_or("0");
-    if parts.next().is_some() {
-        return Err(());
-    }
-    let dollars = dollars_str.parse::<u32>().map_err(|_| ())?;
-    if cents_str.len() > 2 {
-        return Err(());
-    }
-    let mut cents = cents_str.to_string();
-    while cents.len() < 2 {
-        cents.push('0');
-    }
-    let cents_val = cents.parse::<u32>().map_err(|_| ())?;
-    dollars
-        .checked_mul(100)
-        .and_then(|base| base.checked_add(cents_val))
-        .ok_or(())
-        .map(Some)
-}
 
 #[component]
 pub fn GeneralSettingsView() -> Element {
     let ctx = use_context::<AppContext>();
     let app_settings = ctx.app_settings();
     let app_settings_for_resource = app_settings.clone();
-    let ai_usage = ctx.ai_usage();
-    let ai_usage_for_resource = ai_usage.clone();
     let mut form = use_signal(GeneralSettingsForm::default);
     let mut initial = use_signal(GeneralSettingsForm::default);
     let mut save_state = use_signal(|| SaveState::Idle);
@@ -256,12 +192,7 @@ pub fn GeneralSettingsView() -> Element {
         }
     });
 
-    let usage_summary_resource = use_resource(move || {
-        let ai_usage = ai_usage_for_resource.clone();
-        async move { ai_usage.summary().await.map_err(|_| ViewError::Unknown) }
-    });
     let settings_state = view_state_from_resource(&settings_resource);
-    let usage_state = view_state_from_resource(&usage_summary_resource);
     if let ViewState::Ready(settings) = settings_state
         && !settings_loaded()
     {
@@ -625,38 +556,6 @@ pub fn GeneralSettingsView() -> Element {
                                         stroke_width: "1.6",
                                         stroke_linecap: "round",
                                         stroke_linejoin: "round",
-                                        circle { cx: "12", cy: "12", r: "8" }
-                                        path { d: "M4 12h16" }
-                                        path { d: "M12 4c2.2 2.2 2.2 13.8 0 16" }
-                                    }
-                                }
-                                span { "Base URL" }
-                            }
-                            div { class: "settings-row__field settings-row__field--wide",
-                                input {
-                                    class: "editor-input settings-input",
-                                    r#type: "text",
-                                    value: "{form_value.ai_base_url}",
-                                    placeholder: "https://api.openai.com/v1",
-                                    oninput: move |evt| {
-                                        let mut next = form();
-                                        next.ai_base_url = evt.value();
-                                        form.set(next);
-                                        save_state.set(SaveState::Idle);
-                                    },
-                                }
-                            }
-                        }
-                        div { class: "settings-row",
-                            div { class: "settings-row__label",
-                                span { class: "settings-row__icon",
-                                    svg {
-                                        view_box: "0 0 24 24",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.6",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
                                         path { d: "M4 7h16" }
                                         path { d: "M4 12h12" }
                                         path { d: "M4 17h9" }
@@ -751,139 +650,6 @@ pub fn GeneralSettingsView() -> Element {
                                         next.ai_cooldown_secs = evt.value();
                                         form.set(next);
                                         save_state.set(SaveState::Idle);
-                                    },
-                                }
-                            }
-                        }
-                        div { class: "settings-row",
-                            div { class: "settings-row__label",
-                                span { class: "settings-row__icon",
-                                    svg {
-                                        view_box: "0 0 24 24",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.6",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        path { d: "M12 1v22" }
-                                        path { d: "M17 5H9a4 4 0 0 0 0 8h6a4 4 0 0 1 0 8H6" }
-                                    }
-                                }
-                                span { class: "settings-row__label-text",
-                                    span { "Monthly budget ($)" }
-                                    span {
-                                        class: "settings-help",
-                                        title: "Hard cap on monthly AI spend.",
-                                        "?"
-                                    }
-                                }
-                            }
-                            div { class: "settings-row__field",
-                                input {
-                                    class: "editor-input settings-input settings-input--short",
-                                    r#type: "text",
-                                    value: "{form_value.ai_monthly_budget}",
-                                    placeholder: "5.00",
-                                    oninput: move |evt| {
-                                        let mut next = form();
-                                        next.ai_monthly_budget = evt.value();
-                                        form.set(next);
-                                        save_state.set(SaveState::Idle);
-                                    },
-                                }
-                            }
-                        }
-                        div { class: "settings-row",
-                            div { class: "settings-row__label",
-                                span { class: "settings-row__icon",
-                                    svg {
-                                        view_box: "0 0 24 24",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.6",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        path { d: "M4 20h16" }
-                                        path { d: "M6 16l2-3 3 2 4-6 3 4" }
-                                    }
-                                }
-                                span { class: "settings-row__label-text",
-                                    span { "Warning thresholds (%)" }
-                                    span {
-                                        class: "settings-help",
-                                        title: "Shown at 50%, 80%, and 100% of budget.",
-                                        "?"
-                                    }
-                                }
-                            }
-                            div { class: "settings-row__field",
-                                div { class: "settings-inline-input",
-                                    input {
-                                        class: "editor-input settings-input settings-input--short",
-                                        r#type: "text",
-                                        value: "{form_value.ai_warn_50_pct}",
-                                        oninput: move |evt| {
-                                            let mut next = form();
-                                            next.ai_warn_50_pct = evt.value();
-                                            form.set(next);
-                                            save_state.set(SaveState::Idle);
-                                        },
-                                    }
-                                    input {
-                                        class: "editor-input settings-input settings-input--short",
-                                        r#type: "text",
-                                        value: "{form_value.ai_warn_80_pct}",
-                                        oninput: move |evt| {
-                                            let mut next = form();
-                                            next.ai_warn_80_pct = evt.value();
-                                            form.set(next);
-                                            save_state.set(SaveState::Idle);
-                                        },
-                                    }
-                                    input {
-                                        class: "editor-input settings-input settings-input--short",
-                                        r#type: "text",
-                                        value: "{form_value.ai_warn_100_pct}",
-                                        oninput: move |evt| {
-                                            let mut next = form();
-                                            next.ai_warn_100_pct = evt.value();
-                                            form.set(next);
-                                            save_state.set(SaveState::Idle);
-                                        },
-                                    }
-                                }
-                            }
-                        }
-                        div { class: "settings-row",
-                            div { class: "settings-row__label",
-                                span { class: "settings-row__icon",
-                                    svg {
-                                        view_box: "0 0 24 24",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.6",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        circle { cx: "12", cy: "12", r: "9" }
-                                        path { d: "M12 7v5l3 2" }
-                                    }
-                                }
-                                span { "Usage summary" }
-                            }
-                            div { class: "settings-row__field settings-row__field--wide",
-                                match &usage_state {
-                                    ViewState::Ready(summary) => rsx! {
-                                        div { class: "settings-inline-note",
-                                            "Requests today: {summary.requests_today}/{summary.daily_cap} | ",
-                                            "Monthly spend: ${format_micro_usd(summary.monthly_cost_micro_usd)} / ",
-                                            "${format_budget_cents(summary.monthly_budget_cents)}"
-                                        }
-                                    },
-                                    ViewState::Loading => rsx! {
-                                        div { class: "settings-inline-note", "Loading usage..." }
-                                    },
-                                    _ => rsx! {
-                                        div { class: "settings-inline-note", "Usage unavailable." }
                                     },
                                 }
                             }
@@ -1050,46 +816,17 @@ pub fn GeneralSettingsView() -> Element {
                                         save_state.set(SaveState::Error(ViewError::Unknown));
                                         return;
                                     };
-                                    let Ok(ai_monthly_budget_cents) =
-                                        parse_budget_cents(&snapshot.ai_monthly_budget)
-                                    else {
-                                        save_state.set(SaveState::Error(ViewError::Unknown));
-                                        return;
-                                    };
-                                    let Ok(ai_warn_50_pct) =
-                                        parse_optional_u8(&snapshot.ai_warn_50_pct)
-                                    else {
-                                        save_state.set(SaveState::Error(ViewError::Unknown));
-                                        return;
-                                    };
-                                    let Ok(ai_warn_80_pct) =
-                                        parse_optional_u8(&snapshot.ai_warn_80_pct)
-                                    else {
-                                        save_state.set(SaveState::Error(ViewError::Unknown));
-                                        return;
-                                    };
-                                    let Ok(ai_warn_100_pct) =
-                                        parse_optional_u8(&snapshot.ai_warn_100_pct)
-                                    else {
-                                        save_state.set(SaveState::Error(ViewError::Unknown));
-                                        return;
-                                    };
                                     let draft = AppSettingsDraft {
                                         api_key: to_optional(&snapshot.ai_api_key),
                                         api_model: to_optional(&snapshot.ai_model),
                                         api_fallback_model: to_optional(
                                             &snapshot.ai_fallback_model,
                                         ),
-                                        api_base_url: to_optional(&snapshot.ai_base_url),
                                         ai_system_prompt: to_optional(
                                             &snapshot.ai_system_prompt,
                                         ),
                                         ai_daily_request_cap,
                                         ai_cooldown_secs,
-                                        ai_monthly_budget_cents,
-                                        ai_warn_50_pct,
-                                        ai_warn_80_pct,
-                                        ai_warn_100_pct,
                                     };
                                     match app_settings.save(draft).await {
                                         Ok(settings) => {

@@ -7,8 +7,8 @@ use learn_core::model::DeckId;
 use learn_core::model::DeckSettings;
 use learn_core::time::fixed_now;
 use services::{
-    AiUsageService, AppSettingsService, CardService, Clock, DeckService, SessionLoopService,
-    SessionSummaryService, WritingToolsService,
+    AppSettingsService, CardService, Clock, DeckService, SessionLoopService, SessionSummaryService,
+    WritingToolsService,
 };
 use storage::repository::{SessionSummaryRepository, Storage};
 
@@ -25,7 +25,6 @@ struct TestApp {
     deck_service: Arc<DeckService>,
     writing_tools: Arc<WritingToolsService>,
     app_settings: Arc<AppSettingsService>,
-    ai_usage: Arc<AiUsageService>,
 }
 
 impl UiApp for TestApp {
@@ -61,9 +60,6 @@ impl UiApp for TestApp {
         Arc::clone(&self.writing_tools)
     }
 
-    fn ai_usage(&self) -> Arc<AiUsageService> {
-        Arc::clone(&self.ai_usage)
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,7 +175,7 @@ pub async fn setup_view_harness_with_summary_repo(
         Arc::clone(&storage.reviews),
         Arc::clone(&summaries),
     ));
-    let ai_usage = Arc::new(AiUsageService::new(
+    let ai_usage = Arc::new(services::AiUsageService::new(
         clock,
         Arc::clone(&storage.app_settings),
         Arc::clone(&storage.ai_usage),
@@ -216,7 +212,6 @@ pub async fn setup_view_harness_with_summary_repo(
             Arc::clone(&ai_usage),
         )),
         app_settings: Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings))),
-        ai_usage,
     });
 
     let dom = VirtualDom::new_with_props(
@@ -251,7 +246,7 @@ pub async fn setup_view_harness_with_session_loop(
         clock,
         Arc::clone(&storage.session_summaries),
     ));
-    let ai_usage = Arc::new(AiUsageService::new(
+    let ai_usage = Arc::new(services::AiUsageService::new(
         clock,
         Arc::clone(&storage.app_settings),
         Arc::clone(&storage.ai_usage),
@@ -288,7 +283,6 @@ pub async fn setup_view_harness_with_session_loop(
             Arc::clone(&ai_usage),
         )),
         app_settings: Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings))),
-        ai_usage,
     });
 
     let dom = VirtualDom::new_with_props(

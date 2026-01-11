@@ -15,8 +15,6 @@ pub enum AiUsageError {
     DailyCapReached { cap: u32 },
     #[error("cooldown active ({remaining_secs}s remaining)")]
     CooldownActive { remaining_secs: u32 },
-    #[error("monthly budget exceeded")]
-    MonthlyBudgetExceeded { budget_cents: u32 },
     #[error("pricing missing for provider {provider} model {model}")]
     MissingPriceEntry { provider: String, model: String },
     #[error(transparent)]

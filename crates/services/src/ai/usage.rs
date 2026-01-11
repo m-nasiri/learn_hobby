@@ -18,16 +18,6 @@ pub struct AiUsageHandle {
     pub started_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug)]
-pub struct AiUsageSummary {
-    pub requests_today: u32,
-    pub daily_cap: u32,
-    pub monthly_cost_micro_usd: u64,
-    pub monthly_budget_cents: u32,
-    pub cooldown_secs: u32,
-    pub last_request_at: Option<DateTime<Utc>>,
-}
-
 #[derive(Clone)]
 pub struct AiUsageService {
     clock: Clock,
@@ -70,8 +60,6 @@ impl AiUsageService {
         let now = self.clock.now();
 
         let daily_start = start_of_day(now);
-        let monthly_start = start_of_month(now);
-
         let requests_today = self.usage_repo.count_since(daily_start).await?;
         if requests_today >= settings.ai_daily_request_cap() {
             return Err(AiUsageError::DailyCapReached {
@@ -86,15 +74,6 @@ impl AiUsageService {
                 let remaining = u32::try_from(remaining_secs).unwrap_or(u32::MAX);
                 return Err(AiUsageError::CooldownActive { remaining_secs: remaining });
             }
-        }
-
-        let spent_micro_usd = self.usage_repo.sum_cost_since(monthly_start).await?;
-        let budget_micro_usd =
-            u64::from(settings.ai_monthly_budget_cents()) * MICRO_USD_PER_CENT;
-        if spent_micro_usd >= budget_micro_usd {
-            return Err(AiUsageError::MonthlyBudgetExceeded {
-                budget_cents: settings.ai_monthly_budget_cents(),
-            });
         }
 
         let id = self
@@ -191,35 +170,6 @@ impl AiUsageService {
         Ok(())
     }
 
-    /// Load current usage summary (daily count + monthly spend).
-    ///
-    /// # Errors
-    ///
-    /// Returns `AiUsageError` on persistence failures.
-    pub async fn summary(&self) -> Result<AiUsageSummary, AiUsageError> {
-        let settings = self
-            .settings_repo
-            .get_settings()
-            .await?
-            .unwrap_or_default();
-        let now = self.clock.now();
-        let daily_start = start_of_day(now);
-        let monthly_start = start_of_month(now);
-
-        let requests_today = self.usage_repo.count_since(daily_start).await?;
-        let monthly_cost_micro_usd = self.usage_repo.sum_cost_since(monthly_start).await?;
-        let last_request_at = self.usage_repo.last_request_at().await?;
-
-        Ok(AiUsageSummary {
-            requests_today,
-            daily_cap: settings.ai_daily_request_cap(),
-            monthly_cost_micro_usd,
-            monthly_budget_cents: settings.ai_monthly_budget_cents(),
-            cooldown_secs: settings.ai_cooldown_secs(),
-            last_request_at,
-        })
-    }
-
     /// List the current price book entries.
     ///
     /// # Errors
@@ -236,11 +186,3 @@ fn start_of_day(now: DateTime<Utc>) -> DateTime<Utc> {
         .single()
         .unwrap_or(now)
 }
-
-fn start_of_month(now: DateTime<Utc>) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-        .single()
-        .unwrap_or(now)
-}
-
-const MICRO_USD_PER_CENT: u64 = 10_000;

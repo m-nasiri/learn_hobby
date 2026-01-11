@@ -23,7 +23,6 @@ pub struct AppServices {
     deck_service: Arc<DeckService>,
     app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
-    ai_usage: Arc<AiUsageService>,
 }
 
 impl AppServices {
@@ -75,7 +74,6 @@ impl AppServices {
             deck_service,
             app_settings,
             writing_tools,
-            ai_usage,
         })
     }
 
@@ -117,11 +115,6 @@ impl AppServices {
     #[must_use]
     pub fn writing_tools(&self) -> Arc<WritingToolsService> {
         Arc::clone(&self.writing_tools)
-    }
-
-    #[must_use]
-    pub fn ai_usage(&self) -> Arc<AiUsageService> {
-        Arc::clone(&self.ai_usage)
     }
 }
 

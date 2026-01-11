@@ -5,8 +5,8 @@ use dioxus::desktop::{Config as DesktopConfig, LogicalSize, WindowBuilder};
 use dioxus::LaunchBuilder;
 use learn_core::model::DeckId;
 use services::{
-    AiUsageService, AppServices, AppSettingsService, CardService, Clock, DeckService,
-    SessionLoopService, SessionSummaryService, WritingToolsService,
+    AppServices, AppSettingsService, CardService, Clock, DeckService, SessionLoopService,
+    SessionSummaryService, WritingToolsService,
 };
 use ui::{App, UiApp, build_app_context};
 
@@ -46,7 +46,6 @@ struct DesktopApp {
     deck_service: Arc<DeckService>,
     app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
-    ai_usage: Arc<AiUsageService>,
     open_editor_on_launch: bool,
 }
 
@@ -77,10 +76,6 @@ impl UiApp for DesktopApp {
 
     fn writing_tools(&self) -> Arc<WritingToolsService> {
         Arc::clone(&self.writing_tools)
-    }
-
-    fn ai_usage(&self) -> Arc<AiUsageService> {
-        Arc::clone(&self.ai_usage)
     }
 
     fn open_editor_on_launch(&self) -> bool {
@@ -250,7 +245,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 deck_service: services.deck_service(),
                 app_settings: services.app_settings(),
                 writing_tools: services.writing_tools(),
-                ai_usage: services.ai_usage(),
                 open_editor_on_launch: services.open_editor_on_launch(),
             };
 
