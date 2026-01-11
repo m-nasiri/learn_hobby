@@ -31,6 +31,7 @@ pub enum EditorIntent {
     SelectWritingToolsCommand(MarkdownField, WritingToolsCommand),
     WritingToolsReplace(MarkdownField),
     WritingToolsCopy(MarkdownField),
+    Indent(MarkdownField, bool),
     CloseDeleteModal,
     OpenResetDeckModal,
     CloseResetDeckModal,

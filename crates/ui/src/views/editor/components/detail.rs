@@ -41,6 +41,7 @@ pub fn EditorDetailPane(
     on_answer_input: Callback<()>,
     on_format: Callback<(MarkdownField, MarkdownAction)>,
     on_block_dir: Callback<(MarkdownField, String)>,
+    on_indent: Callback<(MarkdownField, bool)>,
     on_tag_input_change: Callback<String>,
     on_tag_add: Callback<String>,
     on_tag_remove: Callback<String>,
@@ -122,6 +123,13 @@ pub fn EditorDetailPane(
                         spellcheck: "true",
                         tabindex: "0",
                         onfocus: move |_| on_focus_field.call(MarkdownField::Front),
+                        onkeydown: move |evt| {
+                            if evt.data.key() == Key::Tab {
+                                evt.prevent_default();
+                                let outdent = evt.data.modifiers().contains(Modifiers::SHIFT);
+                                on_indent.call((MarkdownField::Front, outdent));
+                            }
+                        },
                         oninput: move |_| on_prompt_input.call(()),
                     }
                     if prompt_invalid {
@@ -168,6 +176,13 @@ pub fn EditorDetailPane(
                         spellcheck: "true",
                         tabindex: "0",
                         onfocus: move |_| on_focus_field.call(MarkdownField::Back),
+                        onkeydown: move |evt| {
+                            if evt.data.key() == Key::Tab {
+                                evt.prevent_default();
+                                let outdent = evt.data.modifiers().contains(Modifiers::SHIFT);
+                                on_indent.call((MarkdownField::Back, outdent));
+                            }
+                        },
                         oninput: move |_| on_answer_input.call(()),
                     }
                     if answer_invalid {

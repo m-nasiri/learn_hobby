@@ -40,6 +40,7 @@ struct EditorActionHandlers {
     set_tag_filter: Callback<Option<String>>,
     apply_format: Callback<(MarkdownField, MarkdownAction)>,
     apply_block_dir: Callback<(MarkdownField, String)>,
+    indent: Callback<(MarkdownField, bool)>,
     confirm_discard: Callback<()>,
     cancel_discard: Callback<()>,
     open_delete_modal: Callback<()>,
@@ -82,6 +83,7 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
     let (add_tag_action, remove_tag_action, set_tag_filter_action) =
         tags::build_tag_actions(&state);
     let (apply_format_action, apply_block_dir_action) = format::build_format_actions(&state);
+    let indent_action = format::build_indent_action(&state);
     let (confirm_discard_action, cancel_discard_action) = menus::build_discard_actions(
         &state,
         select_card_action,
@@ -124,6 +126,7 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         set_tag_filter: set_tag_filter_action,
         apply_format: apply_format_action,
         apply_block_dir: apply_block_dir_action,
+        indent: indent_action,
         confirm_discard: confirm_discard_action,
         cancel_discard: cancel_discard_action,
         open_delete_modal: open_delete_modal_action,
@@ -205,6 +208,9 @@ fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
         EditorIntent::WritingToolsCopy(field) => {
             let _ = field;
             handlers.copy_writing_tools.call(());
+        }
+        EditorIntent::Indent(field, outdent) => {
+            handlers.indent.call((field, outdent));
         }
         EditorIntent::CloseDeleteModal => handlers.close_delete_modal.call(()),
         EditorIntent::CloseDuplicateModal => handlers.close_duplicate_modal.call(()),

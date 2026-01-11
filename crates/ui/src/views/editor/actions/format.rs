@@ -13,6 +13,31 @@ pub(super) type FormatCallbacks = (
     Callback<(MarkdownField, String)>,
 );
 
+pub(super) fn build_indent_action(state: &EditorState) -> Callback<(MarkdownField, bool)> {
+    let state = state.clone();
+    use_callback(move |(field, outdent): (MarkdownField, bool)| {
+        let mut save_state = state.save_state;
+        let mut prompt_text = state.prompt_text;
+        let mut answer_text = state.answer_text;
+        spawn(async move {
+            let element_id = match field {
+                MarkdownField::Front => "prompt",
+                MarkdownField::Back => "answer",
+            };
+            let command = if outdent { "outdent" } else { "indent" };
+            let script = exec_command_script(element_id, command, None);
+            let _ = eval(&script).await;
+            if let Some(updated) = read_editable_html(element_id).await {
+                match field {
+                    MarkdownField::Front => prompt_text.set(updated),
+                    MarkdownField::Back => answer_text.set(updated),
+                }
+            }
+            save_state.set(SaveState::Idle);
+        });
+    })
+}
+
 pub(super) fn build_format_actions(state: &EditorState) -> FormatCallbacks {
     let state_for_format = state.clone();
     let apply_format_action = use_callback(move |(field, action): (MarkdownField, MarkdownAction)| {

@@ -207,6 +207,12 @@ pub fn EditorView() -> Element {
         });
     });
 
+    let on_indent = {
+        use_callback(move |(field, outdent): (MarkdownField, bool)| {
+            dispatch.call(EditorIntent::Indent(field, outdent));
+        })
+    };
+
     let on_replace_writing_tools = {
         use_callback(move |field: MarkdownField| {
             dispatch.call(EditorIntent::WritingToolsReplace(field));
@@ -684,6 +690,7 @@ pub fn EditorView() -> Element {
                         on_answer_input,
                         on_format: on_format,
                         on_block_dir: on_block_dir,
+                        on_indent,
                         on_toggle_writing_tools: on_toggle_writing_tools,
                         on_update_writing_tools_prompt: on_update_writing_tools_prompt,
                         on_select_writing_tools_tone: on_select_writing_tools_tone,
