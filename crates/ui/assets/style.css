@@ -948,37 +948,121 @@ a {
   color: var(--ink-2);
 }
 
+.settings-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.6);
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.settings-row__label-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .settings-inline-input {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-.settings-price-list {
+.settings-combo {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
+  align-items: center;
+  width: 100%;
+}
+
+.settings-combo__input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 26px;
+}
+
+.settings-combo__toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
   padding: 0;
-  list-style: none;
-  font-size: 0.82rem;
-  color: var(--ink-2);
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.5);
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.settings-price-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+.settings-combo__caret {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid rgba(0, 0, 0, 0.55);
+  border-bottom: 1.5px solid rgba(0, 0, 0, 0.55);
+  transform: rotate(45deg);
+  margin-top: -2px;
 }
 
-.settings-price-item__model {
+.settings-combo__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 25;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 12px 26px rgba(25, 27, 30, 0.14);
+  display: grid;
+  gap: 4px;
+}
+
+.settings-combo__item {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
   color: var(--ink-1);
-  font-weight: 600;
 }
 
-.settings-price-item__rate {
+.settings-combo__item:hover {
+  background: rgba(120, 146, 240, 0.12);
+}
+
+.settings-combo__item-label {
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
+.settings-combo__item-note {
+  font-size: 0.72rem;
   color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
+}
+
+.settings-combo-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 20;
 }
 
 .settings-segment {
