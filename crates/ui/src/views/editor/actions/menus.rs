@@ -258,13 +258,13 @@ pub(super) fn build_select_writing_tools_command_action(
 
 fn writing_tools_command_label(command: WritingToolsCommand) -> &'static str {
     match command {
-        WritingToolsCommand::Proofread => "Proofread",
-        WritingToolsCommand::Rewrite => "Rewrite",
+        WritingToolsCommand::ImproveWording => "Improve wording",
+        WritingToolsCommand::Simplify => "Simplify",
+        WritingToolsCommand::Concise => "Concise",
         WritingToolsCommand::Summary => "Summary",
-        WritingToolsCommand::KeyPoints => "Key Points",
+        WritingToolsCommand::KeyPoints => "Key points",
         WritingToolsCommand::List => "List",
-        WritingToolsCommand::Table => "Table",
-        WritingToolsCommand::Compose => "Compose",
+        WritingToolsCommand::TurnIntoQuestion => "Turn into question",
     }
 }
 
@@ -273,10 +273,10 @@ fn build_writing_tools_result_title(
     tone: WritingToolsTone,
 ) -> String {
     match command {
-        WritingToolsCommand::Rewrite => match tone {
-            WritingToolsTone::Friendly => "Friendly",
-            WritingToolsTone::Professional => "Professional",
-            WritingToolsTone::Concise => "Concise",
+        WritingToolsCommand::ImproveWording => match tone {
+            WritingToolsTone::Clear => "Clear",
+            WritingToolsTone::Simple => "Simple",
+            WritingToolsTone::Formal => "Formal",
         }
         .to_string(),
         _ => writing_tools_command_label(command).to_string(),
@@ -290,45 +290,50 @@ fn build_writing_tools_prompt(
     source_text: &str,
 ) -> String {
     let tone_label = match tone {
-        WritingToolsTone::Friendly => "friendly",
-        WritingToolsTone::Professional => "professional",
-        WritingToolsTone::Concise => "concise",
+        WritingToolsTone::Clear => "Clear",
+        WritingToolsTone::Simple => "Simple",
+        WritingToolsTone::Formal => "Formal",
     };
-    let mut prompt = match command {
-        WritingToolsCommand::Proofread => {
-            "Proofread the following text for grammar, spelling, and clarity. Keep the meaning and tone.".to_string()
+    let action_label = writing_tools_command_label(command);
+    let action_prompt = match command {
+        WritingToolsCommand::ImproveWording => {
+            "Rewrite for clarity and natural flow while preserving meaning.\nKeep the same intent and key details.\nAvoid adding new information.\nPreserve formatting unless improving readability.\n\nOutput JSON: result=rewritten text, title=\"\", notes=\"\"."
         }
-        WritingToolsCommand::Rewrite => format!(
-            "Rewrite the following text in a {tone_label} tone. Preserve the meaning."
-        ),
-        WritingToolsCommand::Summary => format!(
-            "Summarize the following text in a {tone_label} tone."
-        ),
+        WritingToolsCommand::Simplify => {
+            "Simplify the text to be easier to understand and remember.\nUse simpler words and shorter sentences.\nDo not remove important details.\n\nOutput JSON: result=simplified text, title=\"\", notes=\"\"."
+        }
+        WritingToolsCommand::Concise => {
+            "Make the text significantly shorter while preserving meaning and key details.\nRemove redundancy, filler, and hedging.\nKeep critical constraints, numbers, and names.\n\nOutput JSON: result=shortened text, title=\"\", notes=\"\"."
+        }
+        WritingToolsCommand::Summary => {
+            "Summarize the input into 1-3 sentences.\nKeep only the main idea and critical details.\nNo bullets.\n\nOutput JSON:\n- title: short 2-6 word heading (or \"\")\n- result: summary paragraph\n- notes: \"\""
+        }
         WritingToolsCommand::KeyPoints => {
-            "Extract the key points as a short bullet list.".to_string()
+            "Extract 3-7 key points.\nEach bullet should be <= 12 words.\nUse \"- \" bullets.\n\nOutput JSON:\n- title: \"Key points\"\n- result: bullet list as a single string\n- notes: \"\""
         }
         WritingToolsCommand::List => {
-            "Convert the content into a list format that is easy to scan.".to_string()
+            "Convert the content into an actionable numbered list (3-10 items).\nUse imperative phrasing when possible.\n\nOutput JSON:\n- title: \"List\"\n- result: numbered list as a single string\n- notes: \"\""
         }
-        WritingToolsCommand::Table => {
-            "Convert the content into a simple table.".to_string()
+        WritingToolsCommand::TurnIntoQuestion => {
+            "Turn the content into 1-5 questions for recall/testing.\nQuestions should be direct and answerable from the input only.\nPrefer \"why/how/what\" questions when useful.\n\nOutput JSON:\n- title: \"Questions\"\n- result: numbered list of questions\n- notes: \"\""
         }
-        WritingToolsCommand::Compose => format!(
-            "Compose a new version in a {tone_label} tone based on the guidance and content."
-        ),
     };
 
-    let trimmed_prompt = user_prompt.trim();
-    if !trimmed_prompt.is_empty() {
-        prompt.push_str(" Instruction: ");
-        prompt.push_str(trimmed_prompt);
+    let constraints = user_prompt.trim();
+    let text = source_text.trim();
+    let mut prompt = String::new();
+    prompt.push_str(action_prompt);
+    prompt.push_str("\n\nTONE: ");
+    prompt.push_str(tone_label);
+    prompt.push_str("\nACTION: ");
+    prompt.push_str(action_label);
+    prompt.push_str("\nCONSTRAINTS: ");
+    if !constraints.is_empty() {
+        prompt.push_str(constraints);
     }
-
-    let trimmed_text = source_text.trim();
-    if !trimmed_text.is_empty() {
-        prompt.push_str(" Text: ");
-        prompt.push_str(trimmed_text);
-    }
+    prompt.push_str("\nTEXT:\n<<<\n");
+    prompt.push_str(text);
+    prompt.push_str("\n>>>");
 
     prompt
 }

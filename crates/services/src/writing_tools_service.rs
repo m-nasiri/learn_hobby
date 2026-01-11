@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::ai::AiUsageService;
 use crate::error::WritingToolsError;
@@ -17,6 +18,15 @@ pub struct WritingToolsConfig {
     pub preferred_model: String,
     pub fallback_model: Option<String>,
     pub system_prompt: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct WritingToolsOutput {
+    pub result: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub notes: String,
 }
 
 impl WritingToolsConfig {
@@ -42,7 +52,10 @@ impl WritingToolsConfig {
             api_key,
             preferred_model,
             fallback_model,
-            system_prompt: env::var("LEARN_AI_SYSTEM_PROMPT").ok(),
+            system_prompt: env::var("LEARN_AI_SYSTEM_PROMPT")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| Some(default_system_prompt().to_string())),
         })
     }
 
@@ -68,7 +81,8 @@ impl WritingToolsConfig {
         let system_prompt = settings
             .ai_system_prompt()
             .map(str::to_string)
-            .or_else(|| fallback.and_then(|config| config.system_prompt.clone()));
+            .or_else(|| fallback.and_then(|config| config.system_prompt.clone()))
+            .or_else(|| Some(default_system_prompt().to_string()));
         Some(Self {
             provider: default_provider().to_string(),
             base_url,
@@ -117,7 +131,7 @@ impl WritingToolsService {
     ///
     /// Returns `WritingToolsError` when the service is disabled, the request fails,
     /// or the response is empty.
-    pub async fn generate(&self, prompt: &str) -> Result<String, WritingToolsError> {
+    pub async fn generate(&self, prompt: &str) -> Result<WritingToolsOutput, WritingToolsError> {
         let config = self.resolve_config().await?;
         let preferred = config.preferred_model.clone();
         let fallback = config.fallback_model.clone();
@@ -149,7 +163,7 @@ impl WritingToolsService {
         prompt: &str,
         config: &WritingToolsConfig,
         model: &str,
-    ) -> Result<String, WritingToolsError> {
+    ) -> Result<WritingToolsOutput, WritingToolsError> {
         let usage_handle = self
             .usage
             .start_request(&config.provider, model)
@@ -225,7 +239,7 @@ impl WritingToolsService {
             )
             .await?;
 
-        Ok(content.trim().to_string())
+        parse_writing_tools_output(&content)
     }
 }
 
@@ -258,6 +272,51 @@ struct ChatMessageResponse {
     content: Option<String>,
 }
 
+fn parse_writing_tools_output(content: &str) -> Result<WritingToolsOutput, WritingToolsError> {
+    let cleaned = strip_json_fence(content.trim());
+    let output: WritingToolsOutput = serde_json::from_str(&cleaned)
+        .or_else(|_| parse_json_value_fallback(&cleaned))?;
+    Ok(output)
+}
+
+fn parse_json_value_fallback(payload: &str) -> Result<WritingToolsOutput, WritingToolsError> {
+    let value: Value =
+        serde_json::from_str(payload).map_err(|_| WritingToolsError::InvalidResponse)?;
+    let result = value
+        .get("result")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if result.is_empty() {
+        return Err(WritingToolsError::InvalidResponse);
+    }
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let notes = value
+        .get("notes")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Ok(WritingToolsOutput { result, title, notes })
+}
+
+fn strip_json_fence(content: &str) -> String {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+    let mut lines = trimmed.lines();
+    let _ = lines.next();
+    let mut body: Vec<&str> = lines.collect();
+    if matches!(body.last(), Some(line) if line.trim_start().starts_with("```")) {
+        body.pop();
+    }
+    body.join("\n").trim().to_string()
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatUsage {
     #[serde(rename = "prompt_tokens")]
@@ -278,6 +337,10 @@ fn default_model() -> &'static str {
 
 fn default_fallback_model() -> &'static str {
     "gpt-4o-mini"
+}
+
+fn default_system_prompt() -> &'static str {
+    "You are a writing transformation tool inside a desktop learning application.\n\nRules you must follow:\n• Preserve the user's meaning exactly. Do not invent, infer, or add facts.\n• Be concise and practical. No filler, no preamble, no self-reference.\n• Output must be immediately usable. Never include explanations, apologies, or acknowledgements.\n• Keep all proper nouns, names, numbers, dates, and identifiers unchanged unless the user explicitly modifies them.\n• If the input text is empty or too short to transform meaningfully, return it unchanged.\n• Prefer simple language and clear structure.\n• Respect the requested tone and transformation type.\n• Do not change formatting unless the transformation explicitly requires it.\n• Never output anything outside the requested format.\n\nYour output is evaluated as final user-facing text."
 }
 
 fn default_provider() -> &'static str {

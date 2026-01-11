@@ -3177,29 +3177,6 @@ a {
   width: 100%;
 }
 
-.editor-writing-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px;
-}
-
-.editor-writing-chip {
-  border: none;
-  border-radius: 14px;
-  padding: 4px 6px;
-  background: rgba(0, 0, 0, 0.04);
-  font: inherit;
-  font-size: 0.86rem;
-  font-weight: 600;
-  color: rgba(0, 0, 0, 0.72);
-  cursor: pointer;
-}
-
-.editor-writing-chip:hover {
-  background: rgba(88, 117, 204, 0.16);
-  color: rgba(0, 0, 0, 0.85);
-}
-
 .editor-writing-divider {
   height: 1px;
   background: rgba(0, 0, 0, 0.08);

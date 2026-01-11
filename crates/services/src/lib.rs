@@ -26,7 +26,7 @@ pub use card_service::{
 };
 pub use deck_service::DeckService;
 pub use review_service::{PersistedReview, ReviewResult, ReviewService};
-pub use writing_tools_service::{WritingToolsConfig, WritingToolsService};
+pub use writing_tools_service::{WritingToolsConfig, WritingToolsOutput, WritingToolsService};
 pub use ai::{AiUsageHandle, AiUsageService};
 
 pub use sessions::{

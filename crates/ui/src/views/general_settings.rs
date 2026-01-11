@@ -557,37 +557,6 @@ pub fn GeneralSettingsView() -> Element {
                                         stroke_linecap: "round",
                                         stroke_linejoin: "round",
                                         path { d: "M4 7h16" }
-                                        path { d: "M4 12h12" }
-                                        path { d: "M4 17h9" }
-                                    }
-                                }
-                                span { "Initial prompt" }
-                            }
-                            div { class: "settings-row__field settings-row__field--wide",
-                                textarea {
-                                    class: "editor-input settings-input settings-textarea",
-                                    value: "{form_value.ai_system_prompt}",
-                                    placeholder: "Optional system prompt for all writing tools.",
-                                    oninput: move |evt| {
-                                        let mut next = form();
-                                        next.ai_system_prompt = evt.value();
-                                        form.set(next);
-                                        save_state.set(SaveState::Idle);
-                                    },
-                                }
-                            }
-                        }
-                        div { class: "settings-row",
-                            div { class: "settings-row__label",
-                                span { class: "settings-row__icon",
-                                    svg {
-                                        view_box: "0 0 24 24",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.6",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        path { d: "M4 7h16" }
                                         path { d: "M4 12h10" }
                                         path { d: "M4 17h6" }
                                     }
@@ -648,6 +617,37 @@ pub fn GeneralSettingsView() -> Element {
                                     oninput: move |evt| {
                                         let mut next = form();
                                         next.ai_cooldown_secs = evt.value();
+                                        form.set(next);
+                                        save_state.set(SaveState::Idle);
+                                    },
+                                }
+                            }
+                        }
+                        div { class: "settings-row",
+                            div { class: "settings-row__label",
+                                span { class: "settings-row__icon",
+                                    svg {
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.6",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M4 7h16" }
+                                        path { d: "M4 12h12" }
+                                        path { d: "M4 17h9" }
+                                    }
+                                }
+                                span { "Initial prompt" }
+                            }
+                            div { class: "settings-row__field settings-row__field--wide",
+                                textarea {
+                                    class: "editor-input settings-input settings-textarea",
+                                    value: "{form_value.ai_system_prompt}",
+                                    placeholder: "Optional system prompt for all writing tools.",
+                                    oninput: move |evt| {
+                                        let mut next = form();
+                                        next.ai_system_prompt = evt.value();
                                         form.set(next);
                                         save_state.set(SaveState::Idle);
                                     },

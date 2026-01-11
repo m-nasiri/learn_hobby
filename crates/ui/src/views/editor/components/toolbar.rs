@@ -272,99 +272,56 @@ pub fn EditorFormatToolbar(
                                 oninput: move |evt| on_writing_prompt_change.call(evt.value()),
                             }
                         }
-                        div { class: "editor-writing-row",
-                            button {
-                                class: "editor-writing-chip",
-                                r#type: "button",
-                                onclick: move |_| {
-                                    on_select_writing_command.call((
-                                        field,
-                                        WritingToolsCommand::Proofread,
-                                    ));
-                                },
-                                "Proofread"
-                            }
-                            button {
-                                class: "editor-writing-chip",
-                                r#type: "button",
-                                onclick: move |_| {
-                                    on_select_writing_command.call((
-                                        field,
-                                        WritingToolsCommand::Rewrite,
-                                    ));
-                                },
-                                "Rewrite"
-                            }
-                        }
-                        div { class: "editor-writing-divider" }
                         button {
-                            class: if writing_tone == WritingToolsTone::Friendly {
-                                "editor-writing-item editor-writing-item--active"
-                            } else {
-                                "editor-writing-item"
-                            },
+                            class: "editor-writing-item",
                             r#type: "button",
                             onclick: move |_| {
-                                on_select_writing_tone.call(WritingToolsTone::Friendly);
                                 on_select_writing_command.call((
                                     field,
-                                    WritingToolsCommand::Rewrite,
+                                    WritingToolsCommand::ImproveWording,
                                 ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
                                 view_box: "0 0 24 24",
-                                path { d: "M7.5 9c1.2-2.3 7.8-2.3 9 0" }
-                                path { d: "M8 14c1.6 1.4 6.4 1.4 8 0" }
-                                circle { cx: "9", cy: "10", r: "1" }
-                                circle { cx: "15", cy: "10", r: "1" }
+                                path { d: "M4 17l4 3 12-12-4-3-12 12z" }
+                                path { d: "M14 5l4 3" }
                             }
-                            span { "Friendly" }
+                            span { "Improve wording" }
                         }
                         button {
-                            class: if writing_tone == WritingToolsTone::Professional {
-                                "editor-writing-item editor-writing-item--active"
-                            } else {
-                                "editor-writing-item"
-                            },
+                            class: "editor-writing-item",
                             r#type: "button",
                             onclick: move |_| {
-                                on_select_writing_tone.call(WritingToolsTone::Professional);
                                 on_select_writing_command.call((
                                     field,
-                                    WritingToolsCommand::Rewrite,
-                                ));
-                            },
-                            svg {
-                                class: "editor-writing-item-icon",
-                                view_box: "0 0 24 24",
-                                rect { x: "5", y: "6", width: "14", height: "12", rx: "2" }
-                                path { d: "M8 6V4h8v2" }
-                                path { d: "M9 10h6" }
-                                path { d: "M9 13h6" }
-                            }
-                            span { "Professional" }
-                        }
-                        button {
-                            class: if writing_tone == WritingToolsTone::Concise {
-                                "editor-writing-item editor-writing-item--active"
-                            } else {
-                                "editor-writing-item"
-                            },
-                            r#type: "button",
-                            onclick: move |_| {
-                                on_select_writing_tone.call(WritingToolsTone::Concise);
-                                on_select_writing_command.call((
-                                    field,
-                                    WritingToolsCommand::Rewrite,
+                                    WritingToolsCommand::Simplify,
                                 ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
                                 view_box: "0 0 24 24",
                                 path { d: "M6 8h12" }
-                                path { d: "M6 12h8" }
-                                path { d: "M6 16h6" }
+                                path { d: "M7 12h10" }
+                                path { d: "M8 16h8" }
+                            }
+                            span { "Simplify" }
+                        }
+                        button {
+                            class: "editor-writing-item",
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::Concise,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M6 9h10" }
+                                path { d: "M6 13h8" }
+                                path { d: "M6 17h6" }
                             }
                             span { "Concise" }
                         }
@@ -406,7 +363,7 @@ pub fn EditorFormatToolbar(
                                 line { x1: "10", y1: "12", x2: "18", y2: "12" }
                                 line { x1: "10", y1: "15", x2: "18", y2: "15" }
                             }
-                            span { "Key Points" }
+                            span { "Key points" }
                         }
                         button {
                             class: "editor-writing-item",
@@ -435,35 +392,88 @@ pub fn EditorFormatToolbar(
                             onclick: move |_| {
                                 on_select_writing_command.call((
                                     field,
-                                    WritingToolsCommand::Table,
+                                    WritingToolsCommand::TurnIntoQuestion,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M9 9a3 3 0 1 1 4.2 2.6c-.8.4-1.2.9-1.2 1.8" }
+                                circle { cx: "12", cy: "17", r: "1" }
+                            }
+                            span { "Turn into question" }
+                        }
+                        div { class: "editor-writing-divider" }
+                        button {
+                            class: if writing_tone == WritingToolsTone::Clear {
+                                "editor-writing-item editor-writing-item--active"
+                            } else {
+                                "editor-writing-item"
+                            },
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_tone.call(WritingToolsTone::Clear);
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::ImproveWording,
+                                ));
+                            },
+                            svg {
+                                class: "editor-writing-item-icon",
+                                view_box: "0 0 24 24",
+                                path { d: "M7.5 9c1.2-2.3 7.8-2.3 9 0" }
+                                path { d: "M8 14c1.6 1.4 6.4 1.4 8 0" }
+                                circle { cx: "9", cy: "10", r: "1" }
+                                circle { cx: "15", cy: "10", r: "1" }
+                            }
+                            span { "Clear" }
+                        }
+                        button {
+                            class: if writing_tone == WritingToolsTone::Simple {
+                                "editor-writing-item editor-writing-item--active"
+                            } else {
+                                "editor-writing-item"
+                            },
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_select_writing_tone.call(WritingToolsTone::Simple);
+                                on_select_writing_command.call((
+                                    field,
+                                    WritingToolsCommand::ImproveWording,
                                 ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
                                 view_box: "0 0 24 24",
                                 rect { x: "5", y: "6", width: "14", height: "12", rx: "2" }
-                                line { x1: "5", y1: "11", x2: "19", y2: "11" }
-                                line { x1: "10", y1: "6", x2: "10", y2: "18" }
+                                path { d: "M8 6V4h8v2" }
+                                path { d: "M9 10h6" }
+                                path { d: "M9 13h6" }
                             }
-                            span { "Table" }
+                            span { "Simple" }
                         }
-                        div { class: "editor-writing-divider" }
                         button {
-                            class: "editor-writing-item editor-writing-item--compose",
+                            class: if writing_tone == WritingToolsTone::Formal {
+                                "editor-writing-item editor-writing-item--active"
+                            } else {
+                                "editor-writing-item"
+                            },
                             r#type: "button",
                             onclick: move |_| {
+                                on_select_writing_tone.call(WritingToolsTone::Formal);
                                 on_select_writing_command.call((
                                     field,
-                                    WritingToolsCommand::Compose,
+                                    WritingToolsCommand::ImproveWording,
                                 ));
                             },
                             svg {
                                 class: "editor-writing-item-icon",
                                 view_box: "0 0 24 24",
-                                path { d: "M4 17l4 3 12-12-4-3-12 12z" }
-                                path { d: "M14 5l4 3" }
+                                path { d: "M6 8h12" }
+                                path { d: "M6 12h8" }
+                                path { d: "M6 16h6" }
                             }
-                            span { "Compose..." }
+                            span { "Formal" }
                         }
                     }
                 }

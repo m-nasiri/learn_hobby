@@ -62,20 +62,20 @@ pub enum WritingToolsResultStatus {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WritingToolsTone {
-    Friendly,
-    Professional,
-    Concise,
+    Clear,
+    Simple,
+    Formal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WritingToolsCommand {
-    Proofread,
-    Rewrite,
+    ImproveWording,
+    Simplify,
+    Concise,
     Summary,
     KeyPoints,
     List,
-    Table,
-    Compose,
+    TurnIntoQuestion,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -205,7 +205,7 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let save_menu_state = use_signal(|| SaveMenuState::Closed);
     let writing_tools_menu_state = use_signal(|| WritingToolsMenuState::Closed);
     let writing_tools_prompt = use_signal(String::new);
-    let writing_tools_tone = use_signal(|| WritingToolsTone::Professional);
+    let writing_tools_tone = use_signal(|| WritingToolsTone::Clear);
     let writing_tools_last_command = use_signal(|| None::<WritingToolsCommand>);
     let writing_tools_request = use_signal(|| None::<WritingToolsRequest>);
     let writing_tools_result_status = use_signal(|| WritingToolsResultStatus::Idle);

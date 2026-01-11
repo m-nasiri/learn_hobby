@@ -31,6 +31,8 @@ pub enum WritingToolsError {
     EmptyResponse,
     #[error("writing tools response did not include usage data")]
     MissingUsage,
+    #[error("writing tools response was not valid JSON")]
+    InvalidResponse,
     #[error("writing tools request failed with status {0}")]
     HttpStatus(reqwest::StatusCode),
     #[error(transparent)]

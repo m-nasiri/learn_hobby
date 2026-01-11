@@ -68,13 +68,17 @@ pub fn EditorView() -> Element {
         };
         let service = writing_tools_service.clone();
         let mut writing_tools_result_status = writing_tools_result_status;
+        let mut writing_tools_result_title = writing_tools_result_title;
         let mut writing_tools_result_body = writing_tools_result_body;
         writing_tools_request.set(None);
         spawn(async move {
             match service.generate(&request.request_prompt).await {
-                Ok(text) => {
+                Ok(output) => {
                     writing_tools_result_status.set(WritingToolsResultStatus::Ready);
-                    writing_tools_result_body.set(text);
+                    if !output.title.trim().is_empty() {
+                        writing_tools_result_title.set(output.title);
+                    }
+                    writing_tools_result_body.set(output.result);
                 }
                 Err(err) => {
                     writing_tools_result_status.set(WritingToolsResultStatus::Error);
