@@ -3062,6 +3062,10 @@ a {
   gap: 4px;
 }
 
+.editor-link-tools {
+  position: relative;
+}
+
 .editor-md-toolbar-separator {
   width: 1px;
   height: 20px;
@@ -3227,6 +3231,67 @@ a {
   inset: 0;
   background: transparent;
   z-index: 55;
+}
+
+.editor-link-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 56;
+}
+
+.editor-link-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(248, 249, 251, 0.98);
+  box-shadow: 0 16px 32px rgba(17, 24, 39, 0.18);
+  display: grid;
+  gap: 8px;
+  z-index: 60;
+}
+
+.editor-link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-link-input {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink-1);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.editor-link-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-link-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.82rem;
+  background: rgba(120, 146, 240, 0.2);
+  color: rgba(0, 0, 0, 0.78);
+  cursor: pointer;
+}
+
+.editor-link-btn--ghost {
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .editor-writing-result {

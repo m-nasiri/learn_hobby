@@ -3,6 +3,7 @@ mod decks;
 mod format;
 mod intent;
 mod keyboard;
+mod link;
 mod menus;
 mod save;
 mod tags;
@@ -41,6 +42,11 @@ struct EditorActionHandlers {
     apply_format: Callback<(MarkdownField, MarkdownAction)>,
     apply_block_dir: Callback<(MarkdownField, String)>,
     indent: Callback<(MarkdownField, bool)>,
+    open_link_editor: Callback<MarkdownField>,
+    close_link_editor: Callback<()>,
+    update_link_url: Callback<String>,
+    apply_link: Callback<MarkdownField>,
+    remove_link: Callback<MarkdownField>,
     confirm_discard: Callback<()>,
     cancel_discard: Callback<()>,
     open_delete_modal: Callback<()>,
@@ -84,6 +90,11 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         tags::build_tag_actions(&state);
     let (apply_format_action, apply_block_dir_action) = format::build_format_actions(&state);
     let indent_action = format::build_indent_action(&state);
+    let open_link_editor_action = link::build_open_link_editor_action(&state);
+    let close_link_editor_action = link::build_close_link_editor_action(&state);
+    let update_link_url_action = link::build_update_link_url_action(&state);
+    let apply_link_action = link::build_apply_link_action(&state);
+    let remove_link_action = link::build_remove_link_action(&state);
     let (confirm_discard_action, cancel_discard_action) = menus::build_discard_actions(
         &state,
         select_card_action,
@@ -127,6 +138,11 @@ pub fn use_editor_dispatcher(state: &EditorState, services: &EditorServices) -> 
         apply_format: apply_format_action,
         apply_block_dir: apply_block_dir_action,
         indent: indent_action,
+        open_link_editor: open_link_editor_action,
+        close_link_editor: close_link_editor_action,
+        update_link_url: update_link_url_action,
+        apply_link: apply_link_action,
+        remove_link: remove_link_action,
         confirm_discard: confirm_discard_action,
         cancel_discard: cancel_discard_action,
         open_delete_modal: open_delete_modal_action,
@@ -182,6 +198,21 @@ fn dispatch_intent(intent: EditorIntent, handlers: &EditorActionHandlers) {
         }
         EditorIntent::ApplyBlockDir(field, dir) => {
             handlers.apply_block_dir.call((field, dir));
+        }
+        EditorIntent::OpenLinkEditor(field) => {
+            handlers.open_link_editor.call(field);
+        }
+        EditorIntent::CloseLinkEditor => {
+            handlers.close_link_editor.call(());
+        }
+        EditorIntent::UpdateLinkEditorUrl(value) => {
+            handlers.update_link_url.call(value);
+        }
+        EditorIntent::ApplyLink(field) => {
+            handlers.apply_link.call(field);
+        }
+        EditorIntent::RemoveLink(field) => {
+            handlers.remove_link.call(field);
         }
         EditorIntent::ConfirmDiscard => handlers.confirm_discard.call(()),
         EditorIntent::CancelDiscard => handlers.cancel_discard.call(()),

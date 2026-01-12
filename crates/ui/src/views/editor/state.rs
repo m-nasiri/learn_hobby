@@ -96,6 +96,12 @@ pub enum DuplicateCheckState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct LinkEditorState {
+    pub field: MarkdownField,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum PendingAction {
     SelectCard(CardListItemVm),
     SelectDeck(DeckId),
@@ -156,6 +162,7 @@ pub struct EditorState {
     pub writing_tools_result_html: Signal<String>,
     pub writing_tools_selection_html: Signal<String>,
     pub writing_tools_selection_text: Signal<String>,
+    pub link_editor_state: Signal<Option<LinkEditorState>>,
     pub show_new_deck: Signal<bool>,
     pub new_deck_name: Signal<String>,
     pub new_deck_state: Signal<SaveState>,
@@ -218,6 +225,7 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
     let writing_tools_result_html = use_signal(String::new);
     let writing_tools_selection_html = use_signal(String::new);
     let writing_tools_selection_text = use_signal(String::new);
+    let link_editor_state = use_signal(|| None::<LinkEditorState>);
     let show_new_deck = use_signal(|| false);
     let new_deck_name = use_signal(String::new);
     let new_deck_state = use_signal(|| SaveState::Idle);
@@ -496,6 +504,7 @@ pub fn use_editor_state(deck_id: DeckId, services: &EditorServices) -> EditorSta
         writing_tools_result_html,
         writing_tools_selection_html,
         writing_tools_selection_text,
+        link_editor_state,
         show_new_deck,
         new_deck_name,
         new_deck_state,

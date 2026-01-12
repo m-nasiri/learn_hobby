@@ -11,7 +11,7 @@ use crate::views::{ViewState, view_state_from_resource};
 
 use super::actions::{EditorIntent, use_editor_dispatcher};
 use super::components::{EditorDetailPane, EditorListPane, EditorOverlays};
-use super::scripts::{read_editable_html, set_editable_html};
+use super::scripts::{attach_rich_paste_handler, read_editable_html, set_editable_html};
 use super::state::{
     DeleteState, EditorServices, SaveMenuState, SaveState, WritingToolsMenuState,
     WritingToolsResultStatus, use_editor_state,
@@ -63,6 +63,7 @@ pub fn EditorView() -> Element {
     let writing_tools_result_title = state.writing_tools_result_title;
     let writing_tools_result_body = state.writing_tools_result_body;
     let writing_tools_result_html = state.writing_tools_result_html;
+    let link_editor_state = state.link_editor_state;
 
     let writing_tools_service = ctx.writing_tools();
     use_effect(move || {
@@ -135,6 +136,13 @@ pub fn EditorView() -> Element {
         let html = answer_render_html_for_effect.read().to_string();
         spawn(async move {
             set_editable_html("answer", &html).await;
+        });
+    });
+
+    use_effect(move || {
+        spawn(async move {
+            attach_rich_paste_handler("prompt").await;
+            attach_rich_paste_handler("answer").await;
         });
     });
 
@@ -400,6 +408,36 @@ pub fn EditorView() -> Element {
         })
     };
 
+    let on_open_link_editor = {
+        use_callback(move |field: MarkdownField| {
+            dispatch.call(EditorIntent::OpenLinkEditor(field));
+        })
+    };
+
+    let on_close_link_editor = {
+        use_callback(move |()| {
+            dispatch.call(EditorIntent::CloseLinkEditor);
+        })
+    };
+
+    let on_update_link_url = {
+        use_callback(move |value: String| {
+            dispatch.call(EditorIntent::UpdateLinkEditorUrl(value));
+        })
+    };
+
+    let on_apply_link = {
+        use_callback(move |field: MarkdownField| {
+            dispatch.call(EditorIntent::ApplyLink(field));
+        })
+    };
+
+    let on_remove_link = {
+        use_callback(move |field: MarkdownField| {
+            dispatch.call(EditorIntent::RemoveLink(field));
+        })
+    };
+
     rsx! {
         div { class: "page page--editor", tabindex: "0", onkeydown: dispatcher.on_key,
             EditorOverlays {
@@ -414,6 +452,7 @@ pub fn EditorView() -> Element {
                     writing_tools_menu_state(),
                     WritingToolsMenuState::Open(_)
                 ) || writing_tools_result_status() != WritingToolsResultStatus::Idle,
+                show_link_overlay: link_editor_state().is_some(),
                 show_unsaved_modal: show_unsaved_modal(),
                 on_deck_overlay_close: deck_overlay_close,
                 on_delete_close: on_delete_close,
@@ -424,6 +463,7 @@ pub fn EditorView() -> Element {
                 on_duplicate_confirm: on_duplicate_confirm,
                 on_save_overlay_close: on_save_overlay_close,
                 on_writing_overlay_close: on_close_writing_tools,
+                on_link_overlay_close: on_close_link_editor,
                 on_unsaved_cancel: on_unsaved_cancel,
                 on_unsaved_confirm: on_unsaved_confirm,
             }
@@ -685,12 +725,18 @@ pub fn EditorView() -> Element {
                         writing_tools_result_target: writing_tools_result_target(),
                         writing_tools_result_title: writing_tools_result_title(),
                         writing_tools_result_html: writing_tools_result_html(),
+                        link_editor_state: link_editor_state(),
                         on_focus_field,
                         on_prompt_input,
                         on_answer_input,
                         on_format: on_format,
                         on_block_dir: on_block_dir,
                         on_indent,
+                        on_open_link_editor: on_open_link_editor,
+                        on_close_link_editor: on_close_link_editor,
+                        on_update_link_url: on_update_link_url,
+                        on_apply_link: on_apply_link,
+                        on_remove_link: on_remove_link,
                         on_toggle_writing_tools: on_toggle_writing_tools,
                         on_update_writing_tools_prompt: on_update_writing_tools_prompt,
                         on_select_writing_tools_tone: on_select_writing_tools_tone,

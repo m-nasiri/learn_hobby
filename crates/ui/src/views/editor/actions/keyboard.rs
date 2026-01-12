@@ -148,7 +148,7 @@ fn handle_format_shortcuts(
         }
         Key::Character(value) if value.eq_ignore_ascii_case("k") => {
             evt.prevent_default();
-            dispatch.call(EditorIntent::ApplyFormat(field, MarkdownAction::Link));
+            dispatch.call(EditorIntent::OpenLinkEditor(field));
             true
         }
         Key::Character(value) if value == "7" && shift => {

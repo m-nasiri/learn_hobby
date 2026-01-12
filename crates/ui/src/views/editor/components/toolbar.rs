@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 
 use crate::vm::{MarkdownAction, MarkdownField};
 use crate::views::editor::state::{
-    WritingToolsCommand, WritingToolsMenuState, WritingToolsResultStatus, WritingToolsTone,
+    LinkEditorState, WritingToolsCommand, WritingToolsMenuState, WritingToolsResultStatus,
+    WritingToolsTone,
 };
 
 #[component]
@@ -16,8 +17,14 @@ pub fn EditorFormatToolbar(
     writing_result_target: Option<MarkdownField>,
     writing_result_title: String,
     writing_result_html: String,
+    link_editor_state: Option<LinkEditorState>,
     on_format: Callback<(MarkdownField, MarkdownAction)>,
     on_block_dir: Callback<(MarkdownField, String)>,
+    on_open_link_editor: Callback<MarkdownField>,
+    on_close_link_editor: Callback<()>,
+    on_update_link_url: Callback<String>,
+    on_apply_link: Callback<MarkdownField>,
+    on_remove_link: Callback<MarkdownField>,
     on_toggle_writing_menu: Callback<MarkdownField>,
     on_writing_prompt_change: Callback<String>,
     on_select_writing_tone: Callback<WritingToolsTone>,
@@ -31,9 +38,17 @@ pub fn EditorFormatToolbar(
     );
     let writing_result_open = writing_result_status != WritingToolsResultStatus::Idle
         && matches!(writing_result_target, Some(current) if current == field);
+    let link_editor_open = matches!(
+        link_editor_state.as_ref(),
+        Some(state) if state.field == field
+    );
+    let link_editor_url = link_editor_state
+        .as_ref()
+        .map(|state| state.url.clone())
+        .unwrap_or_default();
     rsx! {
         div { class: "editor-md-toolbar",
-            div { class: "editor-md-toolbar-group",
+            div { class: "editor-md-toolbar-group editor-link-tools",
                 button {
                     class: if writing_menu_open {
                         "editor-md-toolbar-btn editor-md-toolbar-btn--active"
@@ -143,13 +158,17 @@ pub fn EditorFormatToolbar(
             div { class: "editor-md-toolbar-separator" }
             div { class: "editor-md-toolbar-group",
                 button {
-                    class: "editor-md-toolbar-btn",
+                    class: if link_editor_open {
+                        "editor-md-toolbar-btn editor-md-toolbar-btn--active"
+                    } else {
+                        "editor-md-toolbar-btn"
+                    },
                     r#type: "button",
                     disabled: disabled,
                     "data-tooltip": "Link",
                     aria_label: "Link",
                     onclick: move |_| {
-                        on_format.call((field, MarkdownAction::Link));
+                        on_open_link_editor.call(field);
                     },
                     svg {
                         class: "editor-md-toolbar-icon",
@@ -157,6 +176,41 @@ pub fn EditorFormatToolbar(
                         path { d: "M9.5 14.5l5-5" }
                         path { d: "M8.7 15.3a4 4 0 0 1 0-5.7l2.1-2.1a4 4 0 1 1 5.7 5.7l-1 1" }
                         path { d: "M15.3 8.7a4 4 0 0 1 0 5.7l-2.1 2.1a4 4 0 1 1-5.7-5.7l1-1" }
+                    }
+                }
+                if link_editor_open {
+                    div {
+                        class: "editor-link-popover",
+                        onclick: move |evt| evt.stop_propagation(),
+                        div { class: "editor-link-row",
+                            input {
+                                class: "editor-link-input",
+                                r#type: "text",
+                                value: "{link_editor_url}",
+                                placeholder: "Paste link",
+                                oninput: move |evt| on_update_link_url.call(evt.value()),
+                            }
+                        }
+                        div { class: "editor-link-actions",
+                            button {
+                                class: "editor-link-btn",
+                                r#type: "button",
+                                onclick: move |_| on_apply_link.call(field),
+                                "Apply"
+                            }
+                            button {
+                                class: "editor-link-btn editor-link-btn--ghost",
+                                r#type: "button",
+                                onclick: move |_| on_remove_link.call(field),
+                                "Remove"
+                            }
+                            button {
+                                class: "editor-link-btn editor-link-btn--ghost",
+                                r#type: "button",
+                                onclick: move |_| on_close_link_editor.call(()),
+                                "Close"
+                            }
+                        }
                     }
                 }
             }

@@ -25,6 +25,7 @@ pub(super) fn build_discard_actions(
         let mut writing_tools_result_status = state_for_confirm.writing_tools_result_status;
         let mut writing_tools_result_target = state_for_confirm.writing_tools_result_target;
         let mut writing_tools_request = state_for_confirm.writing_tools_request;
+        let mut link_editor_state = state_for_confirm.link_editor_state;
         if let Some(action) = pending_action() {
             match action {
                 PendingAction::SelectCard(item) => {
@@ -45,6 +46,7 @@ pub(super) fn build_discard_actions(
         writing_tools_result_status.set(WritingToolsResultStatus::Idle);
         writing_tools_result_target.set(None);
         writing_tools_request.set(None);
+        link_editor_state.set(None);
     });
 
     let state_for_cancel = state.clone();
@@ -56,6 +58,7 @@ pub(super) fn build_discard_actions(
         let mut writing_tools_result_status = state_for_cancel.writing_tools_result_status;
         let mut writing_tools_result_target = state_for_cancel.writing_tools_result_target;
         let mut writing_tools_request = state_for_cancel.writing_tools_request;
+        let mut link_editor_state = state_for_cancel.link_editor_state;
         show_unsaved_modal.set(false);
         pending_action.set(None);
         save_menu_state.set(SaveMenuState::Closed);
@@ -63,6 +66,7 @@ pub(super) fn build_discard_actions(
         writing_tools_result_status.set(WritingToolsResultStatus::Idle);
         writing_tools_result_target.set(None);
         writing_tools_request.set(None);
+        link_editor_state.set(None);
     });
 
     (confirm_discard_action, cancel_discard_action)
@@ -86,6 +90,7 @@ pub(super) fn build_open_delete_modal_action(state: &EditorState) -> Callback<()
         let mut writing_tools_result_status = state.writing_tools_result_status;
         let mut writing_tools_result_target = state.writing_tools_result_target;
         let mut writing_tools_request = state.writing_tools_request;
+        let mut link_editor_state = state.link_editor_state;
         let selected_card_id = (state.selected_card_id)();
         if selected_card_id.is_some() {
             show_deck_menu.set(false);
@@ -100,6 +105,7 @@ pub(super) fn build_open_delete_modal_action(state: &EditorState) -> Callback<()
             writing_tools_result_status.set(WritingToolsResultStatus::Idle);
             writing_tools_result_target.set(None);
             writing_tools_request.set(None);
+            link_editor_state.set(None);
             reset_duplicate_state.borrow_mut()();
             show_delete_modal.set(true);
         }
@@ -116,6 +122,7 @@ pub(super) fn build_toggle_save_menu_action(state: &EditorState) -> Callback<()>
         let mut writing_tools_result_status = state.writing_tools_result_status;
         let mut writing_tools_result_target = state.writing_tools_result_target;
         let mut writing_tools_request = state.writing_tools_request;
+        let mut link_editor_state = state.link_editor_state;
         if save_menu_state() == SaveMenuState::Open {
             save_menu_state.set(SaveMenuState::Closed);
         } else {
@@ -125,6 +132,7 @@ pub(super) fn build_toggle_save_menu_action(state: &EditorState) -> Callback<()>
             writing_tools_result_status.set(WritingToolsResultStatus::Idle);
             writing_tools_result_target.set(None);
             writing_tools_request.set(None);
+            link_editor_state.set(None);
             save_menu_state.set(SaveMenuState::Open);
         }
     })
@@ -156,6 +164,7 @@ pub(super) fn build_toggle_writing_tools_action(state: &EditorState) -> Callback
         let mut writing_tools_result_target = state.writing_tools_result_target;
         let mut writing_tools_selection_html = state.writing_tools_selection_html;
         let mut writing_tools_selection_text = state.writing_tools_selection_text;
+        let mut link_editor_state = state.link_editor_state;
         match writing_tools_menu_state() {
             WritingToolsMenuState::Open(current) if current == field => {
                 writing_tools_menu_state.set(WritingToolsMenuState::Closed);
@@ -176,6 +185,7 @@ pub(super) fn build_toggle_writing_tools_action(state: &EditorState) -> Callback
                 writing_tools_result_status.set(WritingToolsResultStatus::Idle);
                 writing_tools_result_target.set(None);
                 writing_tools_menu_state.set(WritingToolsMenuState::Open(field));
+                link_editor_state.set(None);
                 let element_id = match field {
                     MarkdownField::Front => "prompt",
                     MarkdownField::Back => "answer",
