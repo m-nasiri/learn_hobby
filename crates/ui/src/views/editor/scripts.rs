@@ -59,6 +59,22 @@ pub async fn read_selected_link_href(element_id: &str) -> Option<String> {
     eval(&script).join::<String>().await.ok()
 }
 
+pub async fn read_link_href_at_point(element_id: &str, x: f64, y: f64) -> Option<String> {
+    let script = read_link_href_at_point_script(element_id, x, y);
+    let href = eval(&script).join::<String>().await.ok()?;
+    let trimmed = href.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+pub async fn save_selection_range(element_id: &str) {
+    let script = save_selection_range_script(element_id);
+    let _ = eval(&script).await;
+}
+
 pub async fn apply_link(element_id: &str, url: &str) {
     let script = apply_link_script(element_id, url);
     let _ = eval(&script).await;
@@ -173,7 +189,43 @@ fn read_editable_html_script(element_id: &str) -> String {
     format!(
         r#"
         const el = document.getElementById("{element_id}");
-        return el ? el.innerHTML : "";
+        if (!el) {{ return ""; }}
+        const tooltip = "Cmd/Ctrl+click to open link";
+        const anchors = el.querySelectorAll("a");
+        for (const anchor of anchors) {{
+            const dataHref = (anchor.getAttribute("data-href") || "").trim();
+            const href = (anchor.getAttribute("href") || "").trim();
+            const raw = dataHref || href;
+            if (!raw) {{
+                continue;
+            }}
+            const lower = raw.toLowerCase();
+            if (lower.startsWith("javascript:") || lower.startsWith("data:")) {{
+                anchor.removeAttribute("href");
+                anchor.removeAttribute("data-href");
+                continue;
+            }}
+            anchor.setAttribute("data-href", raw);
+            anchor.removeAttribute("href");
+            const title = (anchor.getAttribute("title") || "").trim();
+            if (!title) {{
+                anchor.setAttribute("title", tooltip);
+            }}
+        }}
+        const clone = el.cloneNode(true);
+        const cloneAnchors = clone.querySelectorAll("a");
+        for (const anchor of cloneAnchors) {{
+            const dataHref = (anchor.getAttribute("data-href") || "").trim();
+            if (dataHref) {{
+                anchor.setAttribute("href", dataHref);
+                anchor.removeAttribute("data-href");
+            }}
+            const title = (anchor.getAttribute("title") || "").trim();
+            if (title === tooltip) {{
+                anchor.removeAttribute("title");
+            }}
+        }}
+        return clone.innerHTML;
         "#
     )
 }
@@ -183,7 +235,31 @@ fn set_editable_html_script(element_id: &str, html: &str) -> String {
     format!(
         r#"
         const el = document.getElementById("{element_id}");
-        if (el) {{ el.innerHTML = {html_literal}; }}
+        if (el) {{
+            el.innerHTML = {html_literal};
+            const tooltip = "Cmd/Ctrl+click to open link";
+            const anchors = el.querySelectorAll("a");
+            for (const anchor of anchors) {{
+                const dataHref = (anchor.getAttribute("data-href") || "").trim();
+                const href = (anchor.getAttribute("href") || "").trim();
+                const raw = dataHref || href;
+                if (!raw) {{
+                    continue;
+                }}
+                const lower = raw.toLowerCase();
+                if (lower.startsWith("javascript:") || lower.startsWith("data:")) {{
+                    anchor.removeAttribute("href");
+                    anchor.removeAttribute("data-href");
+                    continue;
+                }}
+                anchor.setAttribute("data-href", raw);
+                anchor.removeAttribute("href");
+                const title = (anchor.getAttribute("title") || "").trim();
+                if (!title) {{
+                    anchor.setAttribute("title", tooltip);
+                }}
+            }}
+        }}
         "#
     )
 }
@@ -237,19 +313,41 @@ fn write_clipboard_script(html: &str, text: &str) -> String {
 fn read_selected_link_href_script(element_id: &str) -> String {
     format!(
         r#"
+        if (!window.__learnStoredSelection) {{
+            window.__learnStoredSelection = {{}};
+        }}
+        window.__learnGetStoredRange = function (el) {{
+            const stored = window.__learnStoredSelection[el.id];
+            if (!stored) return null;
+            if (!el.contains(stored.commonAncestorContainer)) return null;
+            return stored;
+        }};
         const el = document.getElementById("{element_id}");
         if (!el) {{ return ""; }}
         const sel = window.getSelection();
-        if (!sel || sel.rangeCount === 0) {{ return ""; }}
-        const range = sel.getRangeAt(0);
-        if (!el.contains(range.commonAncestorContainer)) {{ return ""; }}
-        let node = sel.anchorNode;
+        let range = null;
+        if (sel && sel.rangeCount > 0) {{
+            const candidate = sel.getRangeAt(0);
+            if (el.contains(candidate.commonAncestorContainer)) {{
+                range = candidate;
+            }}
+        }}
+        if (!range) {{
+            range = window.__learnGetStoredRange(el);
+        }}
+        if (!range) {{ return ""; }}
+        let node = range.startContainer;
         if (node && node.nodeType === Node.TEXT_NODE) {{
             node = node.parentElement;
         }}
         while (node && node !== el) {{
             if (node.tagName === "A") {{
-                return node.getAttribute("href") || "";
+                const dataHref = (node.getAttribute("data-href") || "").trim();
+                if (dataHref) {{
+                    return dataHref;
+                }}
+                const href = (node.getAttribute("href") || "").trim();
+                return href;
             }}
             node = node.parentElement;
         }}
@@ -262,10 +360,24 @@ fn apply_link_script(element_id: &str, url: &str) -> String {
     let url_literal = js_string_literal(url);
     format!(
         r#"
+        if (!window.__learnStoredSelection) {{
+            window.__learnStoredSelection = {{}};
+        }}
+        window.__learnGetStoredRange = function (el) {{
+            const stored = window.__learnStoredSelection[el.id];
+            if (!stored) return null;
+            if (!el.contains(stored.commonAncestorContainer)) return null;
+            return stored;
+        }};
         const el = document.getElementById("{element_id}");
         if (!el) {{ return; }}
         el.focus();
         const sel = window.getSelection();
+        const stored = window.__learnGetStoredRange(el);
+        if (stored && sel) {{
+            sel.removeAllRanges();
+            sel.addRange(stored);
+        }}
         if (!sel || sel.rangeCount === 0) {{
             return;
         }}
@@ -279,7 +391,8 @@ fn apply_link_script(element_id: &str, url: &str) -> String {
         }}
         while (node && node !== el) {{
             if (node.tagName === "A") {{
-                node.setAttribute("href", {url_literal});
+                node.setAttribute("data-href", {url_literal});
+                node.removeAttribute("href");
                 return;
             }}
             node = node.parentElement;
@@ -287,11 +400,28 @@ fn apply_link_script(element_id: &str, url: &str) -> String {
         if (sel.isCollapsed) {{
             const url = {url_literal};
             const link = document.createElement("a");
-            link.setAttribute("href", url);
+            link.setAttribute("data-href", url);
             link.textContent = url;
             document.execCommand("insertHTML", false, link.outerHTML);
         }} else {{
             document.execCommand("createLink", false, {url_literal});
+            const anchors = el.querySelectorAll("a");
+            for (const anchor of anchors) {{
+                const dataHref = (anchor.getAttribute("data-href") || "").trim();
+                const href = (anchor.getAttribute("href") || "").trim();
+                const raw = dataHref || href;
+                if (!raw) {{
+                    continue;
+                }}
+                const lower = raw.toLowerCase();
+                if (lower.startsWith("javascript:") || lower.startsWith("data:")) {{
+                    anchor.removeAttribute("href");
+                    anchor.removeAttribute("data-href");
+                    continue;
+                }}
+                anchor.setAttribute("data-href", raw);
+                anchor.removeAttribute("href");
+            }}
         }}
         "#
     )
@@ -300,10 +430,24 @@ fn apply_link_script(element_id: &str, url: &str) -> String {
 fn remove_link_script(element_id: &str) -> String {
     format!(
         r#"
+        if (!window.__learnStoredSelection) {{
+            window.__learnStoredSelection = {{}};
+        }}
+        window.__learnGetStoredRange = function (el) {{
+            const stored = window.__learnStoredSelection[el.id];
+            if (!stored) return null;
+            if (!el.contains(stored.commonAncestorContainer)) return null;
+            return stored;
+        }};
         const el = document.getElementById("{element_id}");
         if (!el) {{ return; }}
         el.focus();
         const sel = window.getSelection();
+        const stored = window.__learnGetStoredRange(el);
+        if (stored && sel) {{
+            sel.removeAllRanges();
+            sel.addRange(stored);
+        }}
         if (!sel || sel.rangeCount === 0) {{ return; }}
         const range = sel.getRangeAt(0);
         if (!el.contains(range.commonAncestorContainer)) {{ return; }}
@@ -517,6 +661,51 @@ fn attach_rich_paste_handler_script(element_id: &str) -> String {
         window.__learnAttachRichPaste(document.getElementById("{element_id}"));
         "###,
         element_id = element_id
+    )
+}
+
+fn save_selection_range_script(element_id: &str) -> String {
+    format!(
+        r#"
+        if (!window.__learnStoredSelection) {{
+            window.__learnStoredSelection = {{}};
+        }}
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return; }}
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) {{ return; }}
+        const range = sel.getRangeAt(0);
+        if (!el.contains(range.commonAncestorContainer)) {{ return; }}
+        window.__learnStoredSelection[el.id] = range.cloneRange();
+        "#
+    )
+}
+
+fn read_link_href_at_point_script(element_id: &str, x: f64, y: f64) -> String {
+    format!(
+        r#"
+        const el = document.getElementById("{element_id}");
+        if (!el) {{ return ""; }}
+        const target = document.elementFromPoint({x}, {y});
+        if (!target) {{ return ""; }}
+        let link = target;
+        if (link && link.nodeType === Node.TEXT_NODE) {{
+            link = link.parentElement;
+        }}
+        if (link && link.closest) {{
+            link = link.closest("a");
+        }}
+        if (!link || !el.contains(link)) {{ return ""; }}
+        const dataHref = (link.getAttribute("data-href") || "").trim();
+        if (dataHref) {{
+            return dataHref;
+        }}
+        const href = (link.getAttribute("href") || "").trim();
+        return href;
+        "#,
+        element_id = element_id,
+        x = x,
+        y = y
     )
 }
 

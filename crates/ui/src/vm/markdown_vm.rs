@@ -8,7 +8,6 @@ pub enum MarkdownField {
 pub enum MarkdownAction {
     Bold,
     Italic,
-    Link,
     Quote,
     BulletList,
     NumberedList,
@@ -46,7 +45,7 @@ pub fn sanitize_html(html: &str) -> String {
     .collect();
 
     let mut attributes: HashMap<&str, HashSet<&str>> = HashMap::new();
-    attributes.insert("a", ["href"].into_iter().collect());
+    attributes.insert("a", ["href", "data-href"].into_iter().collect());
 
     ammonia::Builder::new()
         .tags(tags)

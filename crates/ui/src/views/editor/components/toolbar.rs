@@ -48,7 +48,7 @@ pub fn EditorFormatToolbar(
         .unwrap_or_default();
     rsx! {
         div { class: "editor-md-toolbar",
-            div { class: "editor-md-toolbar-group editor-link-tools",
+            div { class: "editor-md-toolbar-group",
                 button {
                     class: if writing_menu_open {
                         "editor-md-toolbar-btn editor-md-toolbar-btn--active"
@@ -156,7 +156,7 @@ pub fn EditorFormatToolbar(
                 }
             }
             div { class: "editor-md-toolbar-separator" }
-            div { class: "editor-md-toolbar-group",
+            div { class: "editor-md-toolbar-group editor-link-tools",
                 button {
                     class: if link_editor_open {
                         "editor-md-toolbar-btn editor-md-toolbar-btn--active"
@@ -181,7 +181,6 @@ pub fn EditorFormatToolbar(
                 if link_editor_open {
                     div {
                         class: "editor-link-popover",
-                        onclick: move |evt| evt.stop_propagation(),
                         div { class: "editor-link-row",
                             input {
                                 class: "editor-link-input",

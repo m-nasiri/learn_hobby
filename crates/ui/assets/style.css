@@ -228,7 +228,8 @@ a {
 .page--editor {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
 }
 
 .page p {
@@ -2252,7 +2253,8 @@ a {
   flex-direction: column;
   gap: 16px;
   flex: 1;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
 }
 
 .editor-toolbar {
@@ -2701,6 +2703,7 @@ a {
 .editor-split {
   display: grid;
   grid-template-columns: minmax(220px, 280px) 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
   flex: 1;
@@ -3016,11 +3019,12 @@ a {
 .editor-body {
   padding: 20px;
   display: grid;
-  gap: 12px;
+  gap: 16px;
   background: rgba(255, 255, 255, 0.96);
   flex: 1;
   overflow: auto;
   min-height: 0;
+  align-content: start;
 }
 
 .editor-empty-hint {
@@ -3238,6 +3242,7 @@ a {
   inset: 0;
   background: transparent;
   z-index: 56;
+  pointer-events: none;
 }
 
 .editor-link-popover {
@@ -3441,6 +3446,12 @@ a {
   cursor: text;
   text-align: start;
   unicode-bidi: plaintext;
+}
+
+.editor-input a {
+  color: rgba(75, 102, 201, 0.85);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .editor-input--multi {

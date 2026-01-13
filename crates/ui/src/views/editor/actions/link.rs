@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 
 use crate::vm::MarkdownField;
 
-use super::super::scripts::{apply_link, read_editable_html, read_selected_link_href, remove_link};
+use super::super::scripts::{
+    apply_link, read_editable_html, read_selected_link_href, remove_link, save_selection_range,
+};
 use super::super::state::{EditorState, LinkEditorState, SaveState, SaveMenuState, WritingToolsMenuState, WritingToolsResultStatus};
 
 pub(super) fn build_open_link_editor_action(state: &EditorState) -> Callback<MarkdownField> {
@@ -36,6 +38,7 @@ pub(super) fn build_open_link_editor_action(state: &EditorState) -> Callback<Mar
             MarkdownField::Back => "answer",
         };
         spawn(async move {
+            save_selection_range(element_id).await;
             let href = read_selected_link_href(element_id).await.unwrap_or_default();
             let url = if href.trim().is_empty() {
                 "https://".to_string()

@@ -56,7 +56,6 @@ pub(super) fn build_format_actions(state: &EditorState) -> FormatCallbacks {
             let script = match action {
                 MarkdownAction::Bold => exec_command_script(element_id, "bold", None),
                 MarkdownAction::Italic => exec_command_script(element_id, "italic", None),
-                MarkdownAction::Link => exec_command_script(element_id, "createLink", Some("https://")),
                 MarkdownAction::Quote => exec_command_script(element_id, "formatBlock", Some("blockquote")),
                 MarkdownAction::BulletList => {
                     exec_command_script(element_id, "insertUnorderedList", None)

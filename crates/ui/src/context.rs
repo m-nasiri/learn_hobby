@@ -9,6 +9,8 @@ use services::{
     WritingToolsService,
 };
 
+use crate::platform::UiLinkOpener;
+
 pub trait UiApp: Send + Sync {
     fn current_deck_id(&self) -> DeckId;
     fn open_editor_on_launch(&self) -> bool;
@@ -19,6 +21,7 @@ pub trait UiApp: Send + Sync {
     fn deck_service(&self) -> Arc<DeckService>;
     fn app_settings(&self) -> Arc<AppSettingsService>;
     fn writing_tools(&self) -> Arc<WritingToolsService>;
+    fn link_opener(&self) -> Arc<dyn UiLinkOpener>;
 }
 
 #[derive(Clone)]
@@ -33,6 +36,7 @@ pub struct AppContext {
     deck_service: Arc<DeckService>,
     app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
+    link_opener: Arc<dyn UiLinkOpener>,
 }
 
 impl AppContext {
@@ -47,6 +51,7 @@ impl AppContext {
         let deck_service = app.deck_service();
         let app_settings = app.app_settings();
         let writing_tools = app.writing_tools();
+        let link_opener = app.link_opener();
 
         Self {
             current_deck_id,
@@ -58,6 +63,7 @@ impl AppContext {
             deck_service,
             app_settings,
             writing_tools,
+            link_opener,
         }
     }
 
@@ -106,6 +112,11 @@ impl AppContext {
     #[must_use]
     pub fn writing_tools(&self) -> Arc<WritingToolsService> {
         Arc::clone(&self.writing_tools)
+    }
+
+    #[must_use]
+    pub fn link_opener(&self) -> Arc<dyn UiLinkOpener> {
+        Arc::clone(&self.link_opener)
     }
 
 }

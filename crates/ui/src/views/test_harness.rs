@@ -13,6 +13,7 @@ use services::{
 use storage::repository::{SessionSummaryRepository, Storage};
 
 use crate::context::{UiApp, build_app_context};
+use crate::platform::UiLinkOpener;
 use crate::views::{HistoryView, HomeView, PracticeView, SummaryView, SessionView};
 use crate::views::session::SessionTestHandles;
 
@@ -25,6 +26,13 @@ struct TestApp {
     deck_service: Arc<DeckService>,
     writing_tools: Arc<WritingToolsService>,
     app_settings: Arc<AppSettingsService>,
+    link_opener: Arc<dyn UiLinkOpener>,
+}
+
+struct NoopLinkOpener;
+
+impl UiLinkOpener for NoopLinkOpener {
+    fn open_url(&self, _url: &str) {}
 }
 
 impl UiApp for TestApp {
@@ -58,6 +66,10 @@ impl UiApp for TestApp {
 
     fn writing_tools(&self) -> Arc<WritingToolsService> {
         Arc::clone(&self.writing_tools)
+    }
+
+    fn link_opener(&self) -> Arc<dyn UiLinkOpener> {
+        Arc::clone(&self.link_opener)
     }
 
 }
@@ -212,6 +224,7 @@ pub async fn setup_view_harness_with_summary_repo(
             Arc::clone(&ai_usage),
         )),
         app_settings: Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings))),
+        link_opener: Arc::new(NoopLinkOpener),
     });
 
     let dom = VirtualDom::new_with_props(
@@ -283,6 +296,7 @@ pub async fn setup_view_harness_with_session_loop(
             Arc::clone(&ai_usage),
         )),
         app_settings: Arc::new(AppSettingsService::new(Arc::clone(&storage.app_settings))),
+        link_opener: Arc::new(NoopLinkOpener),
     });
 
     let dom = VirtualDom::new_with_props(

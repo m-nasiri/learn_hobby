@@ -8,7 +8,8 @@ use services::{
     AppServices, AppSettingsService, CardService, Clock, DeckService, SessionLoopService,
     SessionSummaryService, WritingToolsService,
 };
-use ui::{App, UiApp, build_app_context};
+use ui::{App, UiApp, UiLinkOpener, build_app_context};
+use ui::platform::DesktopLinkOpener;
 
 #[derive(Debug)]
 enum ArgsError {
@@ -47,6 +48,7 @@ struct DesktopApp {
     app_settings: Arc<AppSettingsService>,
     writing_tools: Arc<WritingToolsService>,
     open_editor_on_launch: bool,
+    link_opener: Arc<dyn UiLinkOpener>,
 }
 
 impl UiApp for DesktopApp {
@@ -80,6 +82,10 @@ impl UiApp for DesktopApp {
 
     fn open_editor_on_launch(&self) -> bool {
         self.open_editor_on_launch
+    }
+
+    fn link_opener(&self) -> Arc<dyn UiLinkOpener> {
+        Arc::clone(&self.link_opener)
     }
 }
 
@@ -246,6 +252,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 app_settings: services.app_settings(),
                 writing_tools: services.writing_tools(),
                 open_editor_on_launch: services.open_editor_on_launch(),
+                link_opener: Arc::new(DesktopLinkOpener),
             };
 
             let app: Arc<dyn UiApp> = Arc::new(app);

@@ -11,7 +11,10 @@ use crate::views::{ViewState, view_state_from_resource};
 
 use super::actions::{EditorIntent, use_editor_dispatcher};
 use super::components::{EditorDetailPane, EditorListPane, EditorOverlays};
-use super::scripts::{attach_rich_paste_handler, read_editable_html, set_editable_html};
+use super::scripts::{
+    attach_rich_paste_handler, read_editable_html, read_link_href_at_point,
+    read_selected_link_href, set_editable_html,
+};
 use super::state::{
     DeleteState, EditorServices, SaveMenuState, SaveState, WritingToolsMenuState,
     WritingToolsResultStatus, use_editor_state,
@@ -414,6 +417,31 @@ pub fn EditorView() -> Element {
         })
     };
 
+    let link_opener = ctx.link_opener();
+    let on_link_open_click = use_callback(move |(field, evt): (MarkdownField, MouseEvent)| {
+        let modifiers = evt.data.modifiers();
+        if !modifiers.contains(Modifiers::META) && !modifiers.contains(Modifiers::CONTROL) {
+            return;
+        }
+        evt.prevent_default();
+        evt.stop_propagation();
+        let coords = evt.data.client_coordinates();
+        let opener = link_opener.clone();
+        let element_id = match field {
+            MarkdownField::Front => "prompt",
+            MarkdownField::Back => "answer",
+        };
+        spawn(async move {
+            let mut href = read_link_href_at_point(element_id, coords.x, coords.y).await;
+            if href.is_none() {
+                href = read_selected_link_href(element_id).await;
+            }
+            if let Some(url) = href {
+                opener.open_url(&url);
+            }
+        });
+    });
+
     let on_close_link_editor = {
         use_callback(move |()| {
             dispatch.call(EditorIntent::CloseLinkEditor);
@@ -452,7 +480,7 @@ pub fn EditorView() -> Element {
                     writing_tools_menu_state(),
                     WritingToolsMenuState::Open(_)
                 ) || writing_tools_result_status() != WritingToolsResultStatus::Idle,
-                show_link_overlay: link_editor_state().is_some(),
+                show_link_overlay: false,
                 show_unsaved_modal: show_unsaved_modal(),
                 on_deck_overlay_close: deck_overlay_close,
                 on_delete_close: on_delete_close,
@@ -733,6 +761,7 @@ pub fn EditorView() -> Element {
                         on_block_dir: on_block_dir,
                         on_indent,
                         on_open_link_editor: on_open_link_editor,
+                        on_link_open_click: on_link_open_click,
                         on_close_link_editor: on_close_link_editor,
                         on_update_link_url: on_update_link_url,
                         on_apply_link: on_apply_link,

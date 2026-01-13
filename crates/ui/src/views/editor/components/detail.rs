@@ -44,6 +44,7 @@ pub fn EditorDetailPane(
     on_block_dir: Callback<(MarkdownField, String)>,
     on_indent: Callback<(MarkdownField, bool)>,
     on_open_link_editor: Callback<MarkdownField>,
+    on_link_open_click: Callback<(MarkdownField, MouseEvent)>,
     on_close_link_editor: Callback<()>,
     on_update_link_url: Callback<String>,
     on_apply_link: Callback<MarkdownField>,
@@ -135,6 +136,9 @@ pub fn EditorDetailPane(
                         spellcheck: "true",
                         tabindex: "0",
                         onfocus: move |_| on_focus_field.call(MarkdownField::Front),
+                        onclick: move |evt| {
+                            on_link_open_click.call((MarkdownField::Front, evt));
+                        },
                         onkeydown: move |evt| {
                             if evt.data.key() == Key::Tab {
                                 evt.prevent_default();
@@ -194,6 +198,9 @@ pub fn EditorDetailPane(
                         spellcheck: "true",
                         tabindex: "0",
                         onfocus: move |_| on_focus_field.call(MarkdownField::Back),
+                        onclick: move |evt| {
+                            on_link_open_click.call((MarkdownField::Back, evt));
+                        },
                         onkeydown: move |evt| {
                             if evt.data.key() == Key::Tab {
                                 evt.prevent_default();
