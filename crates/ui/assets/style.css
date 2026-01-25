@@ -1677,20 +1677,29 @@ a {
 }
 
 .session-question {
-  margin: 0;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 680px;
 }
 
 .session-answer {
-  margin: -6px 0 0;
+  margin: -6px auto 0;
+  width: 100%;
+  max-width: 680px;
   color: var(--ink-2);
 }
 
 .session-text {
-  font-size: clamp(1.2rem, 1.1rem + 0.6vw, 1.6rem);
+  font-size: clamp(1.05rem, 1rem + 0.5vw, 1.45rem);
   margin: 0;
   font-family: var(--font-serif);
   text-align: center;
   unicode-bidi: plaintext;
+}
+
+.session-question .session-text,
+.session-answer .session-text {
+  text-align: start;
 }
 
 .session-text p {
@@ -2004,12 +2013,15 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .practice-deck-meta {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .practice-deck-avatar {
@@ -2030,12 +2042,14 @@ a {
 .practice-deck-text {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .practice-deck-name {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .practice-deck-stats {
@@ -2043,6 +2057,8 @@ a {
   gap: 10px;
   font-size: 0.86rem;
   color: rgba(0, 0, 0, 0.55);
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .practice-deck-stats .practice-stat:not(:last-child)::after {
@@ -2079,6 +2095,7 @@ a {
 
 .practice-action {
   position: relative;
+  margin-left: auto;
 }
 
 .practice-deck-action-caret {
