@@ -415,7 +415,7 @@ mod tests {
         let card1 = build_card(1);
         repo.upsert_card(&card1).await.unwrap();
         let tag = TagName::new("Language").unwrap();
-        repo.set_tags_for_card(deck.id(), card1.id(), &[tag.clone()])
+        repo.set_tags_for_card(deck.id(), card1.id(), std::slice::from_ref(&tag))
             .await
             .unwrap();
 

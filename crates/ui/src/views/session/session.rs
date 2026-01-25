@@ -2,7 +2,6 @@ use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use keyboard_types::{Code, Key, Modifiers};
-use std::time::Duration;
 
 use learn_core::model::{DeckId, ReviewGrade, TagName};
 
@@ -13,6 +12,7 @@ use crate::vm::{
     SessionIntent, SessionOutcome, SessionPhase, SessionStartMode, SessionVm, sanitize_html,
     start_session,
 };
+use super::scripts::session_timer_script;
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -39,25 +39,6 @@ struct TimerSettings {
     soft_time_reminder_secs: u32,
     auto_reveal_secs: u32,
 }
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[allow(clippy::struct_excessive_bools)]
-struct TimerControl {
-    active: bool,
-    show_timer: bool,
-    soft_time_reminder: bool,
-    auto_advance_cards: bool,
-    soft_time_reminder_secs: u32,
-    auto_reveal_secs: u32,
-    phase: Option<SessionPhase>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TimerKey {
-    completed: bool,
-    index: usize,
-}
-
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PracticeCounts {
@@ -180,10 +161,6 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     let mut last_focus_completed = use_signal(|| false);
     let mut last_focus_can_practice = use_signal(|| true);
     let mut completion = use_signal(|| None::<CompletionDestination>);
-    let mut timer_seconds = use_signal(|| 0_u32);
-    let mut timer_control = use_signal(TimerControl::default);
-    let mut auto_reveal_fired = use_signal(|| false);
-    let mut timer_key = use_signal(|| None::<TimerKey>);
     let counts_resource = {
         let card_service = card_service.clone();
         let tag_name = tag_name.clone();
@@ -487,10 +464,24 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     };
 
     let vm_guard = vm.read();
-    let card_prompt = vm_guard.as_ref().and_then(SessionVm::prompt_text);
-    let card_answer = vm_guard.as_ref().and_then(SessionVm::answer_text);
-    let card_prompt_html = card_prompt.map(sanitize_html);
-    let card_answer_html = card_answer.map(sanitize_html);
+    let card_prompt_html = use_memo(move || {
+        let vm_guard = vm.read();
+        vm_guard
+            .as_ref()
+            .and_then(SessionVm::prompt_text)
+            .map(sanitize_html)
+    });
+    let card_answer_html = use_memo(move || {
+        let vm_guard = vm.read();
+        vm_guard
+            .as_ref()
+            .and_then(SessionVm::answer_text)
+            .map(sanitize_html)
+    });
+    let card_prompt_html_read = card_prompt_html.read();
+    let card_answer_html_read = card_answer_html.read();
+    let card_prompt_html = card_prompt_html_read.as_deref();
+    let card_answer_html = card_answer_html_read.as_deref();
     let phase = vm_guard.as_ref().map(SessionVm::phase);
     let completion_state = *completion.read();
     let (current_index, total_cards) = vm_guard.as_ref().map_or((0, 0), |vm| {
@@ -504,7 +495,6 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     let due_label = practice_counts
         .map(|counts| counts.due)
         .map_or_else(|| "Due: --".to_string(), |due| format!("Due: {due}"));
-    let timer_label = format_timer(timer_seconds());
     let empty_session_message = if has_any_cards {
         "All caught up. No cards due right now."
     } else {
@@ -540,59 +530,36 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         && matches!(state, ViewState::Ready(()))
         && completion_state.is_none()
         && phase == Some(SessionPhase::Prompt);
-    let next_timer_key = TimerKey {
-        completed: completion_state.is_some(),
-        index: current_index,
-    };
-    let show_soft_reminder = timer_settings.soft_time_reminder
-        && timer_active
-        && timer_seconds() >= timer_settings.soft_time_reminder_secs;
-
+    let timer_label = format_timer(0);
+    let vm_for_timer = vm;
+    let completion_for_timer = completion;
+    let state_for_timer = state.clone();
+    let timer_settings_for_js = timer_settings;
     use_effect(move || {
-        let previous = timer_key();
-        if previous != Some(next_timer_key) {
-            timer_seconds.set(0);
-            auto_reveal_fired.set(false);
-            timer_key.set(Some(next_timer_key));
-        }
-        timer_control.set(TimerControl {
-            active: timer_active,
-            show_timer: timer_settings.show_timer,
-            soft_time_reminder: timer_settings.soft_time_reminder,
-            auto_advance_cards: timer_settings.auto_advance_cards,
-            soft_time_reminder_secs: timer_settings.soft_time_reminder_secs,
-            auto_reveal_secs: timer_settings.auto_reveal_secs,
-            phase,
-        });
+        let vm_guard = vm_for_timer.read();
+            let phase = vm_guard.as_ref().map(SessionVm::phase);
+            let current_index = vm_guard.as_ref().map_or(0, |vm| vm.current_index());
+            let completion_state = completion_for_timer.read().is_some();
+            let timer_enabled = timer_settings_for_js.show_timer
+                || timer_settings_for_js.soft_time_reminder
+                || timer_settings_for_js.auto_advance_cards;
+            let timer_active = timer_enabled
+                && matches!(state_for_timer, ViewState::Ready(()))
+                && !completion_state
+                && phase == Some(SessionPhase::Prompt);
+            let timer_key = format!("{}:{current_index}", completion_state as u8);
+            let js = session_timer_script(
+                &timer_key,
+                timer_active,
+                timer_settings_for_js.show_timer,
+                timer_settings_for_js.soft_time_reminder,
+                timer_settings_for_js.auto_advance_cards,
+                timer_settings_for_js.soft_time_reminder_secs,
+                timer_settings_for_js.auto_reveal_secs,
+            );
+            let _ = eval(&js);
     });
-
-    let _timer_loop = {
-        let mut timer_seconds = timer_seconds;
-        let timer_control = timer_control;
-        let mut auto_reveal_fired = auto_reveal_fired;
-        use_future(move || async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                let control = timer_control();
-                if !control.active {
-                    continue;
-                }
-                let next = timer_seconds().saturating_add(1);
-                timer_seconds.set(next);
-                if control.auto_advance_cards
-                    && control.phase == Some(SessionPhase::Prompt)
-                    && !auto_reveal_fired()
-                    && next >= control.auto_reveal_secs
-                {
-                    auto_reveal_fired.set(true);
-                    dispatch_intent.call(SessionIntent::Reveal);
-                }
-            }
-        })
-    };
-
-    let control = timer_control();
-    let show_timer = control.show_timer && control.phase == Some(SessionPhase::Prompt);
+    let show_timer = timer_settings.show_timer && timer_active;
 
     rsx! {
         div { class: "page session-page", id: "session-root", tabindex: "0", onkeydown: on_key,
@@ -677,7 +644,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                                             }
                                         },
                                         Some(SessionPhase::Answer) => rsx! {
-                                            if let Some(answer_html) = card_answer_html.clone() {
+                                            if let Some(answer_html) = card_answer_html {
                                                 div { class: "session-answer",
                                                     div { class: "session-text", dangerous_inner_html: "{answer_html}" }
                                                 }
@@ -695,8 +662,13 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                                 } else {
                                     p { "No cards available." }
                                 }
-                                if show_soft_reminder {
-                                    p { class: "session-soft-reminder", "Take a breath. You're doing fine." }
+                                if timer_settings.soft_time_reminder {
+                                    p {
+                                        class: "session-soft-reminder",
+                                        id: "session-soft-reminder",
+                                        hidden: "true",
+                                        "Take a breath. You're doing fine."
+                                    }
                                 }
                             },
                         }
@@ -719,7 +691,12 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                             span { class: "session-footer__item", "{streak_label}" }
                             span { class: "session-footer__item", "{due_label}" }
                             if show_timer {
-                                span { class: "session-footer__item session-footer__timer", "{timer_label}" }
+                                span {
+                                    class: "session-footer__item session-footer__timer",
+                                    id: "session-timer-label",
+                                    hidden: "true",
+                                    "{timer_label}"
+                                }
                             }
                         }
                     }
@@ -832,13 +809,10 @@ impl SessionTestHandles {
     }
 
     pub(crate) fn dispatch(&self) -> Callback<SessionIntent> {
-        self.dispatch
-            .borrow()
-            .clone()
-            .expect("session dispatch registered")
+        (*self.dispatch.borrow()).expect("session dispatch registered")
     }
 
     pub(crate) fn vm(&self) -> Signal<Option<SessionVm>> {
-        self.vm.borrow().clone().expect("session vm registered")
+        (*self.vm.borrow()).expect("session vm registered")
     }
 }

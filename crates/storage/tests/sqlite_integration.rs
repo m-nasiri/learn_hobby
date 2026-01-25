@@ -244,13 +244,13 @@ async fn sqlite_counts_practice_stats() {
 
     let tag_language = TagName::new("Language").unwrap();
     let tag_grammar = TagName::new("Grammar").unwrap();
-    repo.set_tags_for_card(deck.id(), card1.id(), &[tag_language.clone()])
+    repo.set_tags_for_card(deck.id(), card1.id(), std::slice::from_ref(&tag_language))
         .await
         .unwrap();
     repo.set_tags_for_card(deck.id(), card2.id(), &[tag_language.clone(), tag_grammar.clone()])
         .await
         .unwrap();
-    repo.set_tags_for_card(deck.id(), card3.id(), &[tag_grammar.clone()])
+    repo.set_tags_for_card(deck.id(), card3.id(), std::slice::from_ref(&tag_grammar))
         .await
         .unwrap();
 

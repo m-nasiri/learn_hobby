@@ -21,10 +21,7 @@ pub struct HarnessHandles {
 
 impl HarnessHandles {
     pub fn dispatch(&self) -> Callback<EditorIntent> {
-        self.dispatch
-            .borrow()
-            .clone()
-            .expect("dispatch registered")
+        (*self.dispatch.borrow()).expect("dispatch registered")
     }
 
     pub fn state(&self) -> EditorState {

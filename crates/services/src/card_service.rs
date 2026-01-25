@@ -575,10 +575,10 @@ mod tests {
         repo.upsert_card(&new_card).await.expect("new card");
 
         let tag = TagName::new("Language").expect("tag");
-        repo.set_tags_for_card(deck_id, due_card.id(), &[tag.clone()])
+        repo.set_tags_for_card(deck_id, due_card.id(), std::slice::from_ref(&tag))
             .await
             .expect("tag due");
-        repo.set_tags_for_card(deck_id, new_card.id(), &[tag.clone()])
+        repo.set_tags_for_card(deck_id, new_card.id(), std::slice::from_ref(&tag))
             .await
             .expect("tag new");
 

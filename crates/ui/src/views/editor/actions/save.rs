@@ -74,24 +74,6 @@ fn build_save_payload(state: &EditorState, request: SaveRequest) -> Option<SaveP
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::is_blank_content;
-
-    #[test]
-    fn blank_content_detects_empty_html() {
-        assert!(is_blank_content("<p> </p>", "<div>\n</div>"));
-        assert!(is_blank_content("", "<p>Answer</p>"));
-        assert!(is_blank_content("<p>Prompt</p>", ""));
-    }
-
-    #[test]
-    fn blank_content_allows_text() {
-        assert!(!is_blank_content("<p>Prompt</p>", "<p>Answer</p>"));
-        assert!(!is_blank_content("Prompt", "<div>Answer</div>"));
-    }
-}
-
 async fn check_duplicate(
     card_service: &services::CardService,
     payload: &SavePayload,
@@ -265,4 +247,22 @@ pub(super) fn build_save_action(
             run_save(payload, state, card_service, navigator).await;
         });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_blank_content;
+
+    #[test]
+    fn blank_content_detects_empty_html() {
+        assert!(is_blank_content("<p> </p>", "<div>\n</div>"));
+        assert!(is_blank_content("", "<p>Answer</p>"));
+        assert!(is_blank_content("<p>Prompt</p>", ""));
+    }
+
+    #[test]
+    fn blank_content_allows_text() {
+        assert!(!is_blank_content("<p>Prompt</p>", "<p>Answer</p>"));
+        assert!(!is_blank_content("Prompt", "<div>Answer</div>"));
+    }
 }

@@ -359,20 +359,20 @@ fn normalize_writing_tools_html(input: &str) -> String {
     loop {
         let trimmed = out.trim().to_string();
         let mut changed = false;
-        if trimmed.starts_with(empty_para) {
-            out = trimmed[empty_para.len()..].to_string();
+        if let Some(stripped) = trimmed.strip_prefix(empty_para) {
+            out = stripped.to_string();
             changed = true;
         }
-        if trimmed.ends_with(empty_para) {
-            out = trimmed[..trimmed.len().saturating_sub(empty_para.len())].to_string();
+        if let Some(stripped) = trimmed.strip_suffix(empty_para) {
+            out = stripped.to_string();
             changed = true;
         }
-        if trimmed.starts_with("<br>") {
-            out = trimmed[4..].to_string();
+        if let Some(stripped) = trimmed.strip_prefix("<br>") {
+            out = stripped.to_string();
             changed = true;
         }
-        if trimmed.ends_with("<br>") {
-            out = trimmed[..trimmed.len().saturating_sub(4)].to_string();
+        if let Some(stripped) = trimmed.strip_suffix("<br>") {
+            out = stripped.to_string();
             changed = true;
         }
         if !changed {
