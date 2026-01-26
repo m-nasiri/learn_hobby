@@ -193,8 +193,8 @@ mod tests {
     #[test]
     fn builder_ignores_review_limit_when_overload_protection_off() {
         let settings = learn_core::model::DeckSettings::new(
-            5, 1, 10, false, true, 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0,
-            0.85, true, 100,
+            5, 1, 10, false, true, 86_400, false, false, false, 25, 20, 86_400, 365, false, 0.5,
+            0, 0.85, true, 100,
         )
         .unwrap();
         let deck = build_deck_with_settings(settings);

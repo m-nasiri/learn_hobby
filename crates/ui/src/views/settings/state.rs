@@ -29,7 +29,7 @@ pub(super) struct DeckSettingsSnapshot {
     pub(super) auto_advance_cards: bool,
     pub(super) soft_time_reminder_secs: u32,
     pub(super) auto_reveal_secs: u32,
-    pub(super) min_interval_days: u32,
+    pub(super) min_interval_secs: u32,
     pub(super) max_interval_days: u32,
     pub(super) easy_days_enabled: bool,
     pub(super) easy_day_load_factor: f32,
@@ -57,7 +57,7 @@ impl DeckSettingsSnapshot {
             auto_advance_cards: settings.auto_advance_cards(),
             soft_time_reminder_secs: settings.soft_time_reminder_secs(),
             auto_reveal_secs: settings.auto_reveal_secs(),
-            min_interval_days: settings.min_interval_days(),
+            min_interval_secs: settings.min_interval_secs(),
             max_interval_days: settings.max_interval_days(),
             easy_days_enabled: settings.easy_days_enabled(),
             easy_day_load_factor: settings.easy_day_load_factor(),
@@ -85,7 +85,7 @@ impl DeckSettingsSnapshot {
             auto_advance_cards: settings.auto_advance_cards(),
             soft_time_reminder_secs: settings.soft_time_reminder_secs(),
             auto_reveal_secs: settings.auto_reveal_secs(),
-            min_interval_days: settings.min_interval_days(),
+            min_interval_secs: settings.min_interval_secs(),
             max_interval_days: settings.max_interval_days(),
             easy_days_enabled: settings.easy_days_enabled(),
             easy_day_load_factor: settings.easy_day_load_factor(),
@@ -120,7 +120,7 @@ pub(super) struct DeckSettingsForm {
     pub(super) fsrs_optimize_enabled: bool,
     pub(super) fsrs_optimize_after: String,
     pub(super) max_interval_days: String,
-    pub(super) min_interval_days: String,
+    pub(super) min_interval: String,
     pub(super) fsrs_parameters: String,
 }
 
@@ -147,7 +147,7 @@ impl DeckSettingsForm {
             fsrs_optimize_enabled: snapshot.fsrs_optimize_enabled,
             fsrs_optimize_after: snapshot.fsrs_optimize_after.to_string(),
             max_interval_days: snapshot.max_interval_days.to_string(),
-            min_interval_days: snapshot.min_interval_days.to_string(),
+            min_interval: format_lapse_interval(snapshot.min_interval_secs),
             fsrs_parameters: "0.2120, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.0010, 1.8722, 0.1666, 0.7960, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542".to_string(),
         }
     }
@@ -167,13 +167,14 @@ impl DeckSettingsForm {
         let fsrs_optimize_after = parse_positive_u32(&self.fsrs_optimize_after)?;
         let soft_time_reminder_secs = parse_timer_secs(&self.soft_time_reminder_secs)?;
         let auto_reveal_secs = parse_timer_secs(&self.auto_reveal_secs)?;
-        let min_interval_days = parse_positive_u32(&self.min_interval_days)?;
+        let min_interval_secs = parse_lapse_interval_secs(&self.min_interval)?;
         let max_interval_days = parse_positive_u32(&self.max_interval_days)?;
         let easy_day_load_factor = parse_retention(&self.easy_day_load_factor)?;
         if self.easy_days_enabled && self.easy_days_mask == 0 {
             return None;
         }
-        if min_interval_days > max_interval_days {
+        let max_interval_secs = max_interval_days.checked_mul(86_400)?;
+        if min_interval_secs > max_interval_secs {
             return None;
         }
 
@@ -192,7 +193,7 @@ impl DeckSettingsForm {
             auto_advance_cards: self.auto_advance_cards,
             soft_time_reminder_secs,
             auto_reveal_secs,
-            min_interval_days,
+            min_interval_secs,
             max_interval_days,
             easy_days_enabled: self.easy_days_enabled,
             easy_day_load_factor,
@@ -213,7 +214,7 @@ pub(super) struct DeckSettingsErrors {
     pub(super) lapse_min_interval: Option<&'static str>,
     pub(super) soft_time_reminder_secs: Option<&'static str>,
     pub(super) auto_reveal_secs: Option<&'static str>,
-    pub(super) min_interval_days: Option<&'static str>,
+    pub(super) min_interval: Option<&'static str>,
     pub(super) max_interval_days: Option<&'static str>,
     pub(super) easy_day_load_factor: Option<&'static str>,
     pub(super) easy_days_mask: Option<&'static str>,
@@ -230,7 +231,7 @@ impl DeckSettingsErrors {
             || self.lapse_min_interval.is_some()
             || self.soft_time_reminder_secs.is_some()
             || self.auto_reveal_secs.is_some()
-            || self.min_interval_days.is_some()
+            || self.min_interval.is_some()
             || self.max_interval_days.is_some()
             || self.easy_day_load_factor.is_some()
             || self.easy_days_mask.is_some()
@@ -308,7 +309,7 @@ pub(super) fn validate_form(
         form.auto_advance_cards,
         parsed.soft_time_reminder_secs,
         parsed.auto_reveal_secs,
-        parsed.min_interval_days,
+        parsed.min_interval_secs,
         parsed.max_interval_days,
         form.easy_days_enabled,
         parsed.easy_day_load_factor,
@@ -334,7 +335,7 @@ struct ParsedSettings {
     lapse_min_interval_secs: u32,
     soft_time_reminder_secs: u32,
     auto_reveal_secs: u32,
-    min_interval_days: u32,
+    min_interval_secs: u32,
     max_interval_days: u32,
     easy_day_load_factor: f32,
     easy_days_mask: u8,
@@ -378,18 +379,19 @@ fn parse_settings_form(
         &mut errors.auto_reveal_secs,
         "Enter 5-600 seconds.",
     );
-    let min_interval_days = parse_u32_field(
-        &form.min_interval_days,
-        &mut errors.min_interval_days,
-        "Enter a positive number.",
+    let min_interval_secs = parse_duration_field(
+        &form.min_interval,
+        &mut errors.min_interval,
+        "Use a duration like 10m or 1d.",
     );
     let max_interval_days = parse_u32_field(
         &form.max_interval_days,
         &mut errors.max_interval_days,
         "Enter a positive number.",
     );
-    if min_interval_days > 0 && max_interval_days > 0 && min_interval_days > max_interval_days {
-        errors.min_interval_days = Some("Must be <= maximum interval.");
+    let max_interval_secs = max_interval_days.saturating_mul(86_400);
+    if min_interval_secs > 0 && max_interval_days > 0 && min_interval_secs > max_interval_secs {
+        errors.min_interval = Some("Must be <= maximum interval.");
         errors.max_interval_days = Some("Must be >= minimum interval.");
     }
     let easy_day_load_factor = parse_retention_field(
@@ -420,7 +422,7 @@ fn parse_settings_form(
         lapse_min_interval_secs,
         soft_time_reminder_secs,
         auto_reveal_secs,
-        min_interval_days,
+        min_interval_secs,
         max_interval_days,
         easy_day_load_factor,
         easy_days_mask,
@@ -504,14 +506,14 @@ fn map_deck_settings_error(
         learn_core::model::DeckError::InvalidAutoRevealSeconds => {
             errors.auto_reveal_secs = Some("Enter 5-600 seconds.");
         }
-        learn_core::model::DeckError::InvalidMinIntervalDays => {
-            errors.min_interval_days = Some("Enter at least 1 day.");
+        learn_core::model::DeckError::InvalidMinIntervalSecs => {
+            errors.min_interval = Some("Enter at least 1 second.");
         }
         learn_core::model::DeckError::InvalidMaxIntervalDays => {
             errors.max_interval_days = Some("Enter at least 1 day.");
         }
         learn_core::model::DeckError::InvalidIntervalBounds => {
-            errors.min_interval_days = Some("Must be <= maximum interval.");
+            errors.min_interval = Some("Must be <= maximum interval.");
             errors.max_interval_days = Some("Must be >= minimum interval.");
         }
         learn_core::model::DeckError::InvalidEasyDayLoadFactor => {

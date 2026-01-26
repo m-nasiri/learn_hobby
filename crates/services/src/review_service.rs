@@ -56,19 +56,19 @@ fn apply_lapse_min_interval(
 fn apply_interval_bounds(
     applied: &mut AppliedReview,
     reviewed_at: DateTime<Utc>,
-    min_days: u32,
+    min_interval_secs: u32,
     max_days: u32,
 ) {
-    if applied.outcome.scheduled_days < 1.0 {
+    if min_interval_secs == 0 && max_days == 0 {
         return;
     }
-    let min_days_f = f64::from(min_days);
+    let min_days_f = f64::from(min_interval_secs) / SECONDS_PER_DAY;
     let max_days_f = f64::from(max_days);
-    if applied.outcome.scheduled_days < min_days_f {
+    if min_interval_secs > 0 && applied.outcome.scheduled_days < min_days_f {
         applied.outcome.scheduled_days = min_days_f;
         applied.outcome.next_review =
-            reviewed_at + chrono::Duration::days(i64::from(min_days));
-    } else if applied.outcome.scheduled_days > max_days_f {
+            reviewed_at + chrono::Duration::seconds(i64::from(min_interval_secs));
+    } else if max_days > 0 && applied.outcome.scheduled_days > max_days_f {
         applied.outcome.scheduled_days = max_days_f;
         applied.outcome.next_review =
             reviewed_at + chrono::Duration::days(i64::from(max_days));
@@ -180,7 +180,7 @@ impl ReviewService {
         apply_interval_bounds(
             &mut applied,
             reviewed_at,
-            settings.min_interval_days(),
+            settings.min_interval_secs(),
             settings.max_interval_days(),
         );
 
@@ -318,7 +318,7 @@ mod tests {
         let mut card = build_card(now);
         let retention = 0.7;
         let settings = DeckSettings::new(
-            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0,
+            5, 30, 5, true, true, 86_400, false, false, false, 25, 20, 86_400, 365, false, 0.5, 0,
             retention, true, 100,
         )
         .unwrap();
@@ -355,8 +355,8 @@ mod tests {
             .unwrap();
 
         let lapse_settings = DeckSettings::new(
-            5, 30, 5, true, true, 3 * 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0,
-            0.85, true, 100,
+            5, 30, 5, true, true, 3 * 86_400, false, false, false, 25, 20, 86_400, 365, false,
+            0.5, 0, 0.85, true, 100,
         )
         .unwrap();
         let lapse_review = now + chrono::Duration::days(2);
@@ -386,8 +386,8 @@ mod tests {
             .unwrap();
 
         let lapse_settings = DeckSettings::new(
-            5, 30, 5, true, false, 86_400, false, false, false, 25, 20, 1, 365, false, 0.5, 0,
-            0.85, true, 100,
+            5, 30, 5, true, false, 86_400, false, false, false, 25, 20, 86_400, 365, false, 0.5,
+            0, 0.85, true, 100,
         )
         .unwrap();
         let result = service
@@ -411,7 +411,7 @@ mod tests {
         let memory = MemoryState::new(2.0, 3.0);
         let mut applied = AppliedReview { log, outcome, memory };
 
-        apply_interval_bounds(&mut applied, now, 3, 7);
+        apply_interval_bounds(&mut applied, now, 259_200, 7);
 
         assert_eq!(applied.outcome.scheduled_days, 7.0);
         assert_eq!(applied.outcome.next_review, now + chrono::Duration::days(7));

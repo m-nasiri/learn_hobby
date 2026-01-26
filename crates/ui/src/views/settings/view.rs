@@ -155,7 +155,7 @@ pub fn SettingsView(deck_id: Option<u64>) -> Element {
         next.auto_advance_cards = defaults.auto_advance_cards();
         next.soft_time_reminder_secs = defaults.soft_time_reminder_secs().to_string();
         next.auto_reveal_secs = defaults.auto_reveal_secs().to_string();
-        next.min_interval_days = defaults.min_interval_days().to_string();
+        next.min_interval = format_lapse_interval(defaults.min_interval_secs());
         next.max_interval_days = defaults.max_interval_days().to_string();
         next.easy_days_enabled = defaults.easy_days_enabled();
         next.easy_day_load_factor = format_retention(defaults.easy_day_load_factor());

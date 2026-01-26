@@ -13,21 +13,24 @@ pub(super) fn parse_lapse_interval_secs(value: &str) -> Option<u32> {
         return None;
     }
     let normalized = trimmed.to_ascii_lowercase();
-    let mut chars = normalized.chars();
-    let last = chars.next_back();
-    let (number_part, unit) = match last {
-        Some(unit) if unit.is_ascii_alphabetic() => (&normalized[..normalized.len() - 1], unit),
-        _ => (normalized.as_str(), 'd'),
-    };
+    let mut split_at = normalized.len();
+    for (idx, ch) in normalized.char_indices() {
+        if !ch.is_ascii_digit() {
+            split_at = idx;
+            break;
+        }
+    }
+    let (number_part, suffix) = normalized.split_at(split_at);
     let amount = number_part.trim().parse::<u32>().ok()?;
     if amount == 0 {
         return None;
     }
+    let unit = suffix.trim();
     match unit {
-        's' => Some(amount),
-        'm' => amount.checked_mul(60),
-        'h' => amount.checked_mul(3600),
-        'd' => amount.checked_mul(86_400),
+        "" | "d" | "day" | "days" => amount.checked_mul(86_400),
+        "h" | "hr" | "hrs" | "hour" | "hours" => amount.checked_mul(3600),
+        "m" | "min" | "mins" | "minute" | "minutes" => amount.checked_mul(60),
+        "s" | "sec" | "secs" | "second" | "seconds" => Some(amount),
         _ => None,
     }
 }

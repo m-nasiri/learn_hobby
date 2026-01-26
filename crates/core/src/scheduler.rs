@@ -335,16 +335,18 @@ impl Scheduler {
         now: DateTime<Utc>,
         elapsed_days: f64,
     ) -> ReviewOutcome {
-        // fsrs-rs example rounds interval and clamps to >= 1 day
-        let interval_days = item.interval.round().max(1.0);
-        let next_review = now + Duration::days(interval_days as i64);
+        // Use second-level scheduling for sub-day intervals.
+        let interval_days = f64::from(item.interval);
+        let interval_secs = (interval_days * 86_400.0).round().max(1.0);
+        let next_review = now + Duration::seconds(interval_secs as i64);
+        let scheduled_days = interval_secs / 86_400.0;
 
         ReviewOutcome::new(
             next_review,
             f64::from(item.memory.stability),
             f64::from(item.memory.difficulty),
             elapsed_days,
-            f64::from(interval_days),
+            scheduled_days,
         )
     }
 
@@ -423,11 +425,11 @@ mod tests {
         assert!(states.hard.scheduled_days <= states.good.scheduled_days);
         assert!(states.good.scheduled_days <= states.easy.scheduled_days);
 
-        // all scheduled days should be >= 1 because we clamp.
-        assert!(states.again.scheduled_days >= 1.0);
-        assert!(states.hard.scheduled_days >= 1.0);
-        assert!(states.good.scheduled_days >= 1.0);
-        assert!(states.easy.scheduled_days >= 1.0);
+        // scheduled days should be positive.
+        assert!(states.again.scheduled_days > 0.0);
+        assert!(states.hard.scheduled_days > 0.0);
+        assert!(states.good.scheduled_days > 0.0);
+        assert!(states.easy.scheduled_days > 0.0);
     }
 
     #[test]
@@ -560,7 +562,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(applied.outcome.scheduled_days, direct.hard.scheduled_days);
-        assert!(applied.outcome.scheduled_days >= 1.0);
+        assert!(applied.outcome.scheduled_days > 0.0);
     }
 
     #[test]

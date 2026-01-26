@@ -1037,7 +1037,7 @@ fn advanced_min_interval_row(
                 label { r#for: "min-interval", "Minimum interval" }
                 span {
                     class: "settings-row__help",
-                    title: "Prevents overly frequent reviews.",
+                    title: "Prevents overly frequent reviews. Use 10m, 2h, or 1d.",
                     "?"
                 }
             }
@@ -1045,28 +1045,28 @@ fn advanced_min_interval_row(
                 div { class: "settings-inline-input",
                     input {
                         id: "min-interval",
-                        class: if errors_value.min_interval_days.is_some() {
+                        class: if errors_value.min_interval.is_some() {
                             "editor-input settings-input editor-input--error"
                         } else {
                             "editor-input settings-input"
                         },
-                        r#type: "number",
-                        min: "1",
-                        inputmode: "numeric",
-                        value: "{form_value.min_interval_days}",
+                        r#type: "text",
+                        inputmode: "text",
+                        placeholder: "e.g., 30m or 2h",
+                        value: "{form_value.min_interval}",
                         oninput: move |evt| {
                             let mut next = form();
-                            next.min_interval_days = evt.value();
+                            next.min_interval = evt.value();
                             form.set(next);
                             let mut next_errors = errors();
-                            next_errors.min_interval_days = None;
+                            next_errors.min_interval = None;
                             errors.set(next_errors);
                             save_state.set(SaveState::Idle);
                         },
                     }
-                    span { class: "settings-inline-suffix", "days" }
+                    span { class: "settings-inline-suffix", "s/m/h/d" }
                 }
-                if let Some(message) = errors_value.min_interval_days {
+                if let Some(message) = errors_value.min_interval {
                     p { class: "editor-error", "{message}" }
                 }
             }

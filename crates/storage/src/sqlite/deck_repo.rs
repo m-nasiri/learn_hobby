@@ -26,7 +26,7 @@ impl DeckRepository for SqliteRepository {
         let auto_advance_cards = i64::from(i32::from(deck.auto_advance_cards));
         let soft_time_reminder_secs = i64::from(deck.soft_time_reminder_secs);
         let auto_reveal_secs = i64::from(deck.auto_reveal_secs);
-        let min_interval_days = i64::from(deck.min_interval_days);
+        let min_interval_secs = i64::from(deck.min_interval_secs);
         let max_interval_days = i64::from(deck.max_interval_days);
         let easy_days_enabled = i64::from(i32::from(deck.easy_days_enabled));
         let easy_day_load_factor = f64::from(deck.easy_day_load_factor);
@@ -41,7 +41,7 @@ impl DeckRepository for SqliteRepository {
                 name, description, created_at, new_cards_per_day, review_limit_per_day,
                 micro_session_size, protect_overload, preserve_stability_on_lapse,
                 lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
-                soft_time_reminder_secs, auto_reveal_secs, min_interval_days, max_interval_days,
+                soft_time_reminder_secs, auto_reveal_secs, min_interval_secs, max_interval_days,
                 easy_days_enabled, easy_day_load_factor, easy_days_mask,
                 fsrs_target_retention, fsrs_optimize_enabled, fsrs_optimize_after
             )
@@ -62,7 +62,7 @@ impl DeckRepository for SqliteRepository {
         .bind(auto_advance_cards)
         .bind(soft_time_reminder_secs)
         .bind(auto_reveal_secs)
-        .bind(min_interval_days)
+        .bind(min_interval_secs)
         .bind(max_interval_days)
         .bind(easy_days_enabled)
         .bind(easy_day_load_factor)
@@ -94,7 +94,7 @@ impl DeckRepository for SqliteRepository {
         let auto_advance_cards = i64::from(i32::from(deck.settings().auto_advance_cards()));
         let soft_time_reminder_secs = i64::from(deck.settings().soft_time_reminder_secs());
         let auto_reveal_secs = i64::from(deck.settings().auto_reveal_secs());
-        let min_interval_days = i64::from(deck.settings().min_interval_days());
+        let min_interval_secs = i64::from(deck.settings().min_interval_secs());
         let max_interval_days = i64::from(deck.settings().max_interval_days());
         let easy_days_enabled = i64::from(i32::from(deck.settings().easy_days_enabled()));
         let easy_day_load_factor = f64::from(deck.settings().easy_day_load_factor());
@@ -109,7 +109,7 @@ impl DeckRepository for SqliteRepository {
                 id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                 micro_session_size, protect_overload, preserve_stability_on_lapse,
                 lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
-                soft_time_reminder_secs, auto_reveal_secs, min_interval_days, max_interval_days,
+                soft_time_reminder_secs, auto_reveal_secs, min_interval_secs, max_interval_days,
                 easy_days_enabled, easy_day_load_factor, easy_days_mask,
                 fsrs_target_retention, fsrs_optimize_enabled, fsrs_optimize_after
             )
@@ -128,7 +128,7 @@ impl DeckRepository for SqliteRepository {
                 auto_advance_cards = excluded.auto_advance_cards,
                 soft_time_reminder_secs = excluded.soft_time_reminder_secs,
                 auto_reveal_secs = excluded.auto_reveal_secs,
-                min_interval_days = excluded.min_interval_days,
+                min_interval_secs = excluded.min_interval_secs,
                 max_interval_days = excluded.max_interval_days,
                 easy_days_enabled = excluded.easy_days_enabled,
                 easy_day_load_factor = excluded.easy_day_load_factor,
@@ -153,7 +153,7 @@ impl DeckRepository for SqliteRepository {
         .bind(auto_advance_cards)
         .bind(soft_time_reminder_secs)
         .bind(auto_reveal_secs)
-        .bind(min_interval_days)
+        .bind(min_interval_secs)
         .bind(max_interval_days)
         .bind(easy_days_enabled)
         .bind(easy_day_load_factor)
@@ -174,7 +174,7 @@ impl DeckRepository for SqliteRepository {
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                    micro_session_size, protect_overload, preserve_stability_on_lapse,
                    lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
-                   soft_time_reminder_secs, auto_reveal_secs, min_interval_days, max_interval_days,
+                   soft_time_reminder_secs, auto_reveal_secs, min_interval_secs, max_interval_days,
                    easy_days_enabled, easy_day_load_factor, easy_days_mask,
                    fsrs_target_retention, fsrs_optimize_enabled, fsrs_optimize_after
             FROM decks WHERE id = ?1
@@ -199,7 +199,7 @@ impl DeckRepository for SqliteRepository {
             SELECT id, name, description, created_at, new_cards_per_day, review_limit_per_day,
                    micro_session_size, protect_overload, preserve_stability_on_lapse,
                    lapse_min_interval_secs, show_timer, soft_time_reminder, auto_advance_cards,
-                   soft_time_reminder_secs, auto_reveal_secs, min_interval_days, max_interval_days,
+                   soft_time_reminder_secs, auto_reveal_secs, min_interval_secs, max_interval_days,
                    easy_days_enabled, easy_day_load_factor, easy_days_mask,
                    fsrs_target_retention, fsrs_optimize_enabled, fsrs_optimize_after
             FROM decks
@@ -241,8 +241,8 @@ fn deck_from_row(row: &SqliteRow) -> Result<Deck, StorageError> {
             .map_err(|_| StorageError::Serialization("soft_time_reminder_secs overflow".into()))?,
         u32::try_from(row.try_get::<i64, _>("auto_reveal_secs").map_err(ser)?)
             .map_err(|_| StorageError::Serialization("auto_reveal_secs overflow".into()))?,
-        u32::try_from(row.try_get::<i64, _>("min_interval_days").map_err(ser)?)
-            .map_err(|_| StorageError::Serialization("min_interval_days overflow".into()))?,
+        u32::try_from(row.try_get::<i64, _>("min_interval_secs").map_err(ser)?)
+            .map_err(|_| StorageError::Serialization("min_interval_secs overflow".into()))?,
         u32::try_from(row.try_get::<i64, _>("max_interval_days").map_err(ser)?)
             .map_err(|_| StorageError::Serialization("max_interval_days overflow".into()))?,
         row.try_get::<i64, _>("easy_days_enabled").map_err(ser)? != 0,
