@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use learn_core::model::{DeckId, ReviewGrade, TagName};
 use storage::repository::{
     CardRepository, DeckRepository, ReviewPersistence, SessionSummaryRepository,
@@ -17,6 +18,20 @@ pub struct SessionAnswerResult {
     pub review: SessionReview,
     pub is_complete: bool,
     pub summary_id: Option<i64>,
+}
+
+/// Preview of next-review scheduling for each grade.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionReviewPreview {
+    pub reviewed_at: DateTime<Utc>,
+    pub grades: Vec<ReviewGradePreview>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewGradePreview {
+    pub grade: ReviewGrade,
+    pub next_review: DateTime<Utc>,
+    pub scheduled_days: f64,
 }
 
 /// Orchestrates session start and persisted answering.
@@ -179,6 +194,45 @@ impl SessionLoopService {
             is_complete: session.is_complete(),
             summary_id: session.summary_id(),
         })
+    }
+
+    /// Preview next-review times for all grades without mutating session state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError::Completed` if the session has no current card.
+    /// Returns `SessionError::Review` for scheduler failures.
+    pub fn preview_current(
+        &self,
+        session: &SessionService,
+    ) -> Result<SessionReviewPreview, SessionError> {
+        let review_service = ReviewService::new()?.with_clock(self.clock);
+        let reviewed_at = self.clock.now();
+        let deck_settings = session.deck_settings().clone();
+        let Some(card) = session.current_card() else {
+            return Err(SessionError::Completed);
+        };
+        let mut grades = Vec::with_capacity(4);
+        for grade in [
+            ReviewGrade::Again,
+            ReviewGrade::Hard,
+            ReviewGrade::Good,
+            ReviewGrade::Easy,
+        ] {
+            let mut preview_card = card.clone();
+            let result = review_service.review_card_with_settings(
+                &mut preview_card,
+                grade,
+                reviewed_at,
+                &deck_settings,
+            )?;
+            grades.push(ReviewGradePreview {
+                grade,
+                next_review: result.applied.outcome.next_review,
+                scheduled_days: result.applied.outcome.scheduled_days,
+            });
+        }
+        Ok(SessionReviewPreview { reviewed_at, grades })
     }
 
     /// Retry summary persistence after a completed session.

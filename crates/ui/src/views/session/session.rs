@@ -2,6 +2,7 @@ use dioxus::document::eval;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
 use keyboard_types::{Code, Key, Modifiers};
+use services::SessionReviewPreview;
 
 use learn_core::model::{DeckId, ReviewGrade, TagName};
 
@@ -138,6 +139,31 @@ fn format_timer(seconds: u32) -> String {
     format!("Time: {minutes}:{remainder:02}")
 }
 
+fn format_next_review_label(
+    preview: &SessionReviewPreview,
+    grade: ReviewGrade,
+) -> Option<String> {
+    let item = preview.grades.iter().find(|item| item.grade == grade)?;
+    let delta = item
+        .next_review
+        .signed_duration_since(preview.reviewed_at)
+        .num_seconds()
+        .max(0);
+    let label = if delta < 60 {
+        "now".to_string()
+    } else if delta < 3600 {
+        let minutes = (delta + 59) / 60;
+        format!("{minutes}m")
+    } else if delta < 86_400 {
+        let hours = (delta + 3599) / 3600;
+        format!("{hours}h")
+    } else {
+        let days = (delta + 86_399) / 86_400;
+        format!("{days}d")
+    };
+    Some(format!("<= {label}"))
+}
+
 #[component]
 pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) -> Element {
     let ctx = use_context::<AppContext>();
@@ -156,6 +182,7 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
     let error = use_signal(|| None::<ViewError>);
     let vm = use_signal(|| None::<SessionVm>);
     let last_action = use_signal(|| None::<LastAction>);
+    let review_preview = use_signal(|| None::<SessionReviewPreview>);
     let mut did_focus = use_signal(|| false);
     let mut last_focus_phase = use_signal(|| None::<SessionPhase>);
     let mut last_focus_completed = use_signal(|| false);
@@ -299,14 +326,19 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
             let mut last_action = last_action;
             let mut completion = completion;
             let mut counts_resource = counts_resource;
+            let mut review_preview = review_preview;
 
             match intent {
                 SessionIntent::Reveal => {
                     if let Some(vm) = vm.write().as_mut() {
                         vm.reveal();
+                        review_preview.set(vm.preview_current(&session_loop));
+                    } else {
+                        review_preview.set(None);
                     }
                 }
                 SessionIntent::Grade(grade) => {
+                    review_preview.set(None);
                     let session_loop = session_loop.clone();
                     spawn(async move {
                         last_action.set(Some(LastAction::Answer(grade)));
@@ -513,6 +545,19 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
         .as_ref()
         .and_then(|value| value.as_ref().ok())
         .and_then(Clone::clone);
+    let preview = review_preview.read();
+    let again_next = preview
+        .as_ref()
+        .and_then(|value| format_next_review_label(value, ReviewGrade::Again));
+    let hard_next = preview
+        .as_ref()
+        .and_then(|value| format_next_review_label(value, ReviewGrade::Hard));
+    let good_next = preview
+        .as_ref()
+        .and_then(|value| format_next_review_label(value, ReviewGrade::Good));
+    let easy_next = preview
+        .as_ref()
+        .and_then(|value| format_next_review_label(value, ReviewGrade::Easy));
     let (deck_label, timer_settings) = deck_info.map_or(
         (None, TimerSettings::default()),
         |(label, settings)| (Some(label), settings),
@@ -651,10 +696,30 @@ pub fn SessionView(deck_id: u64, tag: Option<String>, mode: SessionStartMode) ->
                                             }
                                             p { class: "session-remember", "How well did you remember?" }
                                             div { class: "session-grades",
-                                                GradeButton { label: "Again", grade: ReviewGrade::Again, on_intent: dispatch_intent }
-                                                GradeButton { label: "Hard", grade: ReviewGrade::Hard, on_intent: dispatch_intent }
-                                                GradeButton { label: "Good", grade: ReviewGrade::Good, on_intent: dispatch_intent }
-                                                GradeButton { label: "Easy", grade: ReviewGrade::Easy, on_intent: dispatch_intent }
+                                                GradeButton {
+                                                    label: "Again",
+                                                    grade: ReviewGrade::Again,
+                                                    on_intent: dispatch_intent,
+                                                    next_label: again_next,
+                                                }
+                                                GradeButton {
+                                                    label: "Hard",
+                                                    grade: ReviewGrade::Hard,
+                                                    on_intent: dispatch_intent,
+                                                    next_label: hard_next,
+                                                }
+                                                GradeButton {
+                                                    label: "Good",
+                                                    grade: ReviewGrade::Good,
+                                                    on_intent: dispatch_intent,
+                                                    next_label: good_next,
+                                                }
+                                                GradeButton {
+                                                    label: "Easy",
+                                                    grade: ReviewGrade::Easy,
+                                                    on_intent: dispatch_intent,
+                                                    next_label: easy_next,
+                                                }
                                             }
                                         },
                                         None => rsx! {},
@@ -711,6 +776,7 @@ fn GradeButton(
     label: &'static str,
     grade: ReviewGrade,
     on_intent: EventHandler<SessionIntent>,
+    next_label: Option<String>,
 ) -> Element {
     let variant = match grade {
         ReviewGrade::Again => ("session-grade session-grade--again", "session-grade-again"),
@@ -719,11 +785,16 @@ fn GradeButton(
         ReviewGrade::Easy => ("session-grade session-grade--easy", "session-grade-easy"),
     };
     rsx! {
-        button {
-            class: "{variant.0}",
-            id: "{variant.1}",
-            onclick: move |_| on_intent.call(SessionIntent::Grade(grade)),
-            "{label}"
+        div { class: "session-grade-item",
+            button {
+                class: "{variant.0}",
+                id: "{variant.1}",
+                onclick: move |_| on_intent.call(SessionIntent::Grade(grade)),
+                "{label}"
+            }
+            if let Some(next_label) = next_label {
+                p { class: "session-grade-next", "{next_label}" }
+            }
         }
     }
 }

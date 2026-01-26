@@ -30,6 +30,7 @@ pub use writing_tools_service::{WritingToolsConfig, WritingToolsOutput, WritingT
 pub use ai::{AiUsageHandle, AiUsageService};
 
 pub use sessions::{
-    SessionAnswerResult, SessionLoopService, SessionReview, SessionService, SessionSummaryDeckItem,
-    SessionSummaryId, SessionSummaryListItem, SessionSummaryService,
+    ReviewGradePreview, SessionAnswerResult, SessionLoopService, SessionReview,
+    SessionReviewPreview, SessionService, SessionSummaryDeckItem, SessionSummaryId,
+    SessionSummaryListItem, SessionSummaryService,
 };

@@ -1818,6 +1818,24 @@ a {
   justify-content: center;
 }
 
+.session-grade-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.session-grade-item .session-grade {
+  width: 100%;
+}
+
+.session-grade-next {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-2);
+}
+
 .session-grade {
   min-width: 120px;
   padding: 12px 20px;

@@ -1,5 +1,5 @@
 use learn_core::model::{DeckId, ReviewGrade, TagName};
-use services::{SessionLoopService, SessionService};
+use services::{SessionLoopService, SessionReviewPreview, SessionService};
 
 use crate::views::ViewError;
 
@@ -116,6 +116,14 @@ impl SessionVm {
 
         self.phase = SessionPhase::Prompt;
         Ok(SessionOutcome::Continue)
+    }
+
+    #[must_use]
+    pub fn preview_current(
+        &self,
+        session_loop: &SessionLoopService,
+    ) -> Option<SessionReviewPreview> {
+        session_loop.preview_current(&self.session).ok()
     }
 }
 
